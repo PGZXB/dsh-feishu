@@ -107,6 +107,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     default) — p2p chats and groups can each target their own project.
   - `/cd <path>` validates and pins a chat's working directory (session
     rebinds so the next message starts fresh in the new dir, mirroring
-    botmux /cd); `/repo` lists candidate projects under `repoRoots` (one
-    level deep, `.git`/`package.json` markers) and `/repo <n>` picks one.
+    botmux /cd); `/repo` lists candidate projects under `repoRoots`.
   - `repoRoots` config; 105 tests total.
+- Iteration-2 slice — botmux-style `/repo` (dropdown + recursive scan):
+  - `buildRepoPickerCard` leads with a `select_static` dropdown placed
+    directly inside an `action` container (botmux `repo_switch` pattern —
+    Feishu silently drops form controls inside a `form`, but a select in an
+    `action` renders and fires a callback with the chosen option in
+    `action.option`); numbered buttons with pagination remain as fallback
+    beyond the 50-option cap.
+  - New `src/projects.ts` recursive scanner (botmux `project-scanner`
+    semantics, async): depth-3 walk skipping dot-dirs and
+    `node_modules`/`vendor`/`dist`, valid `.git` marker (dir with `HEAD` or
+    gitfile), dedup by git common-dir and path, dir-count + wall-clock
+    budgets with an `onBudgetExceeded` hook, linked-worktree listing.
+    `GIT_CEILING_DIRECTORIES` bounds git discovery so a fake/partial `.git`
+    inside the root cannot resolve to an ancestor repo (botmux latent bug).
+  - `repo-pick` card action accepts the dropdown `option` (or the button
+    `value.path` fallback); `CardAction` gains an optional `option` field.
+  - Tests: `tests/projects.spec.ts` (depth cap, skips, gitfile marker,
+    empty-`.git` rejection, multi-root dedup, budget trip) + updated
+    render/bridge specs; 118 tests total.
+- docs/pitfalls.md: field notes on Feishu card layout constraints (v1 vs
+  schema 2.0, select-in-action, silent form drop, card-callback receive
+  mode), sandbox env/proxy quirks, Gemini model gating, pnpm ≥ 10 settings,
+  and the git-discovery scan-root trap.

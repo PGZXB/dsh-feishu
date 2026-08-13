@@ -1,0 +1,113 @@
+# Development Pitfalls
+
+Field notes from building this plugin — the traps that cost real hours.
+Each entry states the symptom, the root cause, and the fix. Keep this page
+updated when you hit something new.
+
+## Feishu card layout constraints
+
+The interactive-card wire format is the least forgiving part of this
+integration. The rules below were verified on real devices (a Feishu app in
+the sandbox) and are the reason several card designs were reworked.
+
+- **Use the v1 layout: root-level `elements`, no `schema` field.** A
+  `schema: '2.0'` card rejects the interactive `action` tag with
+  `ErrCode 200861` ("unknown property `elements`" when the body shape is
+  wrong). Only the v1 root-`elements` layout accepts `action` buttons. All
+  control cards (status buttons, panel, repo picker) use it. botmux's
+  control cards use the same layout.
+- **`form`, `select_static`, and `input` are silently dropped inside a
+  `form` container** in this layout — the card renders without them and
+  without an error, which makes the bug invisible. `select_static` **does**
+  work when placed directly inside an `action` container: choosing an
+  option fires a card callback whose `option` field carries the selected
+  value, and the select's own `value` field carries the action marker
+  (botmux pattern: `value: { key: 'repo_switch' }`). The repo picker uses
+  this for its dropdown.
+- **Card callbacks are a separate receive mode from events.** The bot must
+  switch both "events" and "card callbacks" to the long-connection receive
+  mode in the Feishu console; otherwise buttons return
+  "该应用尚未配置卡片回调". See `docs/feishu-setup.md`.
+- **`message.patch` is silent** (no unread indicator), so final answers are
+  delivered as a fresh `message.create`; patching is reserved for the live
+  streaming card. botmux follows the same rule.
+- **Card size cap ≈ 109 KB** — long outputs are tail-truncated before
+  render (`MAX_CARD_CHARS`).
+- **`lark_md` has no reliable escape syntax** — `**` is collapsed to `*`
+  in untrusted text rather than escaped.
+
+## Environment and proxy quirks (sandbox)
+
+The harness sandbox (and this checkout's environment) has specific rules:
+
+- **`HTTPS_PROXY`/`HTTP_PROXY` break axios**, which lark-oapi uses: TLS
+  handshakes fail (`ERR_TLS_CERT_ALTNAME_INVALID` or connect failures)
+  because axios does not honor the env vars without an agent. Unset them
+  when running the bot (`unset https_proxy HTTPS_PROXY http_proxy HTTP_PROXY
+  ALL_PROXY all_proxy`).
+- **Node's built-in fetch honors the proxy only with `NODE_USE_ENV_PROXY=1`;**
+  undici-based clients (modlens's bundled undici) ignore env proxy entirely
+  and fail with `fetch failed`. The preload shim
+  `_dev/proxy-preload.cjs` installs `EnvHttpProxyAgent` as the global
+  dispatcher; load it via `NODE_OPTIONS='-r …/proxy-preload.cjs'`.
+- **Direct egress to `generativelanguage.googleapis.com` is blocked** — the
+  proxy is required for Gemini; the preload above is what makes modlens
+  vision work.
+- **`~/.dsh`, `~/.npm`, `~/.modlens` are read-only mounts** unless the
+  shell has `danger-full-access`. All dev state lives under the repo's
+  `_dev/` (home dir, bin, corepack, dsh-home).
+- **Ambient `DSH_HOME=/home/zhangmm23/.dsh` is exported by the harness** —
+  integration tests must point at their own `FEISHU_INT_DSH_HOME` (or
+  `_dev/dsh-home`), never the ambient value.
+- **`kill $!` kills the bash wrapper, not the child** — `nohup` children
+  survive and pile up concurrent dsh processes (a corrupt-session
+  incident). Always `pkill -f "dsh --profile feishu-d[e]v"` and verify
+  exactly one process before/after restarts.
+
+## Gemini / modlens
+
+- New keys use the new API-key format (`AQ.…`). Older model names are
+  gated for new users (404): `gemini-2.5-flash/pro/lite` and even
+  `gemini-3.5-flash` can 404 or 503 under load. The working model here is
+  `gemini-3.5-flash-lite`; treat the model name as environment-dependent.
+- modlens reads the provider config from `~/.modlens/config.json`
+  (`provider: 'gemini-api'` with the apiKey and model) and needs the
+  undici proxy preload (above) to reach Google.
+
+## pnpm
+
+- pnpm ≥ 10 reads settings from `pnpm-workspace.yaml`, **not** `.npmrc`.
+  `minimumReleaseAge` quarantined `@liustack/modlens@3.11.0` and silently
+  installed 3.5.0 (which lacks `dsh.bundle`) — fix via
+  `minimumReleaseAgeExclude: ['@liustack/modlens@3.11.0']`.
+- The default store directory sits on a read-only fs — pin `store-dir`
+  under the repo (`_dev/pnpm-store`).
+
+## Mention gate
+
+- The mention gate is **bot-side**: Feishu delivers group messages to the
+  bot regardless of mentions; the bot decides whether to respond.
+  `groupMentionMode: always` (default) is botmux-compatible
+  (always/never/ambient/topic). In 1-person-1-bot solo groups the `@`
+  requirement is relaxed (`isSoloGroup`).
+- `allowedChats` is an allowlist; chats outside it are ignored entirely.
+
+## Git discovery vs. scan roots
+
+- A `.git` marker that is fake or partial (a directory without a real
+  object store, or a gitfile pointing nowhere) makes git **walk up the
+  tree** looking for the nearest real repository. When the scan root is
+  inside a real repo (e.g. `_dev` under the plugin repo, or `~` under a
+  repo), `git rev-parse --git-common-dir` from a candidate dir can resolve
+  to an *ancestor* repo, silently collapsing the whole scan into one bogus
+  project. Fix: pass `GIT_CEILING_DIRECTORIES=<scan root>` on every git
+  subprocess so discovery cannot escape the root (see
+  `src/projects.ts`). botmux has this latent bug; its scan roots are real
+  repos so it never trips it.
+
+## Reference
+
+- Card/layout patterns: botmux `src/im/lark/card-builder.ts` (select-in-
+  action), `card-handler.ts` (callback normalization), `project-scanner.ts`
+  (recursive scan semantics). Future slash-command UI/UX should be checked
+  against botmux first — it has already solved most Feishu card UX problems.
