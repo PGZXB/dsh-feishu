@@ -1,5 +1,6 @@
 allowBuilds:
   esbuild: true
+  protobufjs: true
 minimumReleaseAgeExclude:
   - '@deepseek-ai/cordis@4.0.1'
   - '@deepseek-ai/cosmokit@1.8.2'
