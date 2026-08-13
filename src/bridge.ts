@@ -22,6 +22,7 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session';
 import {
   assistantText,
   buildPanelCard,
+  buildRepoPickerCard,
   type CardSnapshot,
   type CardStatus,
 } from './cards/render.js';
@@ -287,10 +288,10 @@ export class Bridge {
     );
   }
 
-  /** Send a command result as a text message. */
+  /** Send a command result as a text message (empty text posts no message). */
   private async replyCommandResult(chatId: string, result: CommandResult): Promise<void> {
     const text = result.kind === 'error' ? `⚠️ ${result.text}` : result.text;
-    await this.options.transport.sendText(chatId, text);
+    if (text !== '') await this.options.transport.sendText(chatId, text);
   }
 
   /** The normal turn flow: session resolution, streaming card, followup. */
@@ -524,6 +525,47 @@ export class Bridge {
         }
         break;
       }
+      case 'repo-select': {
+        const path = action.formValue?.['repo'];
+        if (path === undefined || path === '') {
+          await this.options.transport.sendText(
+            action.chatId,
+            'Pick a project from the dropdown first.',
+          );
+          break;
+        }
+        const resolved = resolveDirectory(path);
+        if (!resolved.ok) {
+          await this.options.transport.sendText(action.chatId, `⚠️ ${resolved.error}`);
+          break;
+        }
+        this.options.sessionMap.setCwd(action.chatId, resolved.path);
+        this.options.sessionMap.remint(action.chatId);
+        await this.options.transport.sendText(
+          action.chatId,
+          `Working directory set to ${resolved.path} (session restarts on your next message).`,
+        );
+        break;
+      }
+      case 'repo-manual': {
+        const raw = action.formValue?.['repo_manual']?.trim();
+        if (raw === undefined || raw === '') {
+          await this.options.transport.sendText(action.chatId, 'Type a path first.');
+          break;
+        }
+        const resolved = resolveDirectory(raw);
+        if (!resolved.ok) {
+          await this.options.transport.sendText(action.chatId, `⚠️ ${resolved.error}`);
+          break;
+        }
+        this.options.sessionMap.setCwd(action.chatId, resolved.path);
+        this.options.sessionMap.remint(action.chatId);
+        await this.options.transport.sendText(
+          action.chatId,
+          `Working directory set to ${resolved.path} (session restarts on your next message).`,
+        );
+        break;
+      }
       case 'panel': {
         const output = this.lastOutputs.get(action.chatId);
         const statusLine =
@@ -617,33 +659,35 @@ export class Bridge {
       buttonLabel: '📚 Pick project',
       handler: async (invocation) => {
         const roots = this.options.repoRoots ?? [];
+        // Direct path selection stays supported: /repo <abs-path>.
         const raw = invocation.rawInput.trim();
-        if (raw !== '') {
-          const index = Number(raw);
-          const found = Number.isInteger(index) ? await listProjects(roots) : [];
-          const picked = found[index - 1];
-          if (picked === undefined) {
-            return { kind: 'error', text: `no project at index ${raw} — run /repo to list.` };
-          }
-          this.options.sessionMap.setCwd(invocation.chatId, picked);
+        if (raw.startsWith('/') || raw.startsWith('~')) {
+          const resolved = resolveDirectory(raw);
+          if (!resolved.ok) return { kind: 'error', text: resolved.error };
+          this.options.sessionMap.setCwd(invocation.chatId, resolved.path);
           this.options.sessionMap.remint(invocation.chatId);
           return {
             kind: 'success',
-            text: `Working directory set to ${picked} (session restarts on your next message).`,
+            text: `Working directory set to ${resolved.path} (session restarts on your next message).`,
           };
         }
         const projects = await listProjects(roots);
-        if (projects.length === 0) {
-          return {
-            kind: 'error',
-            text: 'no candidate projects found under repoRoots — use /cd <path> to set a directory, or configure repoRoots.',
-          };
+        try {
+          await options.transport.sendCard(invocation.chatId, buildRepoPickerCard(projects));
+          return { kind: 'success', text: '' };
+        } catch (error: unknown) {
+          if (projects.length === 0) {
+            return {
+              kind: 'error',
+              text: 'no candidate projects found under repoRoots — use /cd <path> to set a directory, or configure repoRoots.',
+            };
+          }
+          const lines = projects
+            .slice(0, 20)
+            .map((project, index) => `${index + 1}. ${project}`)
+            .join('\n');
+          return { kind: 'success', text: `Projects:\n${lines}` };
         }
-        const lines = projects
-          .slice(0, 20)
-          .map((project, index) => `${index + 1}. ${project}`)
-          .join('\n');
-        return { kind: 'success', text: `Projects:\n${lines}\n\nReply /repo <n> to pick one.` };
       },
     });
     this.commands.register({

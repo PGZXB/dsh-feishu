@@ -37,7 +37,74 @@ export type SurfaceAction =
   | { readonly kind: 'stop' }
   | { readonly kind: 'copy' }
   | { readonly kind: 'retry' }
-  | { readonly kind: 'panel' };
+  | { readonly kind: 'panel' }
+  | { readonly kind: 'repo-select' }
+  | { readonly kind: 'repo-manual' };
+
+/** Build the interactive repo-picker card: a project dropdown plus a manual
+ * path input, submitted via form buttons (botmux-style selection).
+ * @param projects - candidate project paths.
+ * @returns Feishu interactive card JSON (v1 layout).
+ */
+export function buildRepoPickerCard(projects: readonly string[]): CardJson {
+  const options = projects.map((path, index) => ({
+    text: { tag: 'plain_text' as const, content: `${index + 1}. ${path}` },
+    value: path,
+  }));
+  const elements: CardElement[] = [
+    { tag: 'markdown', content: '**Pick a project directory** — or type a path below.' },
+    { tag: 'hr' },
+  ];
+  if (options.length > 0) {
+    elements.push({
+      tag: 'form',
+      elements: [
+        {
+          tag: 'select_static',
+          name: 'repo',
+          placeholder: { tag: 'plain_text', content: 'Choose a project…' },
+          options: options.slice(0, 50),
+        },
+        {
+          tag: 'action',
+          actions: [
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '✔ Select' },
+              type: 'primary',
+              value: actionValue({ kind: 'repo-select' }),
+            },
+          ],
+        },
+      ],
+    });
+  }
+  elements.push({
+    tag: 'form',
+    elements: [
+      {
+        tag: 'input',
+        name: 'repo_manual',
+        placeholder: { tag: 'plain_text', content: '/abs/path/to/project' },
+      },
+      {
+        tag: 'action',
+        actions: [
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '📁 Use path' },
+            value: actionValue({ kind: 'repo-manual' }),
+          },
+        ],
+      },
+    ],
+  });
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: '📚 Pick a project' }, template: 'wathet' },
+    elements,
+  };
+}
 
 /** Encode a surface action as a button value payload. */
 export function actionValue(action: SurfaceAction): Record<string, string> {

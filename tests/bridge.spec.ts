@@ -562,16 +562,25 @@ describe('working directory commands', () => {
     expect(h.transport.sentTexts.some((t) => t.text.includes('does not exist'))).toBe(true);
   });
 
-  it('/repo lists and picks projects from repoRoots', async () => {
+  it('/repo posts an interactive picker card and selects via callback', async () => {
     const h = makeHarness({ repoRoots: [join(SCRATCH, 'projects')] });
     const { mkdirSync } = await import('node:fs');
     const root = join(SCRATCH, 'projects');
     mkdirSync(join(root, 'proj-a', '.git'), { recursive: true });
     mkdirSync(join(root, 'proj-b', '.git'), { recursive: true });
     await h.bridge.handleMessage(message({ text: '/repo' }));
-    const list = h.transport.sentTexts.find((t) => t.text.includes('Projects:'));
-    expect(list?.text).toContain('proj-a');
-    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/repo 2' }));
-    expect(h.sessionMap.cwdFor('oc_chat')).toContain('proj-b');
+    const picker = h.transport.sentCards.find((c) =>
+      c.header?.title.content.includes('Pick a project'),
+    );
+    expect(picker).toBeDefined();
+    // The dropdown callback carries the chosen path in formValue.
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'repo-select' },
+      formValue: { repo: join(root, 'proj-b') },
+    });
+    expect(h.sessionMap.cwdFor('oc_chat')).toBe(join(root, 'proj-b'));
   });
 });

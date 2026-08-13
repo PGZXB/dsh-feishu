@@ -66,6 +66,23 @@ export type CardElement =
         /** Surface action payload, echoed back in the card callback. */
         readonly value: Record<string, string>;
       }[];
+    }
+  | { readonly tag: 'form'; readonly elements: readonly CardElement[] }
+  | {
+      readonly tag: 'select_static';
+      /** Form control name; its value lands in the callback form_value. */
+      readonly name: string;
+      readonly placeholder: { readonly tag: 'plain_text'; readonly content: string };
+      readonly options: readonly {
+        readonly text: { readonly tag: 'plain_text'; readonly content: string };
+        readonly value: string;
+      }[];
+    }
+  | {
+      readonly tag: 'input';
+      /** Form control name; its value lands in the callback form_value. */
+      readonly name: string;
+      readonly placeholder?: { readonly tag: 'plain_text'; readonly content: string };
     };
 
 /**
@@ -77,6 +94,8 @@ export interface CardAction {
   readonly chatId: string;
   readonly operatorOpenId: string;
   readonly value: Record<string, string>;
+  /** Values of form controls (select/input) when the button lives in a form. */
+  readonly formValue?: Record<string, string>;
 }
 
 /** Group membership counts, used for the 1-person-1-bot solo relaxation. */

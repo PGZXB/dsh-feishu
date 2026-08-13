@@ -7,6 +7,7 @@ import {
   assistantText,
   buildCard,
   buildPanelCard,
+  buildRepoPickerCard,
   escapeMarkdown,
   truncateTail,
 } from '../../src/cards/render.js';
@@ -105,5 +106,17 @@ describe('buildPanelCard', () => {
     expect(card.header?.title.content).toBe('⚙️ dsh-feishu panel');
     const action = card.elements.find((el) => el.tag === 'action');
     expect(action && 'actions' in action ? action.actions.length : 0).toBe(3);
+  });
+});
+describe('buildRepoPickerCard', () => {
+  it('emits a dropdown and a manual-path form', () => {
+    const card = buildRepoPickerCard(['/work/a', '/work/b']);
+    // The select and the manual input live inside form elements.
+    const nested = card.elements.flatMap((el) => (el.tag === 'form' ? el.elements : []));
+    const selects = nested.filter((el) => el.tag === 'select_static');
+    expect(selects).toHaveLength(1);
+    expect(selects[0] && 'options' in selects[0] ? selects[0].options.length : 0).toBe(2);
+    const inputs = nested.filter((el) => el.tag === 'input');
+    expect(inputs.some((el) => el.tag === 'input' && el.name === 'repo_manual')).toBe(true);
   });
 });

@@ -109,6 +109,16 @@ describe('normalizeCardAction', () => {
     expect(action?.chatId).toBe('oc_1');
   });
 
+  it('extracts form values from the action payload', () => {
+    const action = normalizeCardAction({
+      context: { open_message_id: 'om_1', open_chat_id: 'oc_1' },
+      operator: { open_id: 'ou_1' },
+      action: { value: { kind: 'repo-select' }, form_value: { repo: '/work/proj' } },
+    } as never);
+    expect(action?.formValue).toEqual({ repo: '/work/proj' });
+    expect(action?.value).toEqual({ kind: 'repo-select' });
+  });
+
   it('returns undefined without actionable ids or a value object', () => {
     expect(normalizeCardAction({} as never)).toBeUndefined();
     expect(

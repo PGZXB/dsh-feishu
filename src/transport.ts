@@ -122,7 +122,18 @@ export function normalizeCardAction(data: RawCardActionEvent): CardAction | unde
   ) {
     return undefined;
   }
-  return { messageId, chatId, operatorOpenId, value: value as Record<string, string> };
+  const rawForm = (data.action as { form_value?: unknown } | undefined)?.form_value;
+  const formValue =
+    typeof rawForm === 'object' && rawForm !== null
+      ? (rawForm as Record<string, string>)
+      : undefined;
+  return {
+    messageId,
+    chatId,
+    operatorOpenId,
+    value: value as Record<string, string>,
+    ...(formValue !== undefined ? { formValue } : {}),
+  };
 }
 
 /**
