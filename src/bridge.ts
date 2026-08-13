@@ -259,13 +259,13 @@ export class Bridge {
         const finalText = turn.content.trim();
         if (finalText !== '') this.lastOutputs.set(chatId, finalText);
         this.turns.delete(chatId);
-        // The card holds the full answer; only a minimal completion notice is
-        // sent as a fresh message (silent patches cannot notify, and repeating
-        // the whole answer would duplicate the card's content).
-        await this.options.transport.sendText(
-          chatId,
-          status === 'error' ? '⚠️ Turn failed — see the card for details' : '✅ Done',
-        );
+        // The card holds the full answer and finalizes green in place; the
+        // initial card send already notified, so a completed turn sends no
+        // second bubble. Failures keep a notice — a broken turn must not go
+        // unnoticed.
+        if (status === 'error') {
+          await this.options.transport.sendText(chatId, '⚠️ Turn failed — see the card for details');
+        }
         break;
       }
     }

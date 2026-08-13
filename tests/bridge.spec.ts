@@ -280,9 +280,9 @@ describe('Bridge', () => {
     // The final card patch carries the accumulated text.
     const last = h.transport.updatedCards.at(-1);
     expect(last?.elements).toContainEqual({ tag: 'markdown', content: 'Hello world' });
-    // The card holds the full answer; only a minimal completion notice is
-    // sent as a fresh message (silent patches cannot notify).
-    expect(h.transport.sentTexts).toEqual([{ chatId: 'oc_chat', text: '✅ Done' }]);
+    // A completed turn sends no second bubble: the card holds the full
+    // answer and finalizes green in place (the initial card send notified).
+    expect(h.transport.sentTexts).toEqual([]);
   });
 
   it('renders tool calls and marks them done on result', async () => {

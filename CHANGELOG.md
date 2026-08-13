@@ -69,3 +69,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     a minimal completion notice (`✅ Done` / failure notice), removing the
     duplicate full-text bubble.
   - 81 tests total.
+- Iteration-2 UX refinements:
+  - Card layout switched to the v1 root-`elements` form (no `schema` field):
+    schema-2.0 cards reject the interactive `action` tag (ErrCode 200861),
+    so the button-capable v1 layout is used (the layout botmux uses).
+  - A completed turn sends **no second bubble** — the card finalizes green in
+    place and the initial card send already notified. Failure turns keep a
+    `⚠️` notice.
+  - docs/feishu-setup.md: card callbacks must be switched to long connection
+    separately from events (card actions are callbacks, not events).

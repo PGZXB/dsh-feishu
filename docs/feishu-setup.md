@@ -19,13 +19,15 @@ to configure its credentials.
 
 The surface receives events over the Feishu **WebSocket long connection** —
 no callback URL, no public endpoint, no public IP on the host (all traffic is
-outbound). Enable it in **Events & Callbacks** (事件与回调):
+outbound). In **Events & Callbacks** (事件与回调):
 
-- Choose **Long connection** (长连接) mode.
-- Subscribe to the **Receive messages** event
-  (`im.message.receive_v1`, 接收消息), category **Message** (消息).
-- Card action callbacks (`card.action.trigger`) arrive over the same
-  connection (used from iteration 3 onward).
+- **Events** (事件订阅方式): choose **Long connection** (长连接) and
+  subscribe to **Receive messages** (`im.message.receive_v1`, 接收消息).
+- **Card callbacks** (卡片回调): card button presses are **callbacks, not
+  events** — their receive mode is configured **separately**. Switch the
+  card callback receive mode to **Long connection** as well (长连接), or
+  button presses fail with "该应用尚未配置卡片回调" (the app has no card
+  callback configured).
 
 ## 3. Grant permissions
 

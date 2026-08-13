@@ -146,24 +146,21 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
         'utf8',
       );
 
-      // The completion notice arrives as a fresh text message (patches
-      // cannot notify); the full answer lives in the streaming card.
+      // A completed turn finalizes the card green in place (no second
+      // bubble); the streamed answer is captured in the final patch.
       await waitFor(
-        'the completion notice',
-        () => readOutbox().some((r) => r.kind === 'text'),
+        'the green final card patch',
+        () => readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'green'),
         90_000,
       );
 
       const records = readOutbox();
       expect(records.some((r) => r.kind === 'card')).toBe(true);
       expect(records.some((r) => r.kind === 'patch')).toBe(true);
-      const finalText = records.filter((r) => r.kind === 'text').at(-1)?.text;
-      expect(finalText).toBe('✅ Done');
-      // The streamed answer is captured in the final card patch.
+      expect(records.some((r) => r.kind === 'text')).toBe(false);
       const patches = records.filter((r) => r.kind === 'patch');
       const lastCard = patches.at(-1)?.card;
-      const bodies = JSON.stringify(lastCard?.elements);
-      expect(bodies).toContain('Hello from mock LLM');
+      expect(JSON.stringify(lastCard?.elements)).toContain('Hello from mock LLM');
       expect(server.completionRequests()).toBeGreaterThanOrEqual(1);
     } catch (error) {
       throw new Error(
