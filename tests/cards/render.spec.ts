@@ -3,7 +3,13 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { assistantText, buildCard, escapeMarkdown, truncateTail } from '../../src/cards/render.js';
+import {
+  assistantText,
+  buildCard,
+  buildPanelCard,
+  escapeMarkdown,
+  truncateTail,
+} from '../../src/cards/render.js';
 
 describe('escapeMarkdown', () => {
   it('collapses bold markers', () => {
@@ -72,5 +78,30 @@ describe('buildCard', () => {
     expect(card.body.elements.some((el) => el.tag === 'markdown' && el.content === '🔧 bash')).toBe(
       true,
     );
+  });
+});
+describe('card buttons', () => {
+  it('shows only the stop button while working', () => {
+    const card = buildCard({ title: 'T', content: 'x', toolLines: [], status: 'working' });
+    const action = card.body.elements.find((el) => el.tag === 'action');
+    expect(action && 'actions' in action ? action.actions.map((a) => a.text.content) : []).toEqual([
+      '⏹ Stop',
+    ]);
+  });
+
+  it('shows copy/retry/panel when done', () => {
+    const card = buildCard({ title: 'T', content: 'x', toolLines: [], status: 'done' });
+    const action = card.body.elements.find((el) => el.tag === 'action');
+    const labels = action && 'actions' in action ? action.actions.map((a) => a.text.content) : [];
+    expect(labels).toEqual(['📋 Copy', '🔁 Retry', '⚙️ Panel']);
+  });
+});
+
+describe('buildPanelCard', () => {
+  it('emits a control card with the operation buttons', () => {
+    const card = buildPanelCard('**Idle** — send a message.');
+    expect(card.header?.title.content).toBe('⚙️ dsh-feishu panel');
+    const action = card.body.elements.find((el) => el.tag === 'action');
+    expect(action && 'actions' in action ? action.actions.length : 0).toBe(3);
   });
 });

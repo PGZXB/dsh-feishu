@@ -6,7 +6,7 @@
 
 import type { RawMessageEvent } from '@larksuiteoapi/node-sdk';
 import { describe, expect, it } from 'vitest';
-import { FeishuApiError, normalizeMessageEvent } from '../src/transport.js';
+import { FeishuApiError, normalizeCardAction, normalizeMessageEvent } from '../src/transport.js';
 
 /** A minimal raw event with the fields the normalizer reads. */
 function rawEvent(
@@ -64,6 +64,40 @@ describe('normalizeMessageEvent', () => {
   it('ignores unparseable content', () => {
     const message = normalizeMessageEvent(rawEvent({ message: { content: 'not json' } }));
     expect(message).toBeUndefined();
+  });
+});
+
+describe('normalizeCardAction', () => {
+  it('normalizes the v2 context-nested shape', () => {
+    const action = normalizeCardAction({
+      context: { open_message_id: 'om_1', open_chat_id: 'oc_1' },
+      operator: { open_id: 'ou_1' },
+      action: { value: { kind: 'stop' } },
+    } as never);
+    expect(action).toEqual({
+      messageId: 'om_1',
+      chatId: 'oc_1',
+      operatorOpenId: 'ou_1',
+      value: { kind: 'stop' },
+    });
+  });
+
+  it('falls back to top-level ids', () => {
+    const action = normalizeCardAction({
+      open_message_id: 'om_1',
+      open_chat_id: 'oc_1',
+      operator: { open_id: 'ou_1' },
+      action: { value: { kind: 'copy' } },
+    } as never);
+    expect(action?.messageId).toBe('om_1');
+    expect(action?.chatId).toBe('oc_1');
+  });
+
+  it('returns undefined without actionable ids or a value object', () => {
+    expect(normalizeCardAction({} as never)).toBeUndefined();
+    expect(
+      normalizeCardAction({ open_message_id: 'om_1', open_chat_id: 'oc_1' } as never),
+    ).toBeUndefined();
   });
 });
 

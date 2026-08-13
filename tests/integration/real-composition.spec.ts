@@ -146,9 +146,10 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
         'utf8',
       );
 
-      // The final answer arrives as a fresh text message (patches cannot notify).
+      // The completion notice arrives as a fresh text message (patches
+      // cannot notify); the full answer lives in the streaming card.
       await waitFor(
-        'the final text message',
+        'the completion notice',
         () => readOutbox().some((r) => r.kind === 'text'),
         90_000,
       );
@@ -157,7 +158,12 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
       expect(records.some((r) => r.kind === 'card')).toBe(true);
       expect(records.some((r) => r.kind === 'patch')).toBe(true);
       const finalText = records.filter((r) => r.kind === 'text').at(-1)?.text;
-      expect(finalText).toContain('Hello from mock LLM');
+      expect(finalText).toBe('✅ Done');
+      // The streamed answer is captured in the final card patch.
+      const patches = records.filter((r) => r.kind === 'patch');
+      const lastCard = patches.at(-1)?.card;
+      const bodies = JSON.stringify(lastCard?.body);
+      expect(bodies).toContain('Hello from mock LLM');
       expect(server.completionRequests()).toBeGreaterThanOrEqual(1);
     } catch (error) {
       throw new Error(

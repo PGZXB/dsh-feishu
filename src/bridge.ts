@@ -17,9 +17,14 @@
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
-import { assistantText, type CardSnapshot, type CardStatus } from './cards/render.js';
+import {
+  assistantText,
+  buildPanelCard,
+  type CardSnapshot,
+  type CardStatus,
+} from './cards/render.js';
 import type { StreamingCardManager } from './cards/streaming.js';
-import type { FeishuMessage, FeishuTransport } from './feishu/types.js';
+import type { CardAction, FeishuMessage, FeishuTransport } from './feishu/types.js';
 import { MessageDeduplicator } from './message-dedup.js';
 import type { SessionMap } from './session-map.js';
 
@@ -107,12 +112,19 @@ function markLastToolDone(turn: TurnState): void {
 export class Bridge {
   private readonly dedup = new MessageDeduplicator();
   private readonly turns = new Map<string, TurnState>();
+  private readonly lastPrompts = new Map<string, string>();
+  private readonly lastOutputs = new Map<string, string>();
   private readonly disposeEvents: () => void;
 
   constructor(private readonly options: BridgeOptions) {
     options.transport.onMessage((message) => {
       void this.handleMessage(message).catch((error: unknown) => {
         options.logger.error(`feishu message handling failed: ${String(error)}`);
+      });
+    });
+    options.transport.onCardAction((action) => {
+      void this.handleCardAction(action).catch((error: unknown) => {
+        options.logger.error(`feishu card action handling failed: ${String(error)}`);
       });
     });
     this.disposeEvents = options.onSessionEvent((sessionId, event) => {
@@ -137,6 +149,7 @@ export class Bridge {
     this.options.logger.info(
       `inbound message ${message.messageId} in ${message.chatId} (${message.chatType}): ${message.text.slice(0, 80)}`,
     );
+    this.lastPrompts.set(message.chatId, message.text);
     const sessionId = this.options.sessionMap.ensure(message.chatId);
     const agent = await this.resolveAgent(message.chatId, sessionId);
     this.turns.set(message.chatId, {
@@ -244,11 +257,85 @@ export class Bridge {
         this.patch(chatId, turn);
         await this.options.cards.finalize(chatId, status);
         const finalText = turn.content.trim();
+        if (finalText !== '') this.lastOutputs.set(chatId, finalText);
         this.turns.delete(chatId);
-        if (finalText !== '') {
-          await this.options.transport.sendText(chatId, finalText);
+        // The card holds the full answer; only a minimal completion notice is
+        // sent as a fresh message (silent patches cannot notify, and repeating
+        // the whole answer would duplicate the card's content).
+        await this.options.transport.sendText(
+          chatId,
+          status === 'error' ? '⚠️ Turn failed — see the card for details' : '✅ Done',
+        );
+        break;
+      }
+    }
+  }
+
+  /**
+   * Route one card button callback. Buttons are the surface's command
+   * entry point — no slash message needed (everything-is-a-card).
+   * @param action - the normalized card callback.
+   */
+  async handleCardAction(action: CardAction): Promise<void> {
+    const kind = action.value['kind'];
+    this.options.logger.info(
+      `card action ${kind ?? '?'} from ${action.operatorOpenId} in ${action.chatId}`,
+    );
+    switch (kind) {
+      case 'stop': {
+        const sessionId = this.options.sessionMap.get(action.chatId);
+        const agent = sessionId === undefined ? undefined : this.options.agentStore.get(sessionId);
+        if (agent !== undefined) {
+          agent.cancel({ kind: 'user' }, { keepInbox: true });
+          this.options.logger.info(`stop requested for chat ${action.chatId}`);
         }
         break;
+      }
+      case 'copy': {
+        const output = this.lastOutputs.get(action.chatId);
+        if (output !== undefined && output !== '') {
+          await this.options.transport.sendText(action.chatId, output);
+        }
+        break;
+      }
+      case 'retry': {
+        const prompt = this.lastPrompts.get(action.chatId);
+        if (prompt !== undefined && prompt !== '') {
+          const sessionId = this.options.sessionMap.ensure(action.chatId);
+          const agent = await this.resolveAgent(action.chatId, sessionId);
+          this.turns.set(action.chatId, {
+            title: turnTitle(prompt),
+            content: '',
+            toolLines: [],
+            status: 'working',
+          });
+          try {
+            await this.options.cards.open(action.chatId, turnTitle(prompt));
+          } catch (error: unknown) {
+            this.options.logger.warn(
+              `retry card unavailable, continuing text-only: ${String(error)}`,
+            );
+          }
+          agent.followup(
+            createUserMessage({
+              content: [{ type: 'text', text: prompt }],
+              source: { kind: 'user' },
+            }),
+          );
+        }
+        break;
+      }
+      case 'panel': {
+        const output = this.lastOutputs.get(action.chatId);
+        const statusLine =
+          output === undefined
+            ? '**Idle** — send a message to start a turn.'
+            : '**Ready** — the last answer is in the card above; copy or retry it.';
+        await this.options.transport.sendCard(action.chatId, buildPanelCard(statusLine));
+        break;
+      }
+      default: {
+        this.options.logger.warn(`unknown card action kind: ${kind ?? '(missing)'}`);
       }
     }
   }

@@ -10,7 +10,13 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { CommandRuntime } from '@deepseek-ai/dsh-commands';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { CardJson, FeishuMessage, FeishuTransport, SentCard } from '../src/feishu/types.js';
+import type {
+  CardAction,
+  CardJson,
+  FeishuMessage,
+  FeishuTransport,
+  SentCard,
+} from '../src/feishu/types.js';
 import { apply, Config, dshHome, name, resolveCredentials } from '../src/index.js';
 
 /** A recorded command registration as the fake registry sees it. */
@@ -28,6 +34,7 @@ class FakeTransport implements FeishuTransport {
   }
   async stop(): Promise<void> {}
   onMessage(_handler: (message: FeishuMessage) => void): void {}
+  onCardAction(_handler: (action: CardAction) => void): void {}
   async sendText(_chatId: string, _text: string): Promise<void> {}
   async sendCard(_chatId: string, _card: CardJson): Promise<SentCard> {
     return { messageId: 'msg-1' };

@@ -15,7 +15,13 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Bridge, turnTitle } from '../src/bridge.js';
 import { StreamingCardManager } from '../src/cards/streaming.js';
-import type { CardJson, FeishuMessage, FeishuTransport, SentCard } from '../src/feishu/types.js';
+import type {
+  CardAction,
+  CardJson,
+  FeishuMessage,
+  FeishuTransport,
+  SentCard,
+} from '../src/feishu/types.js';
 import { SessionMap } from '../src/session-map.js';
 
 const SCRATCH = join(process.cwd(), '_dev', 'test-bridge');
@@ -32,6 +38,8 @@ class RecordingTransport implements FeishuTransport {
   onMessage(handler: (message: FeishuMessage) => void): void {
     this.handler = handler;
   }
+  onCardAction(_handler: (action: CardAction) => void): void {}
+
   async sendText(chatId: string, text: string): Promise<void> {
     this.sentTexts.push({ chatId, text });
   }
@@ -86,13 +94,18 @@ class FakeAgentStore {
     return agent;
   }
 
+  readonly cancels: string[] = [];
+
   private makeAgent(sessionId: string): Agent {
     const followup = vi.fn((message: UserMessage) => {
       const list = this.followups.get(sessionId) ?? [];
       list.push(message);
       this.followups.set(sessionId, list);
     });
-    return { followup } as unknown as Agent;
+    const cancel = vi.fn(() => {
+      this.cancels.push(sessionId);
+    });
+    return { followup, cancel } as unknown as Agent;
   }
 }
 
@@ -267,8 +280,9 @@ describe('Bridge', () => {
     // The final card patch carries the accumulated text.
     const last = h.transport.updatedCards.at(-1);
     expect(last?.body.elements).toContainEqual({ tag: 'markdown', content: 'Hello world' });
-    // The final answer is a fresh message (silent patches cannot notify).
-    expect(h.transport.sentTexts).toEqual([{ chatId: 'oc_chat', text: 'Hello world' }]);
+    // The card holds the full answer; only a minimal completion notice is
+    // sent as a fresh message (silent patches cannot notify).
+    expect(h.transport.sentTexts).toEqual([{ chatId: 'oc_chat', text: '✅ Done' }]);
   });
 
   it('renders tool calls and marks them done on result', async () => {
@@ -310,7 +324,9 @@ describe('Bridge', () => {
     );
     const last = h.transport.updatedCards.at(-1);
     expect(last?.header?.template).toBe('red');
-    expect(h.transport.sentTexts).toEqual([{ chatId: 'oc_chat', text: 'oops' }]);
+    expect(h.transport.sentTexts).toEqual([
+      { chatId: 'oc_chat', text: '⚠️ Turn failed — see the card for details' },
+    ]);
   });
 
   it('rebinds a fresh session when a turn fails with a corrupt session log', async () => {
@@ -326,5 +342,61 @@ describe('Bridge', () => {
     );
     // The chat is rebound to a fresh session id so the next message starts clean.
     expect(h.sessionMap.get('oc_chat')).toBe('feishu-session-2');
+  });
+  it('stop action cancels the live agent', async () => {
+    const h = makeHarness();
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'stop' },
+    });
+    expect(h.agentStore.cancels).toEqual(['feishu-session-1']);
+  });
+
+  it('copy action resends the last output as text', async () => {
+    const h = makeHarness();
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleEvent('feishu-session-1', chunkEvent('the answer'));
+    await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+    h.transport.sentTexts = [];
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'copy' },
+    });
+    expect(h.transport.sentTexts).toEqual([{ chatId: 'oc_chat', text: 'the answer' }]);
+  });
+
+  it('retry action re-delivers the last prompt', async () => {
+    const h = makeHarness();
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'retry' },
+    });
+    const followups = h.agentStore.followups.get('feishu-session-1');
+    expect(followups).toHaveLength(2);
+    expect(followups?.[1]?.content).toEqual([{ type: 'text', text: 'hello' }]);
+  });
+
+  it('panel action posts a control card', async () => {
+    const h = makeHarness();
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel' },
+    });
+    expect(h.transport.sentCards).toHaveLength(2);
+    const panel = h.transport.sentCards.at(-1);
+    expect(panel?.header?.title.content).toBe('⚙️ dsh-feishu panel');
   });
 });

@@ -15,8 +15,20 @@
  * @module @dsh-feishu/dsh-feishu/transport
  */
 
-import { Client, EventDispatcher, type RawMessageEvent, WSClient } from '@larksuiteoapi/node-sdk';
-import type { CardJson, FeishuMessage, FeishuTransport, SentCard } from './feishu/types.js';
+import {
+  Client,
+  EventDispatcher,
+  type RawCardActionEvent,
+  type RawMessageEvent,
+  WSClient,
+} from '@larksuiteoapi/node-sdk';
+import type {
+  CardAction,
+  CardJson,
+  FeishuMessage,
+  FeishuTransport,
+  SentCard,
+} from './feishu/types.js';
 
 /** Minimal logger surface the transport needs. */
 export interface TransportLogger {
@@ -86,6 +98,30 @@ export function normalizeMessageEvent(data: RawMessageEvent): FeishuMessage | un
 }
 
 /**
+ * Normalize a raw `card.action.trigger` payload into a surface action, or
+ * `undefined` when no actionable payload is present. Message/chat ids may be
+ * nested under `context` (current v2 shape) or at the root (fallback).
+ * Pure function — unit-testable without any SDK connection.
+ * @param data - the raw card callback payload.
+ * @returns the normalized action, or `undefined` to ignore.
+ */
+export function normalizeCardAction(data: RawCardActionEvent): CardAction | undefined {
+  const messageId = data.context?.open_message_id ?? data.open_message_id;
+  const chatId = data.context?.open_chat_id ?? data.open_chat_id;
+  const operatorOpenId = data.operator?.open_id ?? '';
+  const value = data.action?.value;
+  if (
+    messageId === undefined ||
+    chatId === undefined ||
+    typeof value !== 'object' ||
+    value === null
+  ) {
+    return undefined;
+  }
+  return { messageId, chatId, operatorOpenId, value: value as Record<string, string> };
+}
+
+/**
  * The Feishu transport: long-connection receive + API send/update.
  */
 export class LarkTransport implements FeishuTransport {
@@ -93,6 +129,7 @@ export class LarkTransport implements FeishuTransport {
   private readonly ws: WSClient;
   private readonly dispatcher = new EventDispatcher({});
   private handler: ((message: FeishuMessage) => void) | undefined;
+  private actionHandler: ((action: CardAction) => void) | undefined;
   private readonly logger: TransportLogger | undefined;
 
   constructor(options: LarkTransportOptions) {
@@ -119,6 +156,11 @@ export class LarkTransport implements FeishuTransport {
         if (message !== undefined) this.handler?.(message);
         return undefined;
       },
+      'card.action.trigger': (data: RawCardActionEvent) => {
+        const action = normalizeCardAction(data);
+        if (action !== undefined) this.actionHandler?.(action);
+        return undefined;
+      },
     });
     await this.ws.start({ eventDispatcher: this.dispatcher });
   }
@@ -131,6 +173,11 @@ export class LarkTransport implements FeishuTransport {
   /** Register the single inbound-message handler (last registration wins). */
   onMessage(handler: (message: FeishuMessage) => void): void {
     this.handler = handler;
+  }
+
+  /** Register the single card-button handler (last registration wins). */
+  onCardAction(handler: (action: CardAction) => void): void {
+    this.actionHandler = handler;
   }
 
   /** Send a plain text message to a chat. */

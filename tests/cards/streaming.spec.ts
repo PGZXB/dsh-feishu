@@ -8,7 +8,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CardSnapshot } from '../../src/cards/render.js';
 import { StreamingCardManager } from '../../src/cards/streaming.js';
-import type { CardJson, FeishuMessage, FeishuTransport, SentCard } from '../../src/feishu/types.js';
+import type {
+  CardAction,
+  CardJson,
+  FeishuMessage,
+  FeishuTransport,
+  SentCard,
+} from '../../src/feishu/types.js';
 
 /** Records every transport interaction for assertions. */
 class RecordingTransport implements FeishuTransport {
@@ -22,6 +28,7 @@ class RecordingTransport implements FeishuTransport {
   onMessage(_handler: (message: FeishuMessage) => void): void {
     this.onMessageCalled = true;
   }
+  onCardAction(_handler: (action: CardAction) => void): void {}
   async sendText(_chatId: string, _text: string): Promise<void> {}
   async sendCard(_chatId: string, card: CardJson): Promise<SentCard> {
     this.sent.push(card);

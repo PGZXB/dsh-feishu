@@ -32,6 +32,55 @@ const STATUS_TEMPLATE: Record<CardStatus, string> = {
 /** Longest card body we ever send; the Feishu card cap is ~109KB. */
 export const MAX_CARD_CHARS = 60_000;
 
+/** Surface action payloads stamped on card buttons. */
+export type SurfaceAction =
+  | { readonly kind: 'stop' }
+  | { readonly kind: 'copy' }
+  | { readonly kind: 'retry' }
+  | { readonly kind: 'panel' };
+
+/** Encode a surface action as a button value payload. */
+export function actionValue(action: SurfaceAction): Record<string, string> {
+  return { kind: action.kind };
+}
+
+/** The button row appended by status: working → stop; done → copy/retry/panel; error → retry/panel. */
+function statusButtons(status: CardStatus): CardElement {
+  const actions: Array<{
+    readonly tag: 'button';
+    readonly text: { readonly tag: 'plain_text'; readonly content: string };
+    readonly type?: 'primary' | 'danger' | 'default';
+    readonly value: Record<string, string>;
+  }> = [];
+  if (status === 'working') {
+    actions.push({
+      tag: 'button',
+      text: { tag: 'plain_text', content: '⏹ Stop' },
+      type: 'danger',
+      value: actionValue({ kind: 'stop' }),
+    });
+  } else {
+    if (status === 'done') {
+      actions.push({
+        tag: 'button',
+        text: { tag: 'plain_text', content: '📋 Copy' },
+        value: actionValue({ kind: 'copy' }),
+      });
+    }
+    actions.push({
+      tag: 'button',
+      text: { tag: 'plain_text', content: '🔁 Retry' },
+      value: actionValue({ kind: 'retry' }),
+    });
+    actions.push({
+      tag: 'button',
+      text: { tag: 'plain_text', content: '⚙️ Panel' },
+      value: actionValue({ kind: 'panel' }),
+    });
+  }
+  return { tag: 'action', actions };
+}
+
 /**
  * Neutralize lark_md bold markers in untrusted text. Feishu's lark_md has no
  * reliable escape syntax, so the pragmatic approach is to collapse `**` into
@@ -93,12 +142,56 @@ export function buildCard(snapshot: CardSnapshot): CardJson {
           : '**… working**';
     elements.push({ tag: 'markdown', content: statusLine });
   }
+  elements.push(statusButtons(snapshot.status));
   return {
     schema: '2.0',
     config: { wide_screen_mode: true },
     header: {
       title: { tag: 'plain_text', content: snapshot.title },
       template: STATUS_TEMPLATE[snapshot.status],
+    },
+    body: { direction: 'vertical', elements },
+  };
+}
+
+/**
+ * Build the control-panel card: a standing operation surface the user can
+ * click without typing a slash command (stop / retry / copy / panel).
+ * @param statusLine - a short current-state line for the panel body.
+ * @returns Feishu interactive card JSON (schema 2.0).
+ */
+export function buildPanelCard(statusLine: string): CardJson {
+  const elements: CardElement[] = [
+    { tag: 'markdown', content: statusLine },
+    { tag: 'hr' },
+    {
+      tag: 'action',
+      actions: [
+        {
+          tag: 'button',
+          text: { tag: 'plain_text', content: '⏹ Stop current' },
+          type: 'danger',
+          value: actionValue({ kind: 'stop' }),
+        },
+        {
+          tag: 'button',
+          text: { tag: 'plain_text', content: '🔁 Retry last' },
+          value: actionValue({ kind: 'retry' }),
+        },
+        {
+          tag: 'button',
+          text: { tag: 'plain_text', content: '📋 Copy last' },
+          value: actionValue({ kind: 'copy' }),
+        },
+      ],
+    },
+  ];
+  return {
+    schema: '2.0',
+    config: { wide_screen_mode: true },
+    header: {
+      title: { tag: 'plain_text', content: '⚙️ dsh-feishu panel' },
+      template: 'wathet',
     },
     body: { direction: 'vertical', elements },
   };

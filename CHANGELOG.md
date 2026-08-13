@@ -55,6 +55,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     booted from a real profile runs a real agent turn against a mock LLM
     server (`tests/integration/mock-llm-server.ts`), with Feishu swapped for
     the memory transport; asserts the full private-chat loop (card posted +
-    patched, final answer as a fresh message). Self-skips when prerequisites
-    are missing.
+    patched, completion notice as a fresh message). Self-skips when
+    prerequisites are missing.
   - 68 tests total (67 unit + 1 real-composition integration).
+- Iteration-2 slice — streaming-card controls + minimal completion notice:
+  - Card button callbacks (`card.action.trigger`) over the WS long
+    connection: `normalizeCardAction` in the transport, routed by the bridge.
+  - Streaming card carries a status button row: ⏹ Stop while working;
+    📋 Copy / 🔁 Retry / ⚙️ Panel when done (Retry/Panel on error).
+  - Control-panel card (`buildPanelCard`): a standing operation surface so
+    actions do not require typing slash messages.
+  - The final answer is kept in the finalized card; the fresh message is now
+    a minimal completion notice (`✅ Done` / failure notice), removing the
+    duplicate full-text bubble.
+  - 81 tests total.

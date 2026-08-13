@@ -49,7 +49,28 @@ export interface CardJson {
 /** One card element the surface emits. */
 export type CardElement =
   | { readonly tag: 'markdown'; readonly content: string }
-  | { readonly tag: 'hr' };
+  | { readonly tag: 'hr' }
+  | {
+      readonly tag: 'action';
+      readonly actions: readonly {
+        readonly tag: 'button';
+        readonly text: { readonly tag: 'plain_text'; readonly content: string };
+        readonly type?: 'primary' | 'danger' | 'default';
+        /** Surface action payload, echoed back in the card callback. */
+        readonly value: Record<string, string>;
+      }[];
+    };
+
+/**
+ * One card button callback normalized for the surface. `value` is the
+ * payload stamped on the button that was pressed.
+ */
+export interface CardAction {
+  readonly messageId: string;
+  readonly chatId: string;
+  readonly operatorOpenId: string;
+  readonly value: Record<string, string>;
+}
 
 /** The transport seam the surface renders into. */
 export interface FeishuTransport {
@@ -59,6 +80,8 @@ export interface FeishuTransport {
   stop(): Promise<void>;
   /** Register the single inbound-message handler (last registration wins). */
   onMessage(handler: (message: FeishuMessage) => void): void;
+  /** Register the single card-button handler (last registration wins). */
+  onCardAction(handler: (action: CardAction) => void): void;
   /** Send a plain text message to a chat. */
   sendText(chatId: string, text: string): Promise<void>;
   /** Send an interactive card; resolves with the created message id. */

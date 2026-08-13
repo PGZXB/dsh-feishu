@@ -20,7 +20,13 @@
 
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { CardJson, FeishuMessage, FeishuTransport, SentCard } from './feishu/types.js';
+import type {
+  CardAction,
+  CardJson,
+  FeishuMessage,
+  FeishuTransport,
+  SentCard,
+} from './feishu/types.js';
 
 /** Options for {@link MemoryTransport}. */
 export interface MemoryTransportOptions {
@@ -46,6 +52,7 @@ export interface MemoryOutboxRecord {
  */
 export class MemoryTransport implements FeishuTransport {
   private handler: ((message: FeishuMessage) => void) | undefined;
+  private actionHandler: ((action: CardAction) => void) | undefined;
   private timer: ReturnType<typeof setInterval> | null = null;
   private seq = 0;
   private readonly inboxDir: string;
@@ -74,6 +81,16 @@ export class MemoryTransport implements FeishuTransport {
   /** Register the single inbound-message handler (last registration wins). */
   onMessage(handler: (message: FeishuMessage) => void): void {
     this.handler = handler;
+  }
+
+  /** Register the single card-button handler (last registration wins). */
+  onCardAction(handler: (action: CardAction) => void): void {
+    this.actionHandler = handler;
+  }
+
+  /** Deliver a card action directly (same-process) for tests. */
+  deliverAction(action: CardAction): void {
+    this.actionHandler?.(action);
   }
 
   /** Record a text send in the outbox. */
