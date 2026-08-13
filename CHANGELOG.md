@@ -41,3 +41,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - docs/feishu-setup.md (app creation, scopes, long connection) and
     docs/architecture.md.
   - 59 unit tests across all modules.
+- Iteration-1 hardening:
+  - `src/memory-transport.ts` — file-channel in-memory transport behind the
+    `FEISHU_TRANSPORT=memory` seam (integration tests and manual debugging:
+    `inbox/` delivers messages, `outbox/` records every send/update).
+  - Restart-safe session resolution in `src/bridge.ts`: live agent → resume
+    the mapped persisted session → create fresh → rebind a fresh id when the
+    mapped id collides with an on-disk log; agents always receive
+    provider/model (config overrides or the deployment default selection).
+  - Turn-failure logging: `turn/end` errors are logged with code + message.
+  - **Real-composition integration test**
+    (`tests/integration/real-composition.spec.ts`): a real dsh process
+    booted from a real profile runs a real agent turn against a mock LLM
+    server (`tests/integration/mock-llm-server.ts`), with Feishu swapped for
+    the memory transport; asserts the full private-chat loop (card posted +
+    patched, final answer as a fresh message). Self-skips when prerequisites
+    are missing.
+  - 68 tests total (67 unit + 1 real-composition integration).

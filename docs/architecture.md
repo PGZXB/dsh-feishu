@@ -48,17 +48,22 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 |---|---|
 | `src/feishu/types.ts` | Transport seam types: normalized `FeishuMessage`, `FeishuTransport`, card JSON. |
 | `src/transport.ts` | lark-oapi implementation: `WSClient` long connection + `Client` API calls; pure `normalizeMessageEvent`; `FeishuApiError`. |
+| `src/memory-transport.ts` | File-channel in-memory transport (`FEISHU_TRANSPORT=memory`): the integration-test / debugging seam — `inbox/` delivers messages, `outbox/` records every send. |
 | `src/message-dedup.ts` | Bounded in-memory message-id dedup (platform redelivery). |
 | `src/session-map.ts` | Durable chat ↔ session mapping (atomic JSON writes), reverse lookup for events. |
 | `src/cards/render.ts` | Pure rendering: session events → card JSON (schema 2.0), markdown escaping, tail truncation. |
 | `src/cards/streaming.ts` | One card per turn: POST on open, throttled/coalesced `message.patch` updates, terminal finalize. |
-| `src/bridge.ts` | Orchestrator: message → session → `agent.followup`; `session/event` → card patches; turn end → final message. |
-| `src/index.ts` | Plugin entry: config, credential resolution, wiring, `feishu-status` command. |
+| `src/bridge.ts` | Orchestrator: message → session → `agent.followup`; `session/event` → card patches; turn end → final message. Agent resolution ladder: live → resume mapped session → create → rebind fresh id on collision. |
+| `src/index.ts` | Plugin entry: config, credential resolution, agent options (config or `agentDefaultModel`), wiring, `feishu-status` command. |
 
 ## Key behaviors
 
 - **A chat is a session.** One Feishu chat maps to one dsh session id
   (`feishu-*`), persisted so a restart resumes every chat.
+- **Restart-safe session resolution.** For a chat with a mapped session and
+  no live agent, the bridge resumes the persisted session; if nothing is
+  persisted it creates fresh; if the mapped id collides with an on-disk log
+  it rebinds a fresh id. History survives daemon restarts.
 - **One card per turn.** The card is posted when a message arrives and
   patched as chunks/tools stream in. Patches are silent (no unread), so the
   **final answer is delivered as a fresh message** (Feishu `message.patch`
@@ -67,6 +72,17 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
   runs and the final answer arrives as text.
 - **Dedup.** A redelivered message id is ignored within the process lifetime
   (durable dedup is deferred).
+
+## Testing
+
+- **Unit tests** (`tests/`): every module, via fake contexts and recording
+  fakes — 67 tests.
+- **Real-composition integration** (`tests/integration/`): a real dsh
+  process booted from a real profile runs a real agent turn against a mock
+  LLM server, with Feishu swapped for the memory transport. Asserts the
+  whole loop end to end (card posted/patched, final message delivered).
+  Self-skips when prerequisites are missing; see
+  [development.md](development.md) → Integration test.
 
 ## Later iterations
 

@@ -50,9 +50,42 @@ scripts/              # repo tooling
 
 Tests use the "fake context" pattern for plugin-level coverage: hand-built
 stubs of the cordis services the module touches (see `tests/index.spec.ts`),
-plus pure-function tests for the module's logic. Integration tests boot a
-minimal dsh profile with a fake Feishu transport; they require `dsh` and a
-working network only where tagged.
+plus pure-function tests for the module's logic.
+
+### Integration test
+
+`tests/integration/real-composition.spec.ts` boots a **real dsh process** from
+a real profile and runs a real agent turn, mocking only the two external
+services:
+
+- **Feishu** — `FEISHU_TRANSPORT=memory` swaps the wire for the file-channel
+  memory transport (`src/memory-transport.ts`): the test drops a message into
+  `inbox/`, the surface processes it, and every send/update lands in
+  `outbox/`.
+- **LLM API** — `DEEPSEEK_BASE_URL` points the real DeepSeek adapter at a
+  local mock server (`tests/integration/mock-llm-server.ts`).
+
+The test asserts the full private-chat loop: message → session → agent turn →
+card posted and patched → final answer delivered as a fresh message. It
+self-skips unless the prerequisites are met:
+
+- The dsh CLI is resolvable (`$DSH_BIN`, or `dsh` on `PATH`).
+- A prepared profile exists at `$FEISHU_INT_DSH_HOME/profiles/feishu-dev`
+  (default `_dev/dsh-home/profiles/feishu-dev` — create it with
+  `dsh plugin --profile feishu-dev add link:<checkout>`, see the "Verifying
+  the bundle" section above). Deliberately independent of the ambient
+  `DSH_HOME` so the test never touches another dsh home.
+- The checkout is built (`pnpm run build`).
+
+```sh
+pnpm run build        # ensure lib/ is current (the profile links the checkout)
+pnpm run test         # unit + integration (integration self-skips as needed)
+DSH_BIN=/path/to/dsh pnpm run test -- tests/integration/real-composition.spec.ts
+```
+
+The `FEISHU_TRANSPORT=memory` seam is also handy for manual debugging:
+inject a fake message by writing a JSON file into
+`$FEISHU_MEMORY_DIR/inbox/` while the surface runs.
 
 ## Verifying the bundle in a real dsh profile
 
