@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import type { Context } from '@deepseek-ai/cordis';
 // Empty type imports carry the Context merges (`ctx.commands`, `ctx.agents`,
 // `ctx.credentials`, and the `session/event` event) into this compilation.
-import type {} from '@deepseek-ai/dsh-agent';
+import type { Agent } from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-commands';
 import { credentialRef } from '@deepseek-ai/dsh-credentials';
 import type { SessionId } from '@deepseek-ai/dsh-session';
@@ -72,6 +72,11 @@ export interface Config {
    * else is ignored). Empty means all chats are served.
    */
   readonly allowedChats?: string[];
+  /**
+   * Unknown slash-line policy: `error` replies with an unknown-command notice
+   * (default); `passthrough` delivers the line to the model as a normal turn.
+   */
+  readonly unknownCommand?: 'error' | 'passthrough';
 }
 
 /** Validated plugin configuration (schemastery schema). */
@@ -88,6 +93,7 @@ export const Config: z<Config> = z.object({
     .union([z.const('always'), z.const('never'), z.const('ambient'), z.const('topic')])
     .required(false),
   allowedChats: z.array(z.string()).required(false),
+  unknownCommand: z.union([z.const('error'), z.const('passthrough')]).required(false),
 });
 
 /** Resolved credentials, or `undefined` when either value is missing. */
@@ -217,6 +223,8 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
     logger,
     ...(config.groupMentionMode !== undefined ? { groupMentionMode: config.groupMentionMode } : {}),
     ...(config.allowedChats !== undefined ? { allowedChats: config.allowedChats } : {}),
+    ...(config.unknownCommand !== undefined ? { unknownCommand: config.unknownCommand } : {}),
+    executeCommand: (agent, line) => executeDshCommand(ctx, agent, line),
   });
   ctx.effect(() => () => {
     bridge.dispose();
@@ -288,6 +296,23 @@ function resolveAgentOptions(
     ...(provider !== undefined ? { provider } : {}),
     ...(model !== undefined ? { model } : {}),
   };
+}
+
+/** Execute a slash line through the dsh command registry, if present. */
+async function executeDshCommand(
+  ctx: Context,
+  agent: Agent,
+  line: string,
+): Promise<string | undefined> {
+  const commands = ctx.get('commands');
+  if (commands === undefined) return undefined;
+  try {
+    const execution = await commands.execute(agent, line, new AbortController().signal);
+    if (execution === undefined) return undefined;
+    return execution.result.kind === 'success' ? execution.result.text : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Register the `feishu-status` diagnostic command when the registry exists. */

@@ -49,6 +49,9 @@ class RecordingTransport implements FeishuTransport {
   async chatStats(_chatId: string): Promise<ChatStats | undefined> {
     return this.stats;
   }
+  async createGroup(name: string, _memberOpenIds: readonly string[]): Promise<{ chatId: string }> {
+    return { chatId: `oc_group_${name}` };
+  }
 
   async sendText(chatId: string, text: string): Promise<void> {
     this.sentTexts.push({ chatId, text });
@@ -134,6 +137,8 @@ function makeHarness(
     mint?: () => string;
     groupMentionMode?: 'always' | 'never' | 'ambient' | 'topic';
     allowedChats?: readonly string[];
+    executeCommand?: (agent: Agent, line: string) => Promise<string | undefined>;
+    unknownCommand?: 'error' | 'passthrough';
   } = {},
 ): Harness {
   const transport = new RecordingTransport();
@@ -165,6 +170,8 @@ function makeHarness(
       ? { groupMentionMode: options.groupMentionMode }
       : {}),
     ...(options.allowedChats !== undefined ? { allowedChats: options.allowedChats } : {}),
+    ...(options.executeCommand !== undefined ? { executeCommand: options.executeCommand } : {}),
+    ...(options.unknownCommand !== undefined ? { unknownCommand: options.unknownCommand } : {}),
   });
   const emit = (sessionId: string, event: SessionEvent): void => {
     for (const listener of [...listeners]) listener(sessionId, event);
@@ -474,6 +481,60 @@ describe('Bridge', () => {
       const h = makeHarness({ allowedChats: ['oc_allowed'] });
       await h.bridge.handleMessage(message({ chatId: 'oc_other' }));
       expect(h.agentStore.followups.get('feishu-session-1')).toBeUndefined();
+    });
+  });
+  describe('slash commands', () => {
+    it('/help replies with the command list', async () => {
+      const h = makeHarness();
+      await h.bridge.handleMessage(message({ text: '/help' }));
+      const texts = h.transport.sentTexts;
+      const help = texts.find((t) => t.text.includes('dsh-feishu commands'));
+      expect(help).toBeDefined();
+      expect(help?.text).toContain('/group');
+      expect(h.agentStore.followups.get('feishu-session-1')).toBeUndefined();
+    });
+
+    it('/group creates a group with the sender', async () => {
+      const h = makeHarness();
+      await h.bridge.handleMessage(message({ text: '/group my team' }));
+      const texts = h.transport.sentTexts;
+      expect(texts.some((t) => t.text.includes('oc_group_my team'))).toBe(true);
+      expect(h.agentStore.followups.get('feishu-session-1')).toBeUndefined();
+    });
+
+    it('/cancel stops the live agent', async () => {
+      const h = makeHarness();
+      await h.bridge.handleMessage(message());
+      await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/cancel' }));
+      expect(h.agentStore.cancels).toContain('feishu-session-1');
+    });
+
+    it('forwards unknown commands to the dsh registry', async () => {
+      const h = makeHarness({
+        executeCommand: async (_agent, line) => (line === '/compact' ? 'Compacted.' : undefined),
+      });
+      // A live session must exist for the dsh registry to execute against.
+      await h.bridge.handleMessage(message());
+      await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/compact' }));
+      expect(h.transport.sentTexts.some((t) => t.text === 'Compacted.')).toBe(true);
+    });
+
+    it('replies unknown-command when the dsh registry has no match', async () => {
+      const h = makeHarness({ executeCommand: async () => undefined });
+      await h.bridge.handleMessage(message({ text: '/nope' }));
+      expect(h.transport.sentTexts.some((t) => t.text.includes('Unknown command /nope'))).toBe(
+        true,
+      );
+      expect(h.agentStore.followups.get('feishu-session-1')).toBeUndefined();
+    });
+
+    it('passes unknown commands to the model when configured', async () => {
+      const h = makeHarness({
+        unknownCommand: 'passthrough',
+        executeCommand: async () => undefined,
+      });
+      await h.bridge.handleMessage(message({ text: '/something' }));
+      expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(1);
     });
   });
 });

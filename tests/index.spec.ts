@@ -42,6 +42,9 @@ class FakeTransport implements FeishuTransport {
   async chatStats(_chatId: string): Promise<ChatStats | undefined> {
     return undefined;
   }
+  async createGroup(name: string, _memberOpenIds: readonly string[]): Promise<{ chatId: string }> {
+    return { chatId: `oc_group_${name}` };
+  }
   async sendText(_chatId: string, _text: string): Promise<void> {}
   async sendCard(_chatId: string, _card: CardJson): Promise<SentCard> {
     return { messageId: 'msg-1' };

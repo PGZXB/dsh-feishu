@@ -84,6 +84,11 @@ export class MemoryTransport implements FeishuTransport {
     return this.stats;
   }
 
+  /** Create a fake group; the chat id derives from the name. */
+  async createGroup(name: string, _memberOpenIds: readonly string[]): Promise<{ chatId: string }> {
+    return { chatId: `oc_group_${name.replace(/[^a-z0-9_-]/gi, '')}` };
+  }
+
   /** Create the directories and begin polling the inbox. */
   async start(): Promise<void> {
     mkdirSync(this.inboxDir, { recursive: true });

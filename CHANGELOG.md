@@ -88,3 +88,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Transport resolves the bot's own open id (`bot/v3/info`) for mention
     matching; inbound messages carry mention open ids.
   - 90 tests total.
+- Iteration-2 slice — surface command system:
+  - Slash-line parsing + `CommandRegistry` (src/commands.ts): every command
+    declares a panel category/button label, so the control panel can render
+    the full command set as buttons (everything-is-a-card).
+  - Built-in commands: `/help` (list), `/group <name>` (create a group with
+    the sender via `im.v1.chat.create`), `/cancel` (stop the turn),
+    `/status` (session info).
+  - DSH passthrough: unknown slash lines execute against the dsh command
+    registry when the chat has a live agent (`executeCommand` wired to
+    `ctx.commands`); `unknownCommand` config (`error` default /
+    `passthrough` to the model).
+  - Commands never open a streaming card or consume a model turn.
+  - 101 tests total.

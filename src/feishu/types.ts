@@ -111,4 +111,9 @@ export interface FeishuTransport {
    * start). Used to detect whether a group message mentions the bot.
    */
   getBotOpenId(): string | undefined;
+  /**
+   * Create a group chat with the given name and members (the bot becomes the
+   * owner/creator). Resolves with the new chat id.
+   */
+  createGroup(name: string, memberOpenIds: readonly string[]): Promise<{ chatId: string }>;
 }

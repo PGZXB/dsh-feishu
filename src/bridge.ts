@@ -24,6 +24,12 @@ import {
   type CardStatus,
 } from './cards/render.js';
 import type { StreamingCardManager } from './cards/streaming.js';
+import {
+  type CommandInvocation,
+  CommandRegistry,
+  type CommandResult,
+  parseSlash,
+} from './commands.js';
 import type { CardAction, FeishuMessage, FeishuTransport } from './feishu/types.js';
 import { MessageDeduplicator } from './message-dedup.js';
 import type { SessionMap } from './session-map.js';
@@ -78,6 +84,18 @@ export interface BridgeOptions {
    * else is ignored). Empty means all chats are served.
    */
   readonly allowedChats?: readonly string[];
+  /**
+   * DSH slash-command passthrough: execute `line` against the chat's live
+   * agent through the dsh command registry. Absent, registry commands are
+   * not available (every unknown slash line falls to the unknown policy).
+   */
+  readonly executeCommand?: (agent: Agent, line: string) => Promise<string | undefined>;
+  /**
+   * Policy for an unknown slash line: `error` replies with an unknown-command
+   * notice (default); `passthrough` delivers the line to the model as a
+   * normal turn (cc-tui behavior).
+   */
+  readonly unknownCommand?: 'error' | 'passthrough';
 }
 
 /** One turn's card state, owned by the bridge. */
@@ -133,6 +151,7 @@ export class Bridge {
   private readonly lastPrompts = new Map<string, string>();
   private readonly lastOutputs = new Map<string, string>();
   private readonly disposeEvents: () => void;
+  private readonly commands = new CommandRegistry();
 
   constructor(private readonly options: BridgeOptions) {
     options.transport.onMessage((message) => {
@@ -150,6 +169,12 @@ export class Bridge {
         options.logger.error(`session event handling failed: ${String(error)}`);
       });
     });
+    this.registerCommands();
+  }
+
+  /** All surface commands (the control-panel button source). */
+  commandsList(): readonly import('./commands.js').SurfaceCommand[] {
+    return this.commands.list();
   }
 
   /** Detach the session-event subscription. */
@@ -168,6 +193,57 @@ export class Bridge {
     this.options.logger.info(
       `inbound message ${message.messageId} in ${message.chatId} (${message.chatType}): ${message.text.slice(0, 80)}`,
     );
+    const slash = parseSlash(message.text.trim());
+    if (slash !== undefined) {
+      await this.handleCommand(message, slash);
+      return;
+    }
+    await this.deliverTurn(message);
+  }
+
+  /** Route a slash command: surface command, DSH passthrough, or unknown. */
+  private async handleCommand(
+    message: FeishuMessage,
+    slash: { name: string; rawInput: string },
+  ): Promise<void> {
+    const command = this.commands.find(slash.name);
+    if (command !== undefined) {
+      const result = await command.handler({
+        chatId: message.chatId,
+        senderOpenId: message.senderOpenId,
+        rawInput: slash.rawInput,
+      });
+      await this.replyCommandResult(message.chatId, result);
+      return;
+    }
+    const line = `/${slash.name}${slash.rawInput}`;
+    const sessionId = this.options.sessionMap.get(message.chatId);
+    const agent = sessionId === undefined ? undefined : this.options.agentStore.get(sessionId);
+    if (this.options.executeCommand !== undefined && agent !== undefined) {
+      const text = await this.options.executeCommand(agent, line);
+      if (text !== undefined) {
+        await this.options.transport.sendText(message.chatId, text);
+        return;
+      }
+    }
+    if (this.options.unknownCommand === 'passthrough') {
+      await this.deliverTurn(message);
+      return;
+    }
+    await this.options.transport.sendText(
+      message.chatId,
+      `Unknown command ${line} — send /help to list commands.`,
+    );
+  }
+
+  /** Send a command result as a text message. */
+  private async replyCommandResult(chatId: string, result: CommandResult): Promise<void> {
+    const text = result.kind === 'error' ? `⚠️ ${result.text}` : result.text;
+    await this.options.transport.sendText(chatId, text);
+  }
+
+  /** The normal turn flow: session resolution, streaming card, followup. */
+  private async deliverTurn(message: FeishuMessage): Promise<void> {
     this.lastPrompts.set(message.chatId, message.text);
     const sessionId = this.options.sessionMap.ensure(message.chatId);
     const agent = await this.resolveAgent(message.chatId, sessionId);
@@ -408,6 +484,76 @@ export class Bridge {
         this.options.logger.warn(`unknown card action kind: ${kind ?? '(missing)'}`);
       }
     }
+  }
+
+  /** Register the built-in surface commands. */
+  private registerCommands(): void {
+    const options = this.options;
+    this.commands.register({
+      name: 'help',
+      description: 'List all surface commands',
+      category: 'system',
+      buttonLabel: '❓ Help',
+      handler: () => {
+        const lines = this.commands
+          .list()
+          .map((command) => `/${command.name} — ${command.description}`)
+          .join('\n');
+        return {
+          kind: 'success',
+          text: `dsh-feishu commands:\n${lines}\n\nOther slash lines are forwarded to dsh when they exist in its registry.`,
+        };
+      },
+    });
+    this.commands.register({
+      name: 'group',
+      description: 'Create a group chat with you and the bot',
+      category: 'chat',
+      buttonLabel: '👥 New group',
+      handler: async (invocation) => {
+        const name = invocation.rawInput.trim() || 'dsh-feishu';
+        try {
+          const { chatId } = await options.transport.createGroup(name, [invocation.senderOpenId]);
+          return { kind: 'success', text: `Group created: ${name} (${chatId})` };
+        } catch (error: unknown) {
+          return { kind: 'error', text: `group creation failed: ${String(error)}` };
+        }
+      },
+    });
+    this.commands.register({
+      name: 'cancel',
+      description: 'Stop the current turn',
+      category: 'session',
+      buttonLabel: '⏹ Stop',
+      handler: (invocation) => {
+        const sessionId = options.sessionMap.get(invocation.chatId);
+        const agent = sessionId === undefined ? undefined : options.agentStore.get(sessionId);
+        if (agent !== undefined) {
+          agent.cancel({ kind: 'user' }, { keepInbox: true });
+          return { kind: 'success', text: 'Stopped.' };
+        }
+        return { kind: 'error', text: 'no active session to stop.' };
+      },
+    });
+    this.commands.register({
+      name: 'status',
+      description: 'Show this chat’s session status',
+      category: 'system',
+      buttonLabel: '📊 Status',
+      handler: (invocation) => {
+        const sessionId = options.sessionMap.get(invocation.chatId);
+        const agent = sessionId === undefined ? undefined : options.agentStore.get(sessionId);
+        const output = this.lastOutputs.get(invocation.chatId);
+        const lines = [
+          `chat: ${invocation.chatId}`,
+          `session: ${sessionId ?? '(none yet)'}`,
+          `agent: ${agent !== undefined ? 'live' : 'idle'}`,
+          `last output: ${output === undefined ? '(none)' : `${output.length} chars`}`,
+          `mention mode: ${options.groupMentionMode ?? 'always'}`,
+        ];
+        return { kind: 'success', text: lines.join('\n') };
+      },
+    });
   }
 
   /** Stage the turn's snapshot on the streaming card. */

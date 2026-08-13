@@ -58,6 +58,10 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 
 ## Key behaviors
 
+- **Slash commands with button parity.** Plugin commands (`/help`,
+  `/group`, `/cancel`, `/status`) and dsh-registry passthrough share the
+  same handler path; every command declares a panel category and button
+  label for the control-panel rendering (Iteration 2 continuation).
 - **Configurable group mention gate.** `groupMentionMode` (botmux
   semantics): `always` requires an @-mention (relaxed in 1-person-1-bot solo
   groups via cached chat member counts); `never` answers every group message;

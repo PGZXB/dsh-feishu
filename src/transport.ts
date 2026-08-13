@@ -177,6 +177,26 @@ export class LarkTransport implements FeishuTransport {
     });
   }
 
+  /**
+   * Create a group chat via `im.v1.chat.create`; the bot is the creator and
+   * the given members are invited at creation time.
+   * @param name - the group name.
+   * @param memberOpenIds - members to invite (open ids).
+   * @returns the new chat id.
+   */
+  async createGroup(name: string, memberOpenIds: readonly string[]): Promise<{ chatId: string }> {
+    const response = await this.client.im.v1.chat.create({
+      data: { name, user_id_list: [...memberOpenIds] },
+      params: { user_id_type: 'open_id' },
+    });
+    this.assertOk(response, 'im.v1.chat.create');
+    const chatId = response.data?.chat_id;
+    if (chatId === undefined) {
+      throw new FeishuApiError('im.v1.chat.create', -1, 'response carried no chat_id');
+    }
+    return { chatId };
+  }
+
   /** Fetch and cache the bot's own open id (`bot/v3/info`). */
   private async resolveBotOpenId(): Promise<void> {
     const response = await this.client.request<{
