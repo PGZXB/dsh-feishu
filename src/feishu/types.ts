@@ -36,17 +36,20 @@ export interface CardJson {
     /** Feishu card header template color. */
     readonly template: string;
   };
-  readonly elements: readonly CardElement[];
+  /**
+   * Schema-2.0 cards place elements inside the body block; root-level
+   * `elements` is the v1 layout and Feishu rejects it (ErrCode 200621).
+   */
+  readonly body: {
+    readonly direction: 'vertical';
+    readonly elements: readonly CardElement[];
+  };
 }
 
 /** One card element the surface emits. */
 export type CardElement =
   | { readonly tag: 'markdown'; readonly content: string }
-  | { readonly tag: 'hr' }
-  | {
-      readonly tag: 'note';
-      readonly elements: readonly { readonly tag: 'plain_text'; readonly content: string }[];
-    };
+  | { readonly tag: 'hr' };
 
 /** The transport seam the surface renders into. */
 export interface FeishuTransport {

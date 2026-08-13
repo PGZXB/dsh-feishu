@@ -50,7 +50,7 @@ describe('buildCard', () => {
     expect(card.schema).toBe('2.0');
     expect(card.header?.title.content).toBe('T');
     expect(card.header?.template).toBe('blue');
-    expect(card.elements[0]).toEqual({ tag: 'markdown', content: 'body' });
+    expect(card.body.elements[0]).toEqual({ tag: 'markdown', content: 'body' });
   });
 
   it('uses green for done and red for error', () => {
@@ -69,7 +69,7 @@ describe('buildCard', () => {
       toolLines: ['🔧 bash'],
       status: 'working',
     });
-    expect(card.elements.some((el) => el.tag === 'markdown' && el.content === '🔧 bash')).toBe(
+    expect(card.body.elements.some((el) => el.tag === 'markdown' && el.content === '🔧 bash')).toBe(
       true,
     );
   });

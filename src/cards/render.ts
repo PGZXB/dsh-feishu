@@ -85,13 +85,13 @@ export function buildCard(snapshot: CardSnapshot): CardJson {
   }
   if (snapshot.status !== 'working' || elements.length === 0) {
     elements.push({ tag: 'hr' });
-    const note =
+    const statusLine =
       snapshot.status === 'error'
-        ? '⚠️ Turn ended with an error'
+        ? '**⚠️ Turn ended with an error**'
         : snapshot.status === 'done'
-          ? '✅ Done'
-          : '… working';
-    elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: note }] });
+          ? '**✅ Done**'
+          : '**… working**';
+    elements.push({ tag: 'markdown', content: statusLine });
   }
   return {
     schema: '2.0',
@@ -100,6 +100,6 @@ export function buildCard(snapshot: CardSnapshot): CardJson {
       title: { tag: 'plain_text', content: snapshot.title },
       template: STATUS_TEMPLATE[snapshot.status],
     },
-    elements,
+    body: { direction: 'vertical', elements },
   };
 }

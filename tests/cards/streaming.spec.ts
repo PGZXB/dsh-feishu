@@ -64,7 +64,7 @@ describe('StreamingCardManager', () => {
     manager.patch('oc_chat', snapshot({ content: 'abc' }));
     await vi.advanceTimersByTimeAsync(100);
     expect(transport.updated).toHaveLength(1);
-    expect(transport.updated[0]?.elements).toContainEqual({ tag: 'markdown', content: 'abc' });
+    expect(transport.updated[0]?.body.elements).toContainEqual({ tag: 'markdown', content: 'abc' });
   });
 
   it('flushes pending work that arrives while a patch is in flight', async () => {
@@ -85,10 +85,9 @@ describe('StreamingCardManager', () => {
     await vi.advanceTimersByTimeAsync(100);
     release?.();
     await vi.advanceTimersByTimeAsync(0);
-    expect(transport.updated.map((c) => (c.elements[0] as { content?: string }).content)).toEqual([
-      'one',
-      'two',
-    ]);
+    expect(
+      transport.updated.map((c) => (c.body.elements[0] as { content?: string }).content),
+    ).toEqual(['one', 'two']);
   });
 
   it('finalize flushes the terminal snapshot and retires the card', async () => {

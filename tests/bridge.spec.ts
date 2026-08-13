@@ -266,7 +266,7 @@ describe('Bridge', () => {
     await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
     // The final card patch carries the accumulated text.
     const last = h.transport.updatedCards.at(-1);
-    expect(last?.elements).toContainEqual({ tag: 'markdown', content: 'Hello world' });
+    expect(last?.body.elements).toContainEqual({ tag: 'markdown', content: 'Hello world' });
     // The final answer is a fresh message (silent patches cannot notify).
     expect(h.transport.sentTexts).toEqual([{ chatId: 'oc_chat', text: 'Hello world' }]);
   });
@@ -292,7 +292,7 @@ describe('Bridge', () => {
     } as unknown as SessionEvent);
     await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
     const last = h.transport.updatedCards.at(-1);
-    const toolElement = last?.elements.find(
+    const toolElement = last?.body.elements.find(
       (el) =>
         el.tag === 'markdown' && typeof el.content === 'string' && el.content.includes('bash'),
     );
@@ -311,5 +311,20 @@ describe('Bridge', () => {
     const last = h.transport.updatedCards.at(-1);
     expect(last?.header?.template).toBe('red');
     expect(h.transport.sentTexts).toEqual([{ chatId: 'oc_chat', text: 'oops' }]);
+  });
+
+  it('rebinds a fresh session when a turn fails with a corrupt session log', async () => {
+    let seq = 0;
+    const h = makeHarness({ mint: () => `feishu-session-${++seq}` });
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleEvent(
+      'feishu-session-1',
+      turnEndEvent({
+        kind: 'error',
+        error: { code: 'UNKNOWN', message: 'corrupt session log: seq gap in committed region' },
+      }) as SessionEvent,
+    );
+    // The chat is rebound to a fresh session id so the next message starts clean.
+    expect(h.sessionMap.get('oc_chat')).toBe('feishu-session-2');
   });
 });
