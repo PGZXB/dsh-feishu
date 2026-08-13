@@ -52,7 +52,7 @@ class RecordingTransport implements FeishuTransport {
 }
 
 function snapshot(overrides: Partial<CardSnapshot> = {}): CardSnapshot {
-  return { title: 'T', content: '', toolLines: [], status: 'working', ...overrides };
+  return { title: 'T', content: '', thinking: '', tools: [], status: 'working', ...overrides };
 }
 
 describe('StreamingCardManager', () => {

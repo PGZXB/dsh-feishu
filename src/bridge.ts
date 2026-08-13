@@ -22,9 +22,13 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session';
 import {
   assistantText,
   buildPanelCard,
+  buildRepoPickedCard,
   buildRepoPickerCard,
+  buildToolDetailsCard,
   type CardSnapshot,
   type CardStatus,
+  MAX_TOOL_RECORD_CHARS,
+  type ToolRecord,
 } from './cards/render.js';
 import type { StreamingCardManager } from './cards/streaming.js';
 import { CommandRegistry, type CommandResult, parseSlash } from './commands.js';
@@ -106,11 +110,15 @@ export interface BridgeOptions {
 interface TurnState {
   readonly title: string;
   content: string;
-  toolLines: string[];
+  thinking: string;
+  tools: ToolRecord[];
   status: CardStatus;
 }
 
 const MAX_TITLE_CHARS = 40;
+/** Tool records kept for the live card + details view (newest wins). */
+const MAX_TOOL_RECORDS = 30;
+/** Tool lines shown on the live card (newest N; details card shows all). */
 const MAX_TOOL_LINES = 6;
 
 /** Whether a group is a 1-person-1-bot solo group (mention gate relaxation). */
@@ -128,18 +136,18 @@ export function turnTitle(text: string): string {
   return oneLine.length <= MAX_TITLE_CHARS ? oneLine : `${oneLine.slice(0, MAX_TITLE_CHARS)}…`;
 }
 
-/** Push a tool line, dropping the oldest when over the cap. */
-function pushToolLine(turn: TurnState, line: string): void {
-  turn.toolLines.push(line);
-  if (turn.toolLines.length > MAX_TOOL_LINES) turn.toolLines.shift();
+/** Push a tool record, dropping the oldest when over the cap. */
+function pushToolRecord(turn: TurnState, record: ToolRecord): void {
+  turn.tools.push(record);
+  if (turn.tools.length > MAX_TOOL_RECORDS) turn.tools.shift();
 }
 
-/** Flip the most recent tool-call line to a completed mark. */
-function markLastToolDone(turn: TurnState): void {
-  for (let i = turn.toolLines.length - 1; i >= 0; i -= 1) {
-    const line = turn.toolLines[i];
-    if (line?.startsWith('🔧')) {
-      turn.toolLines[i] = line.replace('🔧', '✅');
+/** Flip the most recent running tool to done/error with its result text. */
+function markLastToolDone(turn: TurnState, result: string, status: 'done' | 'error'): void {
+  for (let i = turn.tools.length - 1; i >= 0; i -= 1) {
+    const tool = turn.tools[i];
+    if (tool?.status === 'running') {
+      turn.tools[i] = { ...tool, status, result };
       return;
     }
   }
@@ -181,6 +189,10 @@ export class Bridge {
   private readonly turns = new Map<string, TurnState>();
   private readonly lastPrompts = new Map<string, string>();
   private readonly lastOutputs = new Map<string, string>();
+  /** Last completed turn's tool records per chat (for the 🔧 Tools button). */
+  private readonly lastTools = new Map<string, readonly ToolRecord[]>();
+  /** Active repo-picker card message id per chat; a pick consumes it. */
+  private readonly pickerMessageIds = new Map<string, string>();
   private readonly disposeEvents: () => void;
   private readonly commands = new CommandRegistry();
 
@@ -282,7 +294,8 @@ export class Bridge {
     this.turns.set(message.chatId, {
       title: turnTitle(message.text),
       content: '',
-      toolLines: [],
+      thinking: '',
+      tools: [],
       status: 'working',
     });
     // A failed card post must not block the turn: the final answer message
@@ -394,19 +407,30 @@ export class Bridge {
     if (turn === undefined) return;
     switch (event.type) {
       case 'assistant/chunk': {
-        if (event.data.chunk.type === 'text-delta') {
-          turn.content += event.data.chunk.text;
+        const chunk = event.data.chunk;
+        if (chunk.type === 'text-delta') {
+          turn.content += chunk.text;
+          this.patch(chatId, turn);
+        } else if (chunk.type === 'reasoning-delta') {
+          turn.thinking += chunk.text;
           this.patch(chatId, turn);
         }
         break;
       }
       case 'tool/call': {
-        pushToolLine(turn, `🔧 ${event.data.name}`);
+        pushToolRecord(turn, {
+          name: event.data.name,
+          status: 'running',
+          args: event.data.arguments.slice(0, MAX_TOOL_RECORD_CHARS),
+          result: '',
+        });
         this.patch(chatId, turn);
         break;
       }
       case 'tool/result': {
-        markLastToolDone(turn);
+        const resultText = assistantText(event.data.message.content[0]?.content ?? []);
+        const status = event.data.error !== undefined ? 'error' : 'done';
+        markLastToolDone(turn, resultText.slice(0, MAX_TOOL_RECORD_CHARS), status);
         this.patch(chatId, turn);
         break;
       }
@@ -436,6 +460,7 @@ export class Bridge {
         await this.options.cards.finalize(chatId, status);
         const finalText = turn.content.trim();
         if (finalText !== '') this.lastOutputs.set(chatId, finalText);
+        if (turn.tools.length > 0) this.lastTools.set(chatId, turn.tools);
         this.turns.delete(chatId);
         // The card holds the full answer and finalizes green in place; the
         // initial card send already notified, so a completed turn sends no
@@ -485,7 +510,8 @@ export class Bridge {
           this.turns.set(action.chatId, {
             title: turnTitle(prompt),
             content: '',
-            toolLines: [],
+            thinking: '',
+            tools: [],
             status: 'working',
           });
           try {
@@ -512,6 +538,11 @@ export class Bridge {
           await this.options.transport.sendText(action.chatId, 'Invalid project selection.');
           break;
         }
+        // A pick consumes the picker: only the active picker card may select.
+        if (action.messageId !== this.pickerMessageIds.get(action.chatId)) {
+          this.options.logger.info(`ignoring stale repo pick from card ${action.messageId}`);
+          break;
+        }
         const resolved = resolveDirectory(path);
         if (!resolved.ok) {
           await this.options.transport.sendText(action.chatId, `⚠️ ${resolved.error}`);
@@ -523,17 +554,43 @@ export class Bridge {
           action.chatId,
           `Working directory set to ${resolved.path} (session restarts on your next message).`,
         );
+        // Disable the picker card: replace it with a static confirmation so
+        // further taps do nothing (feedback: multiple selections felt off).
+        this.pickerMessageIds.delete(action.chatId);
+        try {
+          await this.options.transport.updateCard(
+            action.messageId,
+            buildRepoPickedCard(resolved.path),
+          );
+        } catch (error: unknown) {
+          this.options.logger.warn(`picker disable update failed: ${String(error)}`);
+        }
         break;
       }
       case 'repo-page': {
+        if (action.messageId !== this.pickerMessageIds.get(action.chatId)) {
+          this.options.logger.info(`ignoring stale repo page from card ${action.messageId}`);
+          break;
+        }
         const page = Number(action.value.page);
         if (!Number.isInteger(page) || page < 0) break;
         const projects = await listProjects(this.options.repoRoots ?? []);
         try {
-          await this.options.transport.sendCard(action.chatId, buildRepoPickerCard(projects, page));
+          const sent = await this.options.transport.sendCard(
+            action.chatId,
+            buildRepoPickerCard(projects, page),
+          );
+          // The page flip posts a fresh picker card — it becomes the active one.
+          this.pickerMessageIds.set(action.chatId, sent.messageId);
         } catch (error: unknown) {
           this.options.logger.warn(`repo picker page refresh failed: ${String(error)}`);
         }
+        break;
+      }
+      case 'tool-details': {
+        const tools = this.lastTools.get(action.chatId) ?? [];
+        const title = turnTitle(this.lastPrompts.get(action.chatId) ?? 'Tool calls');
+        await this.options.transport.sendCard(action.chatId, buildToolDetailsCard(title, tools));
         break;
       }
       case 'panel': {
@@ -643,7 +700,13 @@ export class Bridge {
         }
         const projects = await listProjects(roots);
         try {
-          await options.transport.sendCard(invocation.chatId, buildRepoPickerCard(projects));
+          const sent = await options.transport.sendCard(
+            invocation.chatId,
+            buildRepoPickerCard(projects),
+          );
+          // Record the active picker card so a pick can consume it (and so
+          // stale callbacks from an older picker are rejected).
+          this.pickerMessageIds.set(invocation.chatId, sent.messageId);
           return { kind: 'success', text: '' };
         } catch (_error: unknown) {
           if (projects.length === 0) {
@@ -686,7 +749,8 @@ export class Bridge {
     const snapshot: CardSnapshot = {
       title: turn.title,
       content: turn.content,
-      toolLines: turn.toolLines,
+      thinking: turn.thinking,
+      tools: turn.tools.slice(-MAX_TOOL_LINES),
       status: turn.status,
     };
     this.options.cards.patch(chatId, snapshot);

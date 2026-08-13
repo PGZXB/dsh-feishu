@@ -337,7 +337,12 @@ describe('Bridge', () => {
       data: {
         turn: 0,
         step: 0,
-        message: { role: 'user', content: [{ type: 'tool', callId: 'call-1' }] },
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool-result', toolCallId: 'call-1', content: [{ type: 'text', text: 'ok' }] },
+          ],
+        },
       },
     } as unknown as SessionEvent);
     await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
@@ -348,6 +353,70 @@ describe('Bridge', () => {
     );
     expect(toolElement).toBeDefined();
     expect(toolElement && 'content' in toolElement ? toolElement.content : '').toContain('✅ bash');
+    // The done card exposes the 🔧 Tools button (last turn's records kept).
+    const doneAction = last?.elements.find((el) => el.tag === 'action');
+    const doneLabels =
+      doneAction && 'actions' in doneAction
+        ? doneAction.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
+        : [];
+    expect(doneLabels).toContain('🔧 Tools');
+  });
+
+  it('streams reasoning deltas into a dimmed thinking block', async () => {
+    const h = makeHarness();
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleEvent('feishu-session-1', {
+      type: 'assistant/chunk',
+      seq: 1,
+      time: 0,
+      data: { turn: 0, step: 0, chunk: { type: 'reasoning-delta', index: 0, text: 'hmm…' } },
+    } as unknown as SessionEvent);
+    await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+    const last = h.transport.updatedCards.at(-1);
+    const thinking = last?.elements.find(
+      (el) => el.tag === 'markdown' && typeof el.content === 'string' && el.content.includes('hmm'),
+    );
+    expect(thinking && 'content' in thinking ? thinking.content : '').toContain('hmm');
+  });
+
+  it('opens a tool-details card from the tools button', async () => {
+    const h = makeHarness();
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleEvent('feishu-session-1', {
+      type: 'tool/call',
+      seq: 1,
+      time: 0,
+      data: { turn: 0, step: 0, callId: 'call-1', name: 'bash', arguments: '{"cmd":"ls"}' },
+    } as unknown as SessionEvent);
+    await h.bridge.handleEvent('feishu-session-1', {
+      type: 'tool/result',
+      seq: 2,
+      time: 0,
+      data: {
+        turn: 0,
+        step: 0,
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool-result', toolCallId: 'call-1', content: [{ type: 'text', text: 'ok' }] },
+          ],
+        },
+      },
+    } as unknown as SessionEvent);
+    await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+    await h.bridge.handleCardAction({
+      messageId: 'msg-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'tool-details' },
+    });
+    const details = h.transport.sentCards.find((c) => c.header?.title.content.startsWith('🔧'));
+    expect(details).toBeDefined();
+    expect(
+      details?.elements.some(
+        (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('bash'),
+      ),
+    ).toBe(true);
   });
 
   it('marks the turn card error and still delivers the final text', async () => {
@@ -581,14 +650,44 @@ describe('working directory commands', () => {
       'select_static',
     );
     // Dropdown selection arrives in `action.option` (botmux repo_switch pattern).
+    // The picker was the first card sent by the recording transport (msg-1).
     await h.bridge.handleCardAction({
-      messageId: 'mem-1',
+      messageId: 'msg-1',
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'repo-pick' },
       option: join(root, 'proj-b'),
     });
     expect(h.sessionMap.cwdFor('oc_chat')).toBe(join(root, 'proj-b'));
+    // The picker card is disabled: patched to a static confirmation with no
+    // actions, so further taps do nothing (feedback: repeated picks felt off).
+    const disabled = h.transport.updatedCards.at(-1);
+    expect(disabled?.elements.some((el) => el.tag === 'action')).toBe(false);
+    expect(
+      disabled?.elements.some(
+        (el) =>
+          el.tag === 'markdown' && 'content' in el && el.content.includes(join(root, 'proj-b')),
+      ),
+    ).toBe(true);
+  });
+
+  it('rejects a stale repo pick from a superseded picker card', async () => {
+    const h = makeHarness({ repoRoots: [join(SCRATCH, 'projects')] });
+    const { mkdirSync, writeFileSync } = await import('node:fs');
+    const root = join(SCRATCH, 'projects');
+    mkdirSync(join(root, 'proj-a', '.git'), { recursive: true });
+    writeFileSync(join(root, 'proj-a', '.git', 'HEAD'), 'ref: refs/heads/main\n');
+    await h.bridge.handleMessage(message({ text: '/repo' }));
+    // A stale callback (messageId not matching the active picker card) must
+    // not change the working directory.
+    await h.bridge.handleCardAction({
+      messageId: 'msg-999',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'repo-pick' },
+      option: join(root, 'proj-a'),
+    });
+    expect(h.sessionMap.cwdFor('oc_chat')).toBeUndefined();
   });
 
   it('/repo discovers nested git checkouts recursively (botmux depth-3 scan)', async () => {

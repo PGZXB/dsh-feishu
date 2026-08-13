@@ -1,7 +1,11 @@
 /**
  * Card rendering: pure functions that turn session events into Feishu card
- * JSON (schema 2.0). No I/O here — the streaming manager owns the card
- * pipeline and the transport owns the wire.
+ * JSON. No I/O here — the streaming manager owns the card pipeline and the
+ * transport owns the wire.
+ *
+ * Layout order (feedback-driven): thinking first (dimmed), then tool calls
+ * in chronological order, then the final output at the bottom — the natural
+ * "process then result" reading, like a terminal or chat log.
  *
  * @module @dsh-feishu/dsh-feishu/cards/render
  */
@@ -9,17 +13,30 @@
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import type { CardElement, CardJson } from '../feishu/types.js';
 import type { ProjectInfo } from '../projects.js';
+import { markdownToElements } from './markdown.js';
 
 /** Terminal/working state of one streaming card. */
 export type CardStatus = 'working' | 'done' | 'error';
 
+/** One tool invocation shown on the live card. */
+export interface ToolRecord {
+  readonly name: string;
+  readonly status: 'running' | 'done' | 'error';
+  /** Raw JSON arguments, truncated for display. */
+  readonly args: string;
+  /** Result text (or error), truncated for display. */
+  readonly result: string;
+}
+
 /** Everything the card shows for one turn. */
 export interface CardSnapshot {
   readonly title: string;
-  /** Accumulated assistant text (rendered as lark_md). */
+  /** Accumulated assistant text (rendered as markdown). */
   readonly content: string;
-  /** Compact tool lines, newest last. */
-  readonly toolLines: readonly string[];
+  /** Accumulated reasoning text (dimmed, truncated). */
+  readonly thinking: string;
+  /** Tool calls, chronological order. */
+  readonly tools: readonly ToolRecord[];
   readonly status: CardStatus;
 }
 
@@ -33,12 +50,19 @@ const STATUS_TEMPLATE: Record<CardStatus, string> = {
 /** Longest card body we ever send; the Feishu card cap is ~109KB. */
 export const MAX_CARD_CHARS = 60_000;
 
+/** Longest thinking snippet shown on the live card (dimmed, truncated). */
+export const MAX_THINKING_CHARS = 500;
+
+/** Longest tool args/result text kept per record. */
+export const MAX_TOOL_RECORD_CHARS = 300;
+
 /** Surface action payloads stamped on card buttons. */
 export type SurfaceAction =
   | { readonly kind: 'stop' }
   | { readonly kind: 'copy' }
   | { readonly kind: 'retry' }
   | { readonly kind: 'panel' }
+  | { readonly kind: 'tool-details' }
   | { readonly kind: 'repo-pick' }
   | { readonly kind: 'repo-page' };
 
@@ -54,6 +78,28 @@ export const REPO_PAGE_SIZE = 8;
  * it we fall back to the numbered-button list.
  */
 export const REPO_SELECT_MAX_OPTIONS = 50;
+
+/**
+ * Dropdown label for one project. Names are kept short, but repos sharing a
+ * basename get a path disambiguator appended (feedback: many same-named
+ * repos at different paths are confusing with bare basenames).
+ * @param project - the project to label.
+ * @param duplicates - basenames that appear more than once in the scan.
+ * @param commonPrefix - longest directory prefix shared by all projects.
+ * @returns the option label.
+ */
+export function repoOptionLabel(
+  project: ProjectInfo,
+  duplicates: ReadonlySet<string>,
+  commonPrefix: string,
+): string {
+  const base = `${project.name} (${project.branch})${
+    project.type === 'worktree' ? ' [worktree]' : ''
+  }`;
+  if (!duplicates.has(project.name)) return base;
+  const rel = project.path.slice(commonPrefix.length).replace(/^[/\\]+/, '');
+  return rel === '' ? `${base} — ${project.path}` : `${base} — ${rel}`;
+}
 
 /**
  * Build the interactive repo-picker card. With up to
@@ -78,6 +124,14 @@ export function buildRepoPickerCard(projects: readonly ProjectInfo[], page = 0):
     { tag: 'hr' },
   ];
   if (projects.length > 0 && projects.length <= REPO_SELECT_MAX_OPTIONS) {
+    const counts = new Map<string, number>();
+    for (const project of projects) {
+      counts.set(project.name, (counts.get(project.name) ?? 0) + 1);
+    }
+    const duplicates = new Set(
+      [...counts.entries()].filter(([, count]) => count > 1).map(([name]) => name),
+    );
+    const commonPrefix = longestCommonPathPrefix(projects.map((p) => p.path));
     // Dropdown primary (botmux `repo_switch` pattern): the select lives
     // inside an `action` container, not a `form`.
     elements.push({
@@ -89,9 +143,7 @@ export function buildRepoPickerCard(projects: readonly ProjectInfo[], page = 0):
           options: projects.map((project, index) => ({
             text: {
               tag: 'plain_text',
-              content: `${index + 1}. ${project.name} (${project.branch})${
-                project.type === 'worktree' ? ' [worktree]' : ''
-              }`,
+              content: `${index + 1}. ${repoOptionLabel(project, duplicates, commonPrefix)}`,
             },
             value: project.path,
           })),
@@ -141,13 +193,41 @@ export function buildRepoPickerCard(projects: readonly ProjectInfo[], page = 0):
   };
 }
 
+/** The static card a picker becomes once a project is chosen (no actions, so
+ *  further taps do nothing — the picker is consumed). */
+export function buildRepoPickedCard(path: string): CardJson {
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: '📚 Project picked' }, template: 'green' },
+    elements: [
+      { tag: 'markdown', content: `✅ Working directory set to\n\n\`${path}\`` },
+      { tag: 'note', elements: [{ tag: 'plain_text', content: 'Run /repo again to change it.' }] },
+    ],
+  };
+}
+
+/** Longest directory prefix shared by all paths (empty when none). */
+function longestCommonPathPrefix(paths: readonly string[]): string {
+  if (paths.length === 0) return '';
+  let prefix = paths[0] ?? '';
+  for (const path of paths.slice(1)) {
+    while (!path.startsWith(prefix)) {
+      const cut = prefix.lastIndexOf('/');
+      if (cut <= 0) return '';
+      prefix = prefix.slice(0, cut);
+    }
+  }
+  return prefix;
+}
+
 /** Encode a surface action as a button value payload. */
 export function actionValue(action: SurfaceAction): Record<string, string> {
   return { kind: action.kind };
 }
 
-/** The button row appended by status: working → stop; done → copy/retry/panel; error → retry/panel. */
-function statusButtons(status: CardStatus): CardElement {
+/** The button row appended by status: working → stop; done → copy/retry/panel;
+ *  error → retry/panel. A tools button appears when the turn invoked tools. */
+function statusButtons(status: CardStatus, hasTools: boolean): CardElement {
   const actions: Array<{
     readonly tag: 'button';
     readonly text: { readonly tag: 'plain_text'; readonly content: string };
@@ -179,20 +259,15 @@ function statusButtons(status: CardStatus): CardElement {
       text: { tag: 'plain_text', content: '⚙️ Panel' },
       value: actionValue({ kind: 'panel' }),
     });
+    if (hasTools) {
+      actions.push({
+        tag: 'button',
+        text: { tag: 'plain_text', content: '🔧 Tools' },
+        value: actionValue({ kind: 'tool-details' }),
+      });
+    }
   }
   return { tag: 'action', actions };
-}
-
-/**
- * Neutralize lark_md bold markers in untrusted text. Feishu's lark_md has no
- * reliable escape syntax, so the pragmatic approach is to collapse `**` into
- * a single `*` (code fences and links render as-is; full sanitization is
- * deferred).
- * @param text - raw text.
- * @returns text with `**` sequences collapsed.
- */
-export function escapeMarkdown(text: string): string {
-  return text.replaceAll('**', '*');
 }
 
 /**
@@ -212,6 +287,18 @@ export function truncateTail(text: string, maxChars = MAX_CARD_CHARS): string {
   return `${marker}${text.slice(-keep)}`;
 }
 
+/** Truncate text to `maxChars`, keeping the head (for thinking/args). */
+export function truncateHead(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars)}…`;
+}
+
+/** Strip angle brackets from text interpolated into inline `<font>` spans so
+ *  untrusted model output cannot inject card markup. */
+export function stripAngleBrackets(text: string): string {
+  return text.replaceAll('<', '').replaceAll('>', '');
+}
+
 /** Extract the plain text of an assembled assistant message. */
 export function assistantText(blocks: readonly ContentBlock[]): string {
   return blocks
@@ -220,19 +307,37 @@ export function assistantText(blocks: readonly ContentBlock[]): string {
     .join('');
 }
 
+/** One compact tool line for the live card. */
+function toolLine(tool: ToolRecord): string {
+  const icon = tool.status === 'running' ? '🔧' : tool.status === 'done' ? '✅' : '❌';
+  return `${icon} ${tool.name}`;
+}
+
 /**
- * Build the card JSON for one snapshot.
- * @param snapshot - title, content, tool lines, and status.
- * @returns Feishu interactive card JSON (schema 2.0).
+ * Build the card JSON for one snapshot. Element order: thinking (dimmed,
+ * truncated) → tool lines (chronological) → final output at the bottom
+ * (markdown-rendered) → status → buttons.
+ * @param snapshot - title, content, thinking, tools, and status.
+ * @returns Feishu interactive card JSON (v1 layout).
  */
 export function buildCard(snapshot: CardSnapshot): CardJson {
   const elements: CardElement[] = [];
-  const body = escapeMarkdown(truncateTail(snapshot.content)).trim();
-  if (body !== '') {
-    elements.push({ tag: 'markdown', content: body });
+  if (snapshot.thinking.trim() !== '') {
+    const thinking = truncateHead(snapshot.thinking.trim(), MAX_THINKING_CHARS);
+    elements.push({
+      tag: 'markdown',
+      content: `<font color='grey'>💭 ${stripAngleBrackets(thinking)}</font>`,
+    });
   }
-  for (const line of snapshot.toolLines) {
-    elements.push({ tag: 'markdown', content: line });
+  for (const tool of snapshot.tools) {
+    elements.push({ tag: 'markdown', content: toolLine(tool) });
+  }
+  if (elements.length > 0 && snapshot.content.trim() !== '') {
+    elements.push({ tag: 'hr' });
+  }
+  const body = truncateTail(snapshot.content).trim();
+  if (body !== '') {
+    elements.push(...markdownToElements(body));
   }
   if (snapshot.status !== 'working' || elements.length === 0) {
     elements.push({ tag: 'hr' });
@@ -244,7 +349,7 @@ export function buildCard(snapshot: CardSnapshot): CardJson {
           : '**… working**';
     elements.push({ tag: 'markdown', content: statusLine });
   }
-  elements.push(statusButtons(snapshot.status));
+  elements.push(statusButtons(snapshot.status, snapshot.tools.length > 0));
   return {
     config: { wide_screen_mode: true },
     header: {
@@ -258,10 +363,51 @@ export function buildCard(snapshot: CardSnapshot): CardJson {
 }
 
 /**
+ * Build the tool-details card: one entry per tool call with its arguments
+ * and result, opened from the 🔧 Tools button.
+ * @param title - the owning turn's title (card header).
+ * @param tools - the turn's tool records (chronological).
+ * @returns Feishu interactive card JSON (v1 layout).
+ */
+export function buildToolDetailsCard(title: string, tools: readonly ToolRecord[]): CardJson {
+  const elements: CardElement[] = [];
+  if (tools.length === 0) {
+    elements.push({ tag: 'markdown', content: 'No tool calls in this turn.' });
+  }
+  tools.forEach((tool, index) => {
+    const statusIcon = tool.status === 'done' ? '✅' : tool.status === 'error' ? '❌' : '🔧';
+    elements.push({
+      tag: 'markdown',
+      content: `${statusIcon} **${index + 1}. ${tool.name}** — ${tool.status}`,
+    });
+    if (tool.args !== '') {
+      elements.push({
+        tag: 'markdown',
+        content: `<font color='grey'>args: \`${stripAngleBrackets(truncateHead(tool.args, 400))}\`</font>`,
+      });
+    }
+    if (tool.result !== '') {
+      elements.push({
+        tag: 'markdown',
+        content: `<font color='grey'>result: ${stripAngleBrackets(truncateHead(tool.result, 400))}</font>`,
+      });
+    }
+  });
+  return {
+    config: { wide_screen_mode: true },
+    header: {
+      title: { tag: 'plain_text', content: `🔧 ${title}` },
+      template: 'wathet',
+    },
+    elements,
+  };
+}
+
+/**
  * Build the control-panel card: a standing operation surface the user can
  * click without typing a slash command (stop / retry / copy / panel).
  * @param statusLine - a short current-state line for the panel body.
- * @returns Feishu interactive card JSON (schema 2.0).
+ * @returns Feishu interactive card JSON (v1 layout).
  */
 export function buildPanelCard(statusLine: string): CardJson {
   const elements: CardElement[] = [

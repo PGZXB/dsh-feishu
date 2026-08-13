@@ -36,7 +36,8 @@
   "dependencies": {
     "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
     "@deepseek-ai/schemastery": "^3.18.1",
-    "@larksuiteoapi/node-sdk": "^1.73.0"
+    "@larksuiteoapi/node-sdk": "^1.73.0",
+    "markdown-it": "^15.0.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
@@ -57,6 +58,7 @@
     "@deepseek-ai/dsh-session": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-user-approval": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-user-questions": "^0.1.0-rc.6",
+    "@types/markdown-it": "^14.1.2",
     "@types/node": "^22.15.0",
     "typescript": "^5.9.3",
     "vitest": "^3.2.7"
