@@ -525,13 +525,10 @@ export class Bridge {
         }
         break;
       }
-      case 'repo-select': {
-        const path = action.formValue?.['repo'];
+      case 'repo-pick': {
+        const path = action.value['path'];
         if (path === undefined || path === '') {
-          await this.options.transport.sendText(
-            action.chatId,
-            'Pick a project from the dropdown first.',
-          );
+          await this.options.transport.sendText(action.chatId, 'Invalid project selection.');
           break;
         }
         const resolved = resolveDirectory(path);
@@ -547,23 +544,15 @@ export class Bridge {
         );
         break;
       }
-      case 'repo-manual': {
-        const raw = action.formValue?.['repo_manual']?.trim();
-        if (raw === undefined || raw === '') {
-          await this.options.transport.sendText(action.chatId, 'Type a path first.');
-          break;
+      case 'repo-page': {
+        const page = Number(action.value['page']);
+        if (!Number.isInteger(page) || page < 0) break;
+        const projects = await listProjects(this.options.repoRoots ?? []);
+        try {
+          await this.options.transport.sendCard(action.chatId, buildRepoPickerCard(projects, page));
+        } catch (error: unknown) {
+          this.options.logger.warn(`repo picker page refresh failed: ${String(error)}`);
         }
-        const resolved = resolveDirectory(raw);
-        if (!resolved.ok) {
-          await this.options.transport.sendText(action.chatId, `⚠️ ${resolved.error}`);
-          break;
-        }
-        this.options.sessionMap.setCwd(action.chatId, resolved.path);
-        this.options.sessionMap.remint(action.chatId);
-        await this.options.transport.sendText(
-          action.chatId,
-          `Working directory set to ${resolved.path} (session restarts on your next message).`,
-        );
         break;
       }
       case 'panel': {

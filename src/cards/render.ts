@@ -38,67 +38,63 @@ export type SurfaceAction =
   | { readonly kind: 'copy' }
   | { readonly kind: 'retry' }
   | { readonly kind: 'panel' }
-  | { readonly kind: 'repo-select' }
-  | { readonly kind: 'repo-manual' };
+  | { readonly kind: 'repo-pick' }
+  | { readonly kind: 'repo-page' };
 
-/** Build the interactive repo-picker card: a project dropdown plus a manual
- * path input, submitted via form buttons (botmux-style selection).
+/**
+ * Projects per picker card page.
+ */
+export const REPO_PAGE_SIZE = 8;
+
+/** Build the interactive repo-picker card: numbered project buttons plus
+ * pagination (Feishu silently drops form/select/input controls in this card
+ * layout — botmux hit the same wall — so selection is button-based).
  * @param projects - candidate project paths.
+ * @param page - zero-based page index.
  * @returns Feishu interactive card JSON (v1 layout).
  */
-export function buildRepoPickerCard(projects: readonly string[]): CardJson {
-  const options = projects.map((path, index) => ({
-    text: { tag: 'plain_text' as const, content: `${index + 1}. ${path}` },
-    value: path,
-  }));
+export function buildRepoPickerCard(projects: readonly string[], page = 0): CardJson {
+  const start = page * REPO_PAGE_SIZE;
+  const pageProjects = projects.slice(start, start + REPO_PAGE_SIZE);
   const elements: CardElement[] = [
-    { tag: 'markdown', content: '**Pick a project directory** — or type a path below.' },
+    {
+      tag: 'markdown',
+      content:
+        '**Pick a project directory** — tap one, or use `/cd <path>` for a custom directory.',
+    },
     { tag: 'hr' },
   ];
-  if (options.length > 0) {
-    elements.push({
-      tag: 'form',
-      elements: [
-        {
-          tag: 'select_static',
-          name: 'repo',
-          placeholder: { tag: 'plain_text', content: 'Choose a project…' },
-          options: options.slice(0, 50),
-        },
-        {
-          tag: 'action',
-          actions: [
-            {
-              tag: 'button',
-              text: { tag: 'plain_text', content: '✔ Select' },
-              type: 'primary',
-              value: actionValue({ kind: 'repo-select' }),
-            },
-          ],
-        },
-      ],
-    });
+  const buttons = pageProjects.map((path, index) => ({
+    tag: 'button' as const,
+    text: { tag: 'plain_text' as const, content: `${start + index + 1}. ${path}` },
+    value: { kind: 'repo-pick', path },
+  }));
+  if (buttons.length > 0) {
+    elements.push({ tag: 'action', actions: buttons });
   }
-  elements.push({
-    tag: 'form',
-    elements: [
-      {
-        tag: 'input',
-        name: 'repo_manual',
-        placeholder: { tag: 'plain_text', content: '/abs/path/to/project' },
-      },
-      {
-        tag: 'action',
-        actions: [
-          {
-            tag: 'button',
-            text: { tag: 'plain_text', content: '📁 Use path' },
-            value: actionValue({ kind: 'repo-manual' }),
-          },
-        ],
-      },
-    ],
-  });
+  const hasPrev = page > 0;
+  const hasNext = start + pageProjects.length < projects.length;
+  if (hasPrev || hasNext) {
+    const nav: Array<{
+      tag: 'button';
+      text: { tag: 'plain_text'; content: string };
+      type?: 'default';
+      value: Record<string, string>;
+    }> = [];
+    if (hasPrev)
+      nav.push({
+        tag: 'button',
+        text: { tag: 'plain_text', content: '‹ Prev' },
+        value: { kind: 'repo-page', page: String(page - 1) },
+      });
+    if (hasNext)
+      nav.push({
+        tag: 'button',
+        text: { tag: 'plain_text', content: 'Next ›' },
+        value: { kind: 'repo-page', page: String(page + 1) },
+      });
+    elements.push({ tag: 'action', actions: nav });
+  }
   return {
     config: { wide_screen_mode: true },
     header: { title: { tag: 'plain_text', content: '📚 Pick a project' }, template: 'wathet' },

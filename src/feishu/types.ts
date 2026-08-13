@@ -67,22 +67,9 @@ export type CardElement =
         readonly value: Record<string, string>;
       }[];
     }
-  | { readonly tag: 'form'; readonly elements: readonly CardElement[] }
   | {
-      readonly tag: 'select_static';
-      /** Form control name; its value lands in the callback form_value. */
-      readonly name: string;
-      readonly placeholder: { readonly tag: 'plain_text'; readonly content: string };
-      readonly options: readonly {
-        readonly text: { readonly tag: 'plain_text'; readonly content: string };
-        readonly value: string;
-      }[];
-    }
-  | {
-      readonly tag: 'input';
-      /** Form control name; its value lands in the callback form_value. */
-      readonly name: string;
-      readonly placeholder?: { readonly tag: 'plain_text'; readonly content: string };
+      readonly tag: 'note';
+      readonly elements: readonly { readonly tag: 'plain_text'; readonly content: string }[];
     };
 
 /**

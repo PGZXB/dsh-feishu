@@ -9,6 +9,7 @@ import {
   buildPanelCard,
   buildRepoPickerCard,
   escapeMarkdown,
+  REPO_PAGE_SIZE,
   truncateTail,
 } from '../../src/cards/render.js';
 
@@ -109,14 +110,19 @@ describe('buildPanelCard', () => {
   });
 });
 describe('buildRepoPickerCard', () => {
-  it('emits a dropdown and a manual-path form', () => {
+  it('renders one project button per candidate', () => {
     const card = buildRepoPickerCard(['/work/a', '/work/b']);
-    // The select and the manual input live inside form elements.
-    const nested = card.elements.flatMap((el) => (el.tag === 'form' ? el.elements : []));
-    const selects = nested.filter((el) => el.tag === 'select_static');
-    expect(selects).toHaveLength(1);
-    expect(selects[0] && 'options' in selects[0] ? selects[0].options.length : 0).toBe(2);
-    const inputs = nested.filter((el) => el.tag === 'input');
-    expect(inputs.some((el) => el.tag === 'input' && el.name === 'repo_manual')).toBe(true);
+    const action = card.elements.find((el) => el.tag === 'action');
+    const labels = action && 'actions' in action ? action.actions.map((a) => a.text.content) : [];
+    expect(labels).toEqual(['1. /work/a', '2. /work/b']);
+  });
+
+  it('paginates with next buttons beyond the page size', () => {
+    const projects = Array.from({ length: REPO_PAGE_SIZE + 2 }, (_, i) => `/work/p${i}`);
+    const card = buildRepoPickerCard(projects, 0);
+    const actions = card.elements.filter((el) => el.tag === 'action');
+    const last = actions.at(-1);
+    const labels = last && 'actions' in last ? last.actions.map((a) => a.text.content) : [];
+    expect(labels).toEqual(['Next ›']);
   });
 });
