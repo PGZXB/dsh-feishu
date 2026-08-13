@@ -16,9 +16,13 @@ watch the answer stream back as live Feishu cards. Slash commands operate
 either the surface itself (repo selection, resume, session listing) or pass
 through to dsh's own command registry.
 
-> **Status: iteration 0 scaffold.** The bundle mounts into a dsh profile and
-> idles in "not configured" mode; the private-chat loop, streaming cards, and
-> command routing land in later iterations (see [`PLAN.md`](PLAN.md)).
+> **Status: iteration 1 — private-chat loop implemented.** Inbound messages
+> create a per-chat dsh session and stream back as one live card per turn,
+> with the final answer delivered as a fresh message. Needs real Feishu
+> credentials (`FEISHU_APP_ID` / `FEISHU_APP_SECRET`, see
+> [docs/feishu-setup.md](docs/feishu-setup.md)) for device acceptance; group
+> chat, slash commands, and interactive cards land in later iterations (see
+> [`PLAN.md`](PLAN.md)).
 
 ## Why DSH-native
 

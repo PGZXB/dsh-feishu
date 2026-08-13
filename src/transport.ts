@@ -1,0 +1,191 @@
+/**
+ * Feishu (Lark) transport over the official `@larksuiteoapi/node-sdk`.
+ *
+ * Two connections share the app credentials:
+ * - a `WSClient` long connection (outbound only — no public endpoint, no
+ *   public IP needed on the host) that delivers `im.message.receive_v1`
+ *   events and, later, card action callbacks; and
+ * - a `Client` used for outbound API calls (`message.create` /
+ *   `message.patch`).
+ *
+ * The SDK resolves `{code, msg, data}` responses without throwing on
+ * business errors, so every call asserts `code === 0` and throws a
+ * {@link FeishuApiError} otherwise.
+ *
+ * @module @dsh-feishu/dsh-feishu/transport
+ */
+
+import { Client, EventDispatcher, type RawMessageEvent, WSClient } from '@larksuiteoapi/node-sdk';
+import type { CardJson, FeishuMessage, FeishuTransport, SentCard } from './feishu/types.js';
+
+/** Minimal logger surface the transport needs. */
+export interface TransportLogger {
+  info(message: string): void;
+  warn(message: string): void;
+  error(message: string): void;
+}
+
+/** Credentials for the Feishu app. */
+export interface LarkCredentials {
+  readonly appId: string;
+  readonly appSecret: string;
+}
+
+/** Options for {@link LarkTransport}. */
+export interface LarkTransportOptions {
+  readonly credentials: LarkCredentials;
+  readonly logger?: TransportLogger;
+}
+
+/** A failed Feishu API call (non-zero `code`). */
+export class FeishuApiError extends Error {
+  readonly operation: string;
+  readonly code: number;
+
+  constructor(operation: string, code: number, message: string) {
+    super(`feishu ${operation} failed: ${message} (code ${code})`);
+    this.name = 'FeishuApiError';
+    this.operation = operation;
+    this.code = code;
+  }
+}
+
+/** Strip `<at …>name</at>` mention placeholders from Feishu text content. */
+const MENTION_PATTERN = /<at[^>]*>.*?<\/at>/g;
+
+/** Message types the surface understands; everything else is ignored. */
+const SUPPORTED_MESSAGE_TYPE = 'text';
+
+/**
+ * Normalize a raw Feishu `im.message.receive_v1` payload into a surface
+ * message, or `undefined` when the message is not a supported type.
+ * Pure function — unit-testable without any SDK connection.
+ * @param data - the raw event payload.
+ * @returns the normalized message, or `undefined` to ignore.
+ */
+export function normalizeMessageEvent(data: RawMessageEvent): FeishuMessage | undefined {
+  const message = data.message;
+  if (message.message_type !== SUPPORTED_MESSAGE_TYPE) return undefined;
+  const senderOpenId = data.sender?.sender_id?.open_id ?? '';
+  let text = '';
+  try {
+    const parsed = JSON.parse(message.content) as { text?: string };
+    text = parsed.text ?? '';
+  } catch {
+    return undefined;
+  }
+  text = text.replace(MENTION_PATTERN, ' ').replace(/\s+/g, ' ').trim();
+  return {
+    messageId: message.message_id,
+    chatId: message.chat_id,
+    chatType: message.chat_type === 'group' ? 'group' : 'p2p',
+    senderOpenId,
+    text,
+    createdAt: Number(message.create_time) || Date.now(),
+  };
+}
+
+/**
+ * The Feishu transport: long-connection receive + API send/update.
+ */
+export class LarkTransport implements FeishuTransport {
+  private readonly client: Client;
+  private readonly ws: WSClient;
+  private readonly dispatcher = new EventDispatcher({});
+  private handler: ((message: FeishuMessage) => void) | undefined;
+  private readonly logger: TransportLogger | undefined;
+
+  constructor(options: LarkTransportOptions) {
+    const { appId, appSecret } = options.credentials;
+    this.logger = options.logger;
+    this.client = new Client({ appId, appSecret });
+    this.ws = new WSClient({
+      appId,
+      appSecret,
+      autoReconnect: true,
+      handshakeTimeoutMs: 15_000,
+      onReady: () => this.logger?.info('feishu long connection ready'),
+      onError: (error) => this.logger?.error(`feishu long connection failed: ${error.message}`),
+      onReconnecting: () => this.logger?.warn('feishu long connection reconnecting'),
+      onReconnected: () => this.logger?.info('feishu long connection reconnected'),
+    });
+  }
+
+  /** Connect the long connection and begin delivering messages. */
+  async start(): Promise<void> {
+    this.dispatcher.register({
+      'im.message.receive_v1': (data) => {
+        const message = normalizeMessageEvent(data as RawMessageEvent);
+        if (message !== undefined) this.handler?.(message);
+        return undefined;
+      },
+    });
+    await this.ws.start({ eventDispatcher: this.dispatcher });
+  }
+
+  /** Disconnect the long connection. */
+  async stop(): Promise<void> {
+    this.ws.close();
+  }
+
+  /** Register the single inbound-message handler (last registration wins). */
+  onMessage(handler: (message: FeishuMessage) => void): void {
+    this.handler = handler;
+  }
+
+  /** Send a plain text message to a chat. */
+  async sendText(chatId: string, text: string): Promise<void> {
+    await this.createMessage(chatId, 'text', JSON.stringify({ text }));
+  }
+
+  /** Send an interactive card; resolves with the created message id. */
+  async sendCard(chatId: string, card: CardJson): Promise<SentCard> {
+    const response = await this.createMessage(chatId, 'interactive', JSON.stringify(card));
+    const messageId = response.data?.message_id;
+    if (messageId === undefined) {
+      throw new FeishuApiError('im.v1.message.create', -1, 'response carried no message_id');
+    }
+    return { messageId };
+  }
+
+  /** Update an already-sent card in place (silent: no unread notification). */
+  async updateCard(messageId: string, card: CardJson): Promise<void> {
+    const response = await this.client.im.v1.message.patch({
+      data: { content: JSON.stringify(card) },
+      path: { message_id: messageId },
+    });
+    this.assertOk(response, 'im.v1.message.patch');
+  }
+
+  /** Create a message in a chat; assert the API succeeded. */
+  private async createMessage(
+    chatId: string,
+    msgType: string,
+    content: string,
+  ): Promise<Awaited<ReturnType<Client['im']['v1']['message']['create']>>> {
+    const response = await this.client.im.v1.message.create({
+      data: { receive_id: chatId, msg_type: msgType, content },
+      params: { receive_id_type: 'chat_id' },
+    });
+    this.assertOk(response, 'im.v1.message.create');
+    return response;
+  }
+
+  private assertOk(
+    response: { code?: number | undefined; msg?: string | undefined },
+    operation: string,
+  ): void {
+    const code = response.code ?? -1;
+    if (code !== 0) {
+      throw new FeishuApiError(operation, code, response.msg ?? 'unknown error');
+    }
+  }
+}
+
+/** Create a transport for the given credentials. */
+export function createLarkTransport(
+  credentials: LarkCredentials,
+  logger?: TransportLogger,
+): FeishuTransport {
+  return new LarkTransport({ credentials, ...(logger === undefined ? {} : { logger }) });
+}

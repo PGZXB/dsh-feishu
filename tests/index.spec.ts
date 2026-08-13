@@ -1,21 +1,38 @@
 /**
- * Unit tests for the iteration-0 bridge entry point.
+ * Unit tests for the plugin entry point.
  *
  * The plugin is exercised through a hand-built fake context (the modlens
- * pattern): only the surfaces `apply` touches are stubbed, so the tests do
- * not require a live dsh composition.
+ * pattern): only the surfaces `apply` touches are stubbed, and a fake
+ * transport is injected through `ApplyDeps` so the configured path runs
+ * without any network.
  */
 
 import type { Context } from '@deepseek-ai/cordis';
 import type { CommandRuntime } from '@deepseek-ai/dsh-commands';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { apply, Config, name, resolveCredentials } from '../src/index.js';
+import type { CardJson, FeishuMessage, FeishuTransport, SentCard } from '../src/feishu/types.js';
+import { apply, Config, dshHome, name, resolveCredentials } from '../src/index.js';
 
 /** A recorded command registration as the fake registry sees it. */
 interface RegisteredCommand {
   name: string;
   description: string;
   handler: (invocation: { rawInput: string }) => unknown;
+}
+
+/** Recording fake transport injected via ApplyDeps. */
+class FakeTransport implements FeishuTransport {
+  started = false;
+  async start(): Promise<void> {
+    this.started = true;
+  }
+  async stop(): Promise<void> {}
+  onMessage(_handler: (message: FeishuMessage) => void): void {}
+  async sendText(_chatId: string, _text: string): Promise<void> {}
+  async sendCard(_chatId: string, _card: CardJson): Promise<SentCard> {
+    return { messageId: 'msg-1' };
+  }
+  async updateCard(_messageId: string, _card: CardJson): Promise<void> {}
 }
 
 /** Minimal fake of the cordis context surface the plugin touches. */
@@ -29,6 +46,7 @@ function makeFakeContext(options: { withCommands?: boolean } = {}): {
   const logger = {
     info: (msg: string) => void logs.push(`info: ${msg}`),
     warn: (msg: string) => void logs.push(`warn: ${msg}`),
+    error: (msg: string) => void logs.push(`error: ${msg}`),
     exporter: vi.fn(() => () => {}),
   };
   const commands = {
@@ -39,9 +57,12 @@ function makeFakeContext(options: { withCommands?: boolean } = {}): {
   } as unknown as CommandRuntime;
   const get = (service: string): unknown => {
     if (service === 'commands' && options.withCommands !== false) return commands;
+    if (service === 'agents') return undefined;
     return undefined;
   };
-  const ctx = { get, logger } as unknown as Context;
+  const on = vi.fn(() => () => {});
+  const effect = vi.fn(() => {});
+  const ctx = { get, on, effect, logger } as unknown as Context;
   return { ctx, registered, logs };
 }
 
@@ -87,6 +108,17 @@ describe('resolveCredentials', () => {
   });
 });
 
+describe('dshHome', () => {
+  afterEach(() => {
+    delete process.env.DSH_HOME;
+  });
+
+  it('prefers DSH_HOME over the home directory', () => {
+    process.env.DSH_HOME = '/custom/home';
+    expect(dshHome()).toBe('/custom/home');
+  });
+});
+
 describe('Config schema', () => {
   it('accepts an empty config', () => {
     expect(() => Config({})).not.toThrow();
@@ -123,12 +155,15 @@ describe('apply', () => {
     expect(logs.some((line) => line.includes('not-configured'))).toBe(true);
   });
 
-  it('logs the app id when credentials resolve from the environment', () => {
+  it('logs the app id and starts the transport when credentials resolve', () => {
     process.env.FEISHU_APP_ID = 'env_app';
     process.env.FEISHU_APP_SECRET = 'env_secret';
     const { ctx, logs } = makeFakeContext();
-    apply(ctx, {});
+    const transport = new FakeTransport();
+    apply(ctx, {}, { createTransport: () => transport });
     expect(logs.some((line) => line.includes('env_app'))).toBe(true);
+    // start() is fire-and-forget; give the microtask queue a tick.
+    return Promise.resolve().then(() => expect(transport.started).toBe(true));
   });
 
   it('registers the feishu-status command when the commands service exists', () => {
@@ -151,12 +186,16 @@ describe('apply', () => {
 
   it('reports the configured app from the feishu-status handler', () => {
     const { ctx, registered } = makeFakeContext();
-    apply(ctx, { appId: 'cli_app', appSecret: 'secret' });
+    apply(
+      ctx,
+      { appId: 'cli_app', appSecret: 'secret' },
+      { createTransport: () => new FakeTransport() },
+    );
     const status = registered.find((def) => def.name === 'feishu-status');
     const result = status?.handler({ rawInput: '' });
     expect(result).toEqual({
       kind: 'success',
-      text: 'dsh-feishu is configured for app cli_app; transport lands in iteration 1.',
+      text: 'dsh-feishu is configured for app cli_app; bridge running.',
     });
   });
 
