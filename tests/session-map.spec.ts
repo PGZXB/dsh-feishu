@@ -57,6 +57,18 @@ describe('SessionMap (persistence)', () => {
     rmSync(SCRATCH, { recursive: true, force: true });
   });
 
+  it('round-trips working directories through the file', () => {
+    const first = new SessionMap(FILE, mint);
+    first.ensure('oc_group_1');
+    first.setCwd('oc_group_1', '/work/project-a');
+    first.persist();
+
+    const second = new SessionMap(FILE, mint);
+    second.load();
+    expect(second.cwdFor('oc_group_1')).toBe('/work/project-a');
+    expect(second.cwdFor('oc_group_2')).toBeUndefined();
+  });
+
   it('round-trips mappings through the file', () => {
     const first = new SessionMap(FILE, mint);
     first.ensure('oc_group_1');

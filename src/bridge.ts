@@ -14,6 +14,8 @@
  * @module @dsh-feishu/dsh-feishu/bridge
  */
 
+import { existsSync, statSync } from 'node:fs';
+import { resolve as resolvePath } from 'node:path';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
@@ -96,6 +98,11 @@ export interface BridgeOptions {
    * normal turn (cc-tui behavior).
    */
   readonly unknownCommand?: 'error' | 'passthrough';
+  /**
+   * Roots scanned by `/repo` (one level deep) for candidate project
+   * directories. Empty means `/repo` lists nothing (use `/cd <path>`).
+   */
+  readonly repoRoots?: readonly string[];
 }
 
 /** One turn's card state, owned by the bridge. */
@@ -145,6 +152,50 @@ function markLastToolDone(turn: TurnState): void {
  * Wires the Feishu transport to dsh sessions and back. Create one per
  * process; `dispose()` detaches the event subscription.
  */
+/** Resolve and validate a user-supplied working-directory path. */
+function resolveDirectory(
+  input: string,
+): { ok: true; path: string } | { ok: false; error: string } {
+  const resolvedPath = resolvePath(input.replace(/^~(?=\/|$)/, process.env.HOME ?? '~'));
+  if (!existsSync(resolvedPath)) {
+    return { ok: false, error: `directory does not exist: ${resolvedPath}` };
+  }
+  let isDir = false;
+  try {
+    isDir = statSync(resolvedPath).isDirectory();
+  } catch {
+    isDir = false;
+  }
+  if (!isDir) return { ok: false, error: `not a directory: ${resolvedPath}` };
+  return { ok: true, path: resolvedPath };
+}
+
+/** Scan each root one level deep for candidate project directories. */
+async function listProjects(roots: readonly string[]): Promise<string[]> {
+  const { readdirSync } = await import('node:fs');
+  const seen = new Set<string>();
+  const projects: string[] = [];
+  for (const root of roots) {
+    let entries: string[] = [];
+    try {
+      entries = readdirSync(root, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name);
+    } catch {
+      continue;
+    }
+    for (const name of entries) {
+      const full = resolvePath(root, name);
+      if (seen.has(full)) continue;
+      seen.add(full);
+      const looksLikeProject =
+        existsSync(resolvePath(full, '.git')) || existsSync(resolvePath(full, 'package.json'));
+      if (looksLikeProject) projects.push(full);
+    }
+  }
+  return projects;
+}
+
 export class Bridge {
   private readonly dedup = new MessageDeduplicator();
   private readonly turns = new Map<string, TurnState>();
@@ -246,7 +297,8 @@ export class Bridge {
   private async deliverTurn(message: FeishuMessage): Promise<void> {
     this.lastPrompts.set(message.chatId, message.text);
     const sessionId = this.options.sessionMap.ensure(message.chatId);
-    const agent = await this.resolveAgent(message.chatId, sessionId);
+    const cwd = this.options.sessionMap.cwdFor(message.chatId) ?? this.options.defaultCwd;
+    const agent = await this.resolveAgent(message.chatId, sessionId, cwd);
     this.turns.set(message.chatId, {
       title: turnTitle(message.text),
       content: '',
@@ -331,7 +383,7 @@ export class Bridge {
    * @param sessionId - the mapped session id.
    * @returns the agent to deliver into.
    */
-  private async resolveAgent(chatId: string, sessionId: string): Promise<Agent> {
+  private async resolveAgent(chatId: string, sessionId: string, cwd: string): Promise<Agent> {
     const live = this.options.agentStore.get(sessionId);
     if (live !== undefined) return live;
     try {
@@ -340,13 +392,13 @@ export class Bridge {
       this.options.logger.warn(`resume of session ${sessionId} failed: ${String(resumeError)}`);
     }
     try {
-      return await this.options.agentStore.create(sessionId, this.options.defaultCwd);
+      return await this.options.agentStore.create(sessionId, cwd);
     } catch (createError: unknown) {
       this.options.logger.error(
         `session ${sessionId} unusable (${String(createError)}); rebinding a fresh session`,
       );
       const freshId = this.options.sessionMap.remint(chatId);
-      return this.options.agentStore.create(freshId, this.options.defaultCwd);
+      return this.options.agentStore.create(freshId, cwd);
     }
   }
 
@@ -448,7 +500,8 @@ export class Bridge {
         const prompt = this.lastPrompts.get(action.chatId);
         if (prompt !== undefined && prompt !== '') {
           const sessionId = this.options.sessionMap.ensure(action.chatId);
-          const agent = await this.resolveAgent(action.chatId, sessionId);
+          const cwd = this.options.sessionMap.cwdFor(action.chatId) ?? this.options.defaultCwd;
+          const agent = await this.resolveAgent(action.chatId, sessionId, cwd);
           this.turns.set(action.chatId, {
             title: turnTitle(prompt),
             content: '',
@@ -533,6 +586,64 @@ export class Bridge {
           return { kind: 'success', text: 'Stopped.' };
         }
         return { kind: 'error', text: 'no active session to stop.' };
+      },
+    });
+    this.commands.register({
+      name: 'cd',
+      description: 'Set this chat\u2019s working directory (session restarts in it)',
+      category: 'session',
+      buttonLabel: '📁 Change dir',
+      handler: async (invocation) => {
+        const target = invocation.rawInput.trim();
+        if (target === '') {
+          return { kind: 'error', text: 'usage: /cd <absolute-or-~ path>' };
+        }
+        const resolved = resolveDirectory(target);
+        if (!resolved.ok) return { kind: 'error', text: resolved.error };
+        this.options.sessionMap.setCwd(invocation.chatId, resolved.path);
+        // A live session keeps its old cwd; rebind so the next message starts
+        // a fresh session in the new directory (mirrors botmux /cd).
+        this.options.sessionMap.remint(invocation.chatId);
+        return {
+          kind: 'success',
+          text: `Working directory set to ${resolved.path} (session restarts on your next message).`,
+        };
+      },
+    });
+    this.commands.register({
+      name: 'repo',
+      description: 'List candidate project directories (from repoRoots)',
+      category: 'session',
+      buttonLabel: '📚 Pick project',
+      handler: async (invocation) => {
+        const roots = this.options.repoRoots ?? [];
+        const raw = invocation.rawInput.trim();
+        if (raw !== '') {
+          const index = Number(raw);
+          const found = Number.isInteger(index) ? await listProjects(roots) : [];
+          const picked = found[index - 1];
+          if (picked === undefined) {
+            return { kind: 'error', text: `no project at index ${raw} — run /repo to list.` };
+          }
+          this.options.sessionMap.setCwd(invocation.chatId, picked);
+          this.options.sessionMap.remint(invocation.chatId);
+          return {
+            kind: 'success',
+            text: `Working directory set to ${picked} (session restarts on your next message).`,
+          };
+        }
+        const projects = await listProjects(roots);
+        if (projects.length === 0) {
+          return {
+            kind: 'error',
+            text: 'no candidate projects found under repoRoots — use /cd <path> to set a directory, or configure repoRoots.',
+          };
+        }
+        const lines = projects
+          .slice(0, 20)
+          .map((project, index) => `${index + 1}. ${project}`)
+          .join('\n');
+        return { kind: 'success', text: `Projects:\n${lines}\n\nReply /repo <n> to pick one.` };
       },
     });
     this.commands.register({

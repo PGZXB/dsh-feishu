@@ -12,10 +12,11 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-/** Durable mapping file shape. */
+/** Durable mapping file shape (v2 adds per-chat working directories). */
 interface PersistedMap {
-  version: 1;
+  version: 1 | 2;
   entries: Record<string, string>;
+  cwds?: Record<string, string>;
 }
 
 /** Mints a fresh session id for a chat (injectable for deterministic tests). */
@@ -28,6 +29,7 @@ export type SessionIdMinter = () => string;
 export class SessionMap {
   private readonly byChat = new Map<string, string>();
   private readonly bySession = new Map<string, string>();
+  private readonly cwds = new Map<string, string>();
   private loaded = false;
 
   constructor(
@@ -46,9 +48,16 @@ export class SessionMap {
     try {
       const raw = readFileSync(this.file, 'utf8');
       const parsed = JSON.parse(raw) as PersistedMap;
-      if (parsed.version !== 1 || typeof parsed.entries !== 'object') return;
+      if ((parsed.version !== 1 && parsed.version !== 2) || typeof parsed.entries !== 'object') {
+        return;
+      }
       for (const [chatId, sessionId] of Object.entries(parsed.entries)) {
         this.set(chatId, sessionId);
+      }
+      if (parsed.version >= 2 && parsed.cwds !== undefined) {
+        for (const [chatId, cwd] of Object.entries(parsed.cwds)) {
+          this.cwds.set(chatId, cwd);
+        }
       }
     } catch {
       // Missing file (first run) or unreadable content: start empty.
@@ -89,6 +98,26 @@ export class SessionMap {
   }
 
   /**
+   * Set (and persist) the working directory a chat's sessions are created
+   * in. Applies to sessions created after the change.
+   * @param chatId - the Feishu chat id.
+   * @param cwd - the absolute working directory.
+   */
+  setCwd(chatId: string, cwd: string): void {
+    this.cwds.set(chatId, cwd);
+    this.persist();
+  }
+
+  /**
+   * The working directory pinned for a chat, or `undefined` when unset (the
+   * deployment default applies).
+   * @param chatId - the Feishu chat id.
+   */
+  cwdFor(chatId: string): string | undefined {
+    return this.cwds.get(chatId);
+  }
+
+  /**
    * Bind a chat to a session id, replacing any prior binding (both
    * directions are kept consistent).
    * @param chatId - the Feishu chat id.
@@ -122,7 +151,11 @@ export class SessionMap {
    * then rename over it.
    */
   persist(): void {
-    const data: PersistedMap = { version: 1, entries: Object.fromEntries(this.byChat) };
+    const data: PersistedMap = {
+      version: 2,
+      entries: Object.fromEntries(this.byChat),
+      cwds: Object.fromEntries(this.cwds),
+    };
     mkdirSync(dirname(this.file), { recursive: true });
     const tmp = `${this.file}.tmp`;
     writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');

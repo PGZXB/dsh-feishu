@@ -77,6 +77,11 @@ export interface Config {
    * (default); `passthrough` delivers the line to the model as a normal turn.
    */
   readonly unknownCommand?: 'error' | 'passthrough';
+  /**
+   * Roots scanned by `/repo` (one level deep) for candidate project
+   * directories. Empty means `/repo` lists nothing (use `/cd <path>`).
+   */
+  readonly repoRoots?: string[];
 }
 
 /** Validated plugin configuration (schemastery schema). */
@@ -94,6 +99,7 @@ export const Config: z<Config> = z.object({
     .required(false),
   allowedChats: z.array(z.string()).required(false),
   unknownCommand: z.union([z.const('error'), z.const('passthrough')]).required(false),
+  repoRoots: z.array(z.string()).required(false),
 });
 
 /** Resolved credentials, or `undefined` when either value is missing. */
@@ -224,6 +230,7 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
     ...(config.groupMentionMode !== undefined ? { groupMentionMode: config.groupMentionMode } : {}),
     ...(config.allowedChats !== undefined ? { allowedChats: config.allowedChats } : {}),
     ...(config.unknownCommand !== undefined ? { unknownCommand: config.unknownCommand } : {}),
+    ...(config.repoRoots !== undefined ? { repoRoots: config.repoRoots } : {}),
     executeCommand: (agent, line) => executeDshCommand(ctx, agent, line),
   });
   ctx.effect(() => () => {

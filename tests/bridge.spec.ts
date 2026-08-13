@@ -139,6 +139,7 @@ function makeHarness(
     allowedChats?: readonly string[];
     executeCommand?: (agent: Agent, line: string) => Promise<string | undefined>;
     unknownCommand?: 'error' | 'passthrough';
+    repoRoots?: readonly string[];
   } = {},
 ): Harness {
   const transport = new RecordingTransport();
@@ -172,6 +173,7 @@ function makeHarness(
     ...(options.allowedChats !== undefined ? { allowedChats: options.allowedChats } : {}),
     ...(options.executeCommand !== undefined ? { executeCommand: options.executeCommand } : {}),
     ...(options.unknownCommand !== undefined ? { unknownCommand: options.unknownCommand } : {}),
+    ...(options.repoRoots !== undefined ? { repoRoots: options.repoRoots } : {}),
   });
   const emit = (sessionId: string, event: SessionEvent): void => {
     for (const listener of [...listeners]) listener(sessionId, event);
@@ -536,5 +538,40 @@ describe('Bridge', () => {
       await h.bridge.handleMessage(message({ text: '/something' }));
       expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(1);
     });
+  });
+});
+
+describe('working directory commands', () => {
+  it('/cd sets the chat working directory and rebinds the session', async () => {
+    let seq = 0;
+    const h = makeHarness({ mint: () => `feishu-session-${++seq}` });
+    const { mkdirSync } = await import('node:fs');
+    const target = join(SCRATCH, 'proj-cd');
+    mkdirSync(target, { recursive: true });
+    // A session exists first; /cd rebinds it to a fresh id in the new dir.
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: `/cd ${target}` }));
+    expect(h.sessionMap.cwdFor('oc_chat')).toBe(target);
+    expect(h.sessionMap.get('oc_chat')).toBe('feishu-session-2');
+  });
+
+  it('/cd rejects a missing directory', async () => {
+    const h = makeHarness();
+    await h.bridge.handleMessage(message({ text: '/cd /no/such/dir' }));
+    expect(h.sessionMap.cwdFor('oc_chat')).toBeUndefined();
+    expect(h.transport.sentTexts.some((t) => t.text.includes('does not exist'))).toBe(true);
+  });
+
+  it('/repo lists and picks projects from repoRoots', async () => {
+    const h = makeHarness({ repoRoots: [join(SCRATCH, 'projects')] });
+    const { mkdirSync } = await import('node:fs');
+    const root = join(SCRATCH, 'projects');
+    mkdirSync(join(root, 'proj-a', '.git'), { recursive: true });
+    mkdirSync(join(root, 'proj-b', '.git'), { recursive: true });
+    await h.bridge.handleMessage(message({ text: '/repo' }));
+    const list = h.transport.sentTexts.find((t) => t.text.includes('Projects:'));
+    expect(list?.text).toContain('proj-a');
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/repo 2' }));
+    expect(h.sessionMap.cwdFor('oc_chat')).toContain('proj-b');
   });
 });

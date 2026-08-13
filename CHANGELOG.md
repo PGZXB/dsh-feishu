@@ -101,3 +101,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `passthrough` to the model).
   - Commands never open a streaming card or consume a model turn.
   - 101 tests total.
+- Iteration-2 slice — per-chat working directories:
+  - Session map v2 persists a working directory per chat; sessions are
+    created in the chat's pinned cwd (falling back to the deployment
+    default) — p2p chats and groups can each target their own project.
+  - `/cd <path>` validates and pins a chat's working directory (session
+    rebinds so the next message starts fresh in the new dir, mirroring
+    botmux /cd); `/repo` lists candidate projects under `repoRoots` (one
+    level deep, `.git`/`package.json` markers) and `/repo <n>` picks one.
+  - `repoRoots` config; 105 tests total.
