@@ -132,3 +132,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   schema 2.0, select-in-action, silent form drop, card-callback receive
   mode), sandbox env/proxy quirks, Gemini model gating, pnpm ≥ 10 settings,
   and the git-discovery scan-root trap.
+- UX feedback round (real-device):
+  - Final output renders markdown: `src/cards/markdown.ts` parses with
+    markdown-it (botmux semantics) — headings become bold (lark_md has no
+    heading syntax), fenced code stays fenced, `hr` becomes an `hr` element,
+    tables fall back to source lines. Replaces the old `**`-collapsing
+    escape that left raw markdown on the card.
+  - Tool display rework: structured `ToolRecord` (name/status/args/result)
+    replaces raw tool lines; card order is thinking → tools → final output
+    at the bottom (process then result, feedback); reasoning deltas stream
+    into a dimmed `💭` thinking block; a new `🔧 Tools` button opens a
+    per-turn tool-details card (args + results kept per chat).
+  - Repo picker consumed on pick: a successful selection patches the picker
+    to a static confirmation (no actions) and a message-id guard rejects
+    callbacks from superseded pickers (botmux stale-picker rule).
+  - Dropdown labels disambiguate duplicate basenames with a path suffix
+    relative to the common scan prefix (`repoOptionLabel`).
+  - Adds `markdown-it` dependency; 131 tests total.
