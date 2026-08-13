@@ -47,26 +47,52 @@ class RecordingTransport implements FeishuTransport {
   }
 }
 
-/** A fake agent store: create/get record agents with followup spies. */
+/** A fake agent store: create/resume record agents with followup spies. */
 class FakeAgentStore {
   readonly created: Array<{ sessionId: string; cwd: string }> = [];
+  readonly resumed: string[] = [];
   readonly followups = new Map<string, UserMessage[]>();
   private readonly agents = new Map<string, Agent>();
+  /** Remaining times resume throws (simulating a missing persisted log). */
+  resumeFailures = 0;
+  /** Remaining times create throws (simulating an id collision). */
+  createFailures = 0;
 
   get(sessionId: string): Agent | undefined {
     return this.agents.get(sessionId);
   }
 
+  async resume(sessionId: string): Promise<Agent> {
+    if (this.resumeFailures > 0) {
+      this.resumeFailures -= 1;
+      throw new Error('no persisted log for session');
+    }
+    const existing = this.agents.get(sessionId);
+    if (existing !== undefined) return existing;
+    this.resumed.push(sessionId);
+    const agent = this.makeAgent(sessionId);
+    this.agents.set(sessionId, agent);
+    return agent;
+  }
+
   async create(sessionId: string, cwd: string): Promise<Agent> {
+    if (this.createFailures > 0) {
+      this.createFailures -= 1;
+      throw new Error('id collision with persisted log');
+    }
     this.created.push({ sessionId, cwd });
+    const agent = this.makeAgent(sessionId);
+    this.agents.set(sessionId, agent);
+    return agent;
+  }
+
+  private makeAgent(sessionId: string): Agent {
     const followup = vi.fn((message: UserMessage) => {
       const list = this.followups.get(sessionId) ?? [];
       list.push(message);
       this.followups.set(sessionId, list);
     });
-    const agent = { followup } as unknown as Agent;
-    this.agents.set(sessionId, agent);
-    return agent;
+    return { followup } as unknown as Agent;
   }
 }
 
@@ -79,10 +105,13 @@ interface Harness {
   emit: (sessionId: string, event: SessionEvent) => void;
 }
 
-function makeHarness(options: { throttleMs?: number } = {}): Harness {
+function makeHarness(options: { throttleMs?: number; mint?: () => string } = {}): Harness {
   const transport = new RecordingTransport();
   const agentStore = new FakeAgentStore();
-  const sessionMap = new SessionMap(join(SCRATCH, 'map.json'), () => 'feishu-session-1');
+  const sessionMap = new SessionMap(
+    join(SCRATCH, 'map.json'),
+    options.mint ?? (() => 'feishu-session-1'),
+  );
   const listeners: Array<(sessionId: string, event: SessionEvent) => void> = [];
   const onSessionEvent = (
     listener: (sessionId: string, event: SessionEvent) => void,
@@ -137,7 +166,9 @@ function chunkEvent(text: string): SessionEvent {
   } as unknown as SessionEvent;
 }
 
-function turnEndEvent(reason: { kind: string } = { kind: 'completed' }): SessionEvent {
+function turnEndEvent(
+  reason: { kind: string; error?: { code: string; message: string } } = { kind: 'completed' },
+): SessionEvent {
   return {
     type: 'turn/end',
     seq: 2,
@@ -170,6 +201,8 @@ describe('Bridge', () => {
 
   it('creates a session and delivers the message to the agent', async () => {
     const h = makeHarness();
+    // No persisted log for a brand-new chat: force the create path.
+    h.agentStore.resumeFailures = 1;
     await h.bridge.handleMessage(message());
     expect(h.agentStore.created).toEqual([{ sessionId: 'feishu-session-1', cwd: '/work' }]);
     const followups = h.agentStore.followups.get('feishu-session-1');
@@ -182,7 +215,7 @@ describe('Bridge', () => {
     const h = makeHarness();
     h.transport.deliver(message());
     await vi.waitFor(() => {
-      expect(h.agentStore.created).toHaveLength(1);
+      expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(1);
     });
   });
 
@@ -197,8 +230,32 @@ describe('Bridge', () => {
     const h = makeHarness();
     await h.bridge.handleMessage(message());
     await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: 'again' }));
-    expect(h.agentStore.created).toHaveLength(1);
     expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(2);
+  });
+
+  it('resumes the mapped session when no live agent exists', async () => {
+    const h = makeHarness();
+    await h.bridge.handleMessage(message());
+    expect(h.agentStore.resumed).toContain('feishu-session-1');
+    expect(h.agentStore.created).toHaveLength(0);
+  });
+
+  it('falls back to create when resume finds no persisted log', async () => {
+    const h = makeHarness();
+    h.agentStore.resumeFailures = 1;
+    await h.bridge.handleMessage(message());
+    expect(h.agentStore.resumed).toHaveLength(0);
+    expect(h.agentStore.created).toEqual([{ sessionId: 'feishu-session-1', cwd: '/work' }]);
+  });
+
+  it('rebinds a fresh session when the mapped id collides', async () => {
+    let seq = 0;
+    const h = makeHarness({ mint: () => `feishu-session-${++seq}` });
+    h.agentStore.resumeFailures = 1;
+    h.agentStore.createFailures = 1;
+    await h.bridge.handleMessage(message());
+    expect(h.agentStore.created).toEqual([{ sessionId: 'feishu-session-2', cwd: '/work' }]);
+    expect(h.sessionMap.get('oc_chat')).toBe('feishu-session-2');
   });
 
   it('streams chunks into the card and sends the final answer as a fresh message', async () => {
@@ -247,7 +304,10 @@ describe('Bridge', () => {
     const h = makeHarness();
     await h.bridge.handleMessage(message());
     await h.bridge.handleEvent('feishu-session-1', chunkEvent('oops'));
-    await h.bridge.handleEvent('feishu-session-1', turnEndEvent({ kind: 'error' }) as SessionEvent);
+    await h.bridge.handleEvent(
+      'feishu-session-1',
+      turnEndEvent({ kind: 'error', error: { code: 'MOCK', message: 'boom' } }) as SessionEvent,
+    );
     const last = h.transport.updatedCards.at(-1);
     expect(last?.header?.template).toBe('red');
     expect(h.transport.sentTexts).toEqual([{ chatId: 'oc_chat', text: 'oops' }]);

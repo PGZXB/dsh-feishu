@@ -104,6 +104,20 @@ export class SessionMap {
   }
 
   /**
+   * Rebinding recovery: bind a chat to a fresh session id, replacing the
+   * previous binding (both directions are kept consistent) and persisting.
+   * Used when the mapped session became unusable (e.g. an id collision).
+   * @param chatId - the Feishu chat id.
+   * @returns the fresh session id.
+   */
+  remint(chatId: string): string {
+    const sessionId = this.mint();
+    this.set(chatId, sessionId);
+    this.persist();
+    return sessionId;
+  }
+
+  /**
    * Persist the mapping atomically: write a temp file beside the target,
    * then rename over it.
    */

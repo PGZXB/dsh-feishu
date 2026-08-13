@@ -24,11 +24,11 @@ import type {} from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-commands';
 import type { SessionId } from '@deepseek-ai/dsh-session';
 import z from '@deepseek-ai/schemastery';
-import type { AgentStore } from './bridge.js';
-import { Bridge, type BridgeLogger } from './bridge.js';
+import { type AgentStore, Bridge, type BridgeLogger } from './bridge.js';
 import { StreamingCardManager } from './cards/streaming.js';
 import { consoleExporter } from './console-exporter.js';
 import type { FeishuTransport } from './feishu/types.js';
+import { createMemoryTransport } from './memory-transport.js';
 import { SessionMap } from './session-map.js';
 import { createLarkTransport } from './transport.js';
 
@@ -89,6 +89,24 @@ export function defaultDataDir(): string {
   return join(dshHome(), 'feishu');
 }
 
+/**
+ * Default transport factory: the lark-oapi implementation, unless the
+ * `FEISHU_TRANSPORT=memory` test/demo seam is set — then a file-channel
+ * in-memory transport rooted at `FEISHU_MEMORY_DIR` (or the surface data
+ * dir) replaces the wire (see memory-transport.ts).
+ * @param dataDir - the surface data directory used for the memory channel.
+ * @returns the factory selected for this process.
+ */
+function defaultTransportFactory(
+  dataDir: string,
+): (credentials: Credentials, logger: BridgeLogger) => FeishuTransport {
+  if (process.env.FEISHU_TRANSPORT === 'memory') {
+    const dir = process.env.FEISHU_MEMORY_DIR ?? join(dataDir, 'memory');
+    return (_credentials, _logger) => createMemoryTransport({ dir });
+  }
+  return createLarkTransport;
+}
+
 /** Injectable dependencies so `apply` is unit-testable without a network. */
 export interface ApplyDeps {
   /** Transport factory; defaults to the lark-oapi implementation. */
@@ -125,38 +143,41 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
     text: `dsh-feishu is configured for app ${credentials.appId}; bridge running.`,
   }));
 
-  const transportFactory = deps.createTransport ?? createLarkTransport;
   const dataDir = config.dataDir ?? defaultDataDir();
   const sessionMap = new SessionMap(join(dataDir, 'session-map.json'));
   sessionMap.load();
+  const transportFactory = deps.createTransport ?? defaultTransportFactory(dataDir);
   const transport = transportFactory(credentials, logger);
   const cards = new StreamingCardManager(transport, { throttleMs: config.cardThrottleMs ?? 150 });
+  // Agents need an explicit provider/model; config overrides win, otherwise
+  // the deployment default selection applies (the headless-runner pattern).
+  const resolvedAgentOptions = resolveAgentOptions(ctx, config);
   const agentStore: AgentStore = {
     get: (sessionId) => ctx.get('agents')?.get(sessionId as unknown as SessionId),
+    resume: async (sessionId) => {
+      const agents = ctx.get('agents');
+      if (agents === undefined) {
+        throw new Error('agents service unavailable; cannot resume a session');
+      }
+      const { agent } = await agents.resume({
+        resumeSessionId: sessionId as unknown as SessionId,
+        ...(resolvedAgentOptions !== undefined ? { agentOptions: resolvedAgentOptions } : {}),
+      });
+      return agent;
+    },
     create: async (sessionId, cwd) => {
       const agents = ctx.get('agents');
       if (agents === undefined) {
         throw new Error('agents service unavailable; cannot create a session');
       }
-      const agentOptions = {
-        ...(config.provider !== undefined ? { provider: config.provider } : {}),
-        ...(config.model !== undefined ? { model: config.model } : {}),
-      };
       const { agent } = await agents.create({
         sessionId: sessionId as unknown as SessionId,
         meta: { cwd },
-        ...(Object.keys(agentOptions).length > 0 ? { agentOptions } : {}),
+        ...(resolvedAgentOptions !== undefined ? { agentOptions: resolvedAgentOptions } : {}),
       });
       return agent;
     },
   };
-  const agentOptions =
-    config.provider !== undefined || config.model !== undefined
-      ? {
-          ...(config.provider !== undefined ? { provider: config.provider } : {}),
-          ...(config.model !== undefined ? { model: config.model } : {}),
-        }
-      : undefined;
   const bridge = new Bridge({
     transport,
     sessionMap,
@@ -168,7 +189,6 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
     cards,
     defaultCwd: config.defaultCwd ?? process.cwd(),
     logger,
-    ...(agentOptions !== undefined ? { agentOptions } : {}),
   });
   ctx.effect(() => () => {
     bridge.dispose();
@@ -178,6 +198,35 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
     .start()
     .then(() => ctx.logger.info('[feishu] bridge ready'))
     .catch((error: unknown) => ctx.logger.error(`[feishu] bridge start failed: ${String(error)}`));
+}
+
+/**
+ * Resolve the agent's provider/model: config overrides win, otherwise the
+ * deployment's default selection (`agentDefaultModel`). Agents reject
+ * requests without both, so the resolved options carry whichever of the two
+ * is known (a partial config with no default service fails loud at turn
+ * time).
+ * @param ctx - plugin context.
+ * @param config - validated plugin config.
+ * @returns agent options to pass on create/resume, or `undefined` when
+ *   neither provider nor model could be resolved.
+ */
+function resolveAgentOptions(
+  ctx: Context,
+  config: Config,
+): { provider?: string; model?: string } | undefined {
+  const selection = (
+    ctx.get('agentDefaultModel') as
+      | { currentSelection(): { provider: string; model: string } }
+      | undefined
+  )?.currentSelection();
+  const provider = config.provider ?? selection?.provider;
+  const model = config.model ?? selection?.model;
+  if (provider === undefined && model === undefined) return undefined;
+  return {
+    ...(provider !== undefined ? { provider } : {}),
+    ...(model !== undefined ? { model } : {}),
+  };
 }
 
 /** Register the `feishu-status` diagnostic command when the registry exists. */

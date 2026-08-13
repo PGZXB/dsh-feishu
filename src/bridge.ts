@@ -34,6 +34,13 @@ export interface BridgeLogger {
 export interface AgentStore {
   /** The live agent for a session, or `undefined`. */
   get(sessionId: string): Agent | undefined;
+  /**
+   * Resume an agent on a persisted session. The session map is durable, so a
+   * mapped session may exist on disk without a live agent (daemon restart);
+   * resuming it keeps the chat's history instead of colliding on a fresh
+   * create. Throws when no persisted log exists for the id.
+   */
+  resume(sessionId: string): Promise<Agent>;
   /** Create an agent (and its session) for the given id and working directory. */
   create(sessionId: string, cwd: string): Promise<Agent>;
 }
@@ -53,8 +60,6 @@ export interface BridgeOptions {
   readonly cards: StreamingCardManager;
   readonly defaultCwd: string;
   readonly logger: BridgeLogger;
-  /** Optional provider/model overrides passed to created agents. */
-  readonly agentOptions?: { readonly provider?: string; readonly model?: string };
 }
 
 /** One turn's card state, owned by the bridge. */
@@ -130,10 +135,7 @@ export class Bridge {
   async handleMessage(message: FeishuMessage): Promise<void> {
     if (!this.dedup.claim(message.messageId)) return;
     const sessionId = this.options.sessionMap.ensure(message.chatId);
-    let agent = this.options.agentStore.get(sessionId);
-    if (agent === undefined) {
-      agent = await this.options.agentStore.create(sessionId, this.options.defaultCwd);
-    }
+    const agent = await this.resolveAgent(message.chatId, sessionId);
     this.turns.set(message.chatId, {
       title: turnTitle(message.text),
       content: '',
@@ -155,6 +157,34 @@ export class Bridge {
         source: { kind: 'user' },
       }),
     );
+  }
+
+  /**
+   * Resolve the agent for a chat: live agent first, then resume the mapped
+   * persisted session, then create fresh, then — when the mapped id is
+   * unusable (id collision with an on-disk log) — rebind a fresh id and
+   * create. The ladder keeps the chat usable across restarts.
+   * @param chatId - the Feishu chat id.
+   * @param sessionId - the mapped session id.
+   * @returns the agent to deliver into.
+   */
+  private async resolveAgent(chatId: string, sessionId: string): Promise<Agent> {
+    const live = this.options.agentStore.get(sessionId);
+    if (live !== undefined) return live;
+    try {
+      return await this.options.agentStore.resume(sessionId);
+    } catch (resumeError: unknown) {
+      this.options.logger.warn(`resume of session ${sessionId} failed: ${String(resumeError)}`);
+    }
+    try {
+      return await this.options.agentStore.create(sessionId, this.options.defaultCwd);
+    } catch (createError: unknown) {
+      this.options.logger.error(
+        `session ${sessionId} unusable (${String(createError)}); rebinding a fresh session`,
+      );
+      const freshId = this.options.sessionMap.remint(chatId);
+      return this.options.agentStore.create(freshId, this.options.defaultCwd);
+    }
   }
 
   /**
@@ -192,6 +222,10 @@ export class Bridge {
       }
       case 'turn/end': {
         const status: CardStatus = event.data.reason.kind === 'error' ? 'error' : 'done';
+        if (event.data.reason.kind === 'error') {
+          const error = event.data.reason.error;
+          this.options.logger.error(`turn failed: ${error.code}: ${error.message}`);
+        }
         turn.status = status;
         this.patch(chatId, turn);
         await this.options.cards.finalize(chatId, status);
