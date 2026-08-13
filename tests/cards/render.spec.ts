@@ -46,17 +46,19 @@ describe('assistantText', () => {
 });
 
 describe('buildCard', () => {
-  it('emits a schema-2.0 card with header template by status', () => {
+  it('emits a v1 card (no schema field) with header template by status', () => {
     const card = buildCard({
       title: 'T',
       content: 'body',
       toolLines: [],
       status: 'working',
     });
-    expect(card.schema).toBe('2.0');
+    // The v1 root-elements layout is used deliberately so the card can carry
+    // interactive action buttons (schema 2.0 rejects the action tag).
+    expect(card.schema).toBeUndefined();
     expect(card.header?.title.content).toBe('T');
     expect(card.header?.template).toBe('blue');
-    expect(card.body.elements[0]).toEqual({ tag: 'markdown', content: 'body' });
+    expect(card.elements[0]).toEqual({ tag: 'markdown', content: 'body' });
   });
 
   it('uses green for done and red for error', () => {
@@ -75,7 +77,7 @@ describe('buildCard', () => {
       toolLines: ['🔧 bash'],
       status: 'working',
     });
-    expect(card.body.elements.some((el) => el.tag === 'markdown' && el.content === '🔧 bash')).toBe(
+    expect(card.elements.some((el) => el.tag === 'markdown' && el.content === '🔧 bash')).toBe(
       true,
     );
   });
@@ -83,7 +85,7 @@ describe('buildCard', () => {
 describe('card buttons', () => {
   it('shows only the stop button while working', () => {
     const card = buildCard({ title: 'T', content: 'x', toolLines: [], status: 'working' });
-    const action = card.body.elements.find((el) => el.tag === 'action');
+    const action = card.elements.find((el) => el.tag === 'action');
     expect(action && 'actions' in action ? action.actions.map((a) => a.text.content) : []).toEqual([
       '⏹ Stop',
     ]);
@@ -91,7 +93,7 @@ describe('card buttons', () => {
 
   it('shows copy/retry/panel when done', () => {
     const card = buildCard({ title: 'T', content: 'x', toolLines: [], status: 'done' });
-    const action = card.body.elements.find((el) => el.tag === 'action');
+    const action = card.elements.find((el) => el.tag === 'action');
     const labels = action && 'actions' in action ? action.actions.map((a) => a.text.content) : [];
     expect(labels).toEqual(['📋 Copy', '🔁 Retry', '⚙️ Panel']);
   });
@@ -101,7 +103,7 @@ describe('buildPanelCard', () => {
   it('emits a control card with the operation buttons', () => {
     const card = buildPanelCard('**Idle** — send a message.');
     expect(card.header?.title.content).toBe('⚙️ dsh-feishu panel');
-    const action = card.body.elements.find((el) => el.tag === 'action');
+    const action = card.elements.find((el) => el.tag === 'action');
     expect(action && 'actions' in action ? action.actions.length : 0).toBe(3);
   });
 });

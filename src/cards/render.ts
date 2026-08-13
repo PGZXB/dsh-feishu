@@ -144,13 +144,14 @@ export function buildCard(snapshot: CardSnapshot): CardJson {
   }
   elements.push(statusButtons(snapshot.status));
   return {
-    schema: '2.0',
     config: { wide_screen_mode: true },
     header: {
       title: { tag: 'plain_text', content: snapshot.title },
       template: STATUS_TEMPLATE[snapshot.status],
     },
-    body: { direction: 'vertical', elements },
+    // v1 layout (root elements, no schema field): the only layout that
+    // supports the interactive action buttons (schema 2.0 rejects `action`).
+    elements,
   };
 }
 
@@ -187,12 +188,11 @@ export function buildPanelCard(statusLine: string): CardJson {
     },
   ];
   return {
-    schema: '2.0',
     config: { wide_screen_mode: true },
     header: {
       title: { tag: 'plain_text', content: '⚙️ dsh-feishu panel' },
       template: 'wathet',
     },
-    body: { direction: 'vertical', elements },
+    elements,
   };
 }

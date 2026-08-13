@@ -279,7 +279,7 @@ describe('Bridge', () => {
     await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
     // The final card patch carries the accumulated text.
     const last = h.transport.updatedCards.at(-1);
-    expect(last?.body.elements).toContainEqual({ tag: 'markdown', content: 'Hello world' });
+    expect(last?.elements).toContainEqual({ tag: 'markdown', content: 'Hello world' });
     // The card holds the full answer; only a minimal completion notice is
     // sent as a fresh message (silent patches cannot notify).
     expect(h.transport.sentTexts).toEqual([{ chatId: 'oc_chat', text: '✅ Done' }]);
@@ -306,7 +306,7 @@ describe('Bridge', () => {
     } as unknown as SessionEvent);
     await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
     const last = h.transport.updatedCards.at(-1);
-    const toolElement = last?.body.elements.find(
+    const toolElement = last?.elements.find(
       (el) =>
         el.tag === 'markdown' && typeof el.content === 'string' && el.content.includes('bash'),
     );

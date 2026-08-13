@@ -71,12 +71,10 @@ describe('MemoryTransport', () => {
     const transport = new MemoryTransport({ dir: SCRATCH });
     await transport.start();
     const { messageId } = await transport.sendCard('oc_chat', {
-      schema: '2.0',
-      body: { direction: 'vertical', elements: [] },
+      elements: [],
     });
     await transport.updateCard(messageId, {
-      schema: '2.0',
-      body: { direction: 'vertical', elements: [{ tag: 'hr' }] },
+      elements: [{ tag: 'hr' }],
     });
     const records = transport.outbox();
     expect(records.map((r) => r.kind)).toEqual(['card', 'patch']);

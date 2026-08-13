@@ -162,7 +162,7 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
       // The streamed answer is captured in the final card patch.
       const patches = records.filter((r) => r.kind === 'patch');
       const lastCard = patches.at(-1)?.card;
-      const bodies = JSON.stringify(lastCard?.body);
+      const bodies = JSON.stringify(lastCard?.elements);
       expect(bodies).toContain('Hello from mock LLM');
       expect(server.completionRequests()).toBeGreaterThanOrEqual(1);
     } catch (error) {

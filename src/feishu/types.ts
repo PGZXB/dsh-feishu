@@ -27,23 +27,24 @@ export interface SentCard {
   readonly messageId: string;
 }
 
-/** Feishu interactive card JSON (schema 2.0) — the subset the surface emits. */
+/**
+ * Feishu interactive card JSON — the v1 layout the surface emits.
+ *
+ * The surface deliberately uses the legacy (v1) layout — root-level
+ * `elements`, no `schema` field — because that is the only layout that
+ * supports interactive `action` buttons (schema-2.0 cards reject the
+ * `action` tag with ErrCode 200861; botmux uses the same v1 layout for its
+ * control cards).
+ */
 export interface CardJson {
-  readonly schema: '2.0';
+  readonly schema?: '2.0';
   readonly config?: { readonly wide_screen_mode?: boolean };
   readonly header?: {
     readonly title: { readonly tag: 'plain_text'; readonly content: string };
     /** Feishu card header template color. */
     readonly template: string;
   };
-  /**
-   * Schema-2.0 cards place elements inside the body block; root-level
-   * `elements` is the v1 layout and Feishu rejects it (ErrCode 200621).
-   */
-  readonly body: {
-    readonly direction: 'vertical';
-    readonly elements: readonly CardElement[];
-  };
+  readonly elements: readonly CardElement[];
 }
 
 /** One card element the surface emits. */
