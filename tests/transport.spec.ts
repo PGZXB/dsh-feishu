@@ -38,6 +38,7 @@ describe('normalizeMessageEvent', () => {
       chatType: 'p2p',
       senderOpenId: 'ou_user',
       text: 'hello',
+      mentions: [],
       createdAt: 1_700_000_000_000,
     });
   });
@@ -59,6 +60,21 @@ describe('normalizeMessageEvent', () => {
   it('ignores non-text message types', () => {
     const message = normalizeMessageEvent(rawEvent({ message: { message_type: 'image' } }));
     expect(message).toBeUndefined();
+  });
+
+  it('extracts mention open ids', () => {
+    const message = normalizeMessageEvent(
+      rawEvent({
+        message: {
+          mentions: [
+            { key: '@_user_1', id: { open_id: 'ou_user' }, name: 'user' },
+            { key: '@_user_2', id: { open_id: 'ou_other' }, name: 'other' },
+            { key: 'all', id: {} },
+          ],
+        },
+      }),
+    );
+    expect(message?.mentions).toEqual(['ou_user', 'ou_other']);
   });
 
   it('ignores unparseable content', () => {

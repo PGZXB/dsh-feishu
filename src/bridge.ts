@@ -65,6 +65,19 @@ export interface BridgeOptions {
   readonly cards: StreamingCardManager;
   readonly defaultCwd: string;
   readonly logger: BridgeLogger;
+  /**
+   * Group mention policy (botmux-compatible): `always` requires an @-mention
+   * (relaxed in 1-person-1-bot solo groups); `never` answers every message;
+   * `ambient` answers every message unless it redirects to another member;
+   * `topic` (threads not implemented yet — currently behaves like `always`).
+   * Default `always`.
+   */
+  readonly groupMentionMode?: 'always' | 'never' | 'ambient' | 'topic';
+  /**
+   * Chat allowlist: when non-empty, only these chat ids are served (anything
+   * else is ignored). Empty means all chats are served.
+   */
+  readonly allowedChats?: readonly string[];
 }
 
 /** One turn's card state, owned by the bridge. */
@@ -77,6 +90,11 @@ interface TurnState {
 
 const MAX_TITLE_CHARS = 40;
 const MAX_TOOL_LINES = 6;
+
+/** Whether a group is a 1-person-1-bot solo group (mention gate relaxation). */
+function isSoloGroup(stats: { userCount: number; botCount: number }): boolean {
+  return stats.userCount <= 1 && stats.botCount <= 1;
+}
 
 /**
  * Derive the card title for a turn from the user's message.
@@ -146,6 +164,7 @@ export class Bridge {
    */
   async handleMessage(message: FeishuMessage): Promise<void> {
     if (!this.dedup.claim(message.messageId)) return;
+    if (!(await this.shouldRespond(message))) return;
     this.options.logger.info(
       `inbound message ${message.messageId} in ${message.chatId} (${message.chatType}): ${message.text.slice(0, 80)}`,
     );
@@ -174,6 +193,57 @@ export class Bridge {
         source: { kind: 'user' },
       }),
     );
+  }
+
+  /**
+   * The group mention gate (botmux-compatible). p2p messages always pass;
+   * group messages follow `groupMentionMode` plus the chat allowlist.
+   * @param message - the normalized inbound message.
+   * @returns whether the surface should respond to this message.
+   */
+  private async shouldRespond(message: FeishuMessage): Promise<boolean> {
+    const allowed = this.options.allowedChats ?? [];
+    if (allowed.length > 0 && !allowed.includes(message.chatId)) {
+      this.options.logger.info(`ignoring message from chat ${message.chatId}: not in allowlist`);
+      return false;
+    }
+    if (message.chatType === 'p2p') return true;
+    const mode = this.options.groupMentionMode ?? 'always';
+    const botOpenId = this.options.transport.getBotOpenId();
+    const mentioned = botOpenId !== undefined && message.mentions.includes(botOpenId);
+    switch (mode) {
+      case 'never':
+        return true;
+      case 'ambient': {
+        // Answer un-@ messages, but yield when the message redirects to
+        // another specific member (person/bot) without mentioning us.
+        const mentionsOther =
+          botOpenId !== undefined && message.mentions.some((id) => id !== botOpenId);
+        if (mentionsOther && !mentioned) {
+          this.options.logger.info('ignoring group message: redirect to another member (ambient)');
+          return false;
+        }
+        return true;
+      }
+      case 'topic':
+      // Threads are not implemented yet; topic mode currently behaves like
+      // always (a non-@ reply inside an owned thread will need the thread
+      // concept to relax the gate).
+      case 'always': {
+        if (mentioned) return true;
+        const stats = await this.options.transport.chatStats(message.chatId);
+        if (stats !== undefined && isSoloGroup(stats)) {
+          this.options.logger.info(
+            `group message accepted via solo-group relaxation (${stats.userCount}u/${stats.botCount}b)`,
+          );
+          return true;
+        }
+        this.options.logger.info(`ignoring group message: bot not mentioned (mode ${mode})`);
+        return false;
+      }
+      default:
+        return false;
+    }
   }
 
   /**

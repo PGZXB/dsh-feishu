@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   CardAction,
   CardJson,
+  ChatStats,
   FeishuMessage,
   FeishuTransport,
   SentCard,
@@ -35,6 +36,12 @@ class FakeTransport implements FeishuTransport {
   async stop(): Promise<void> {}
   onMessage(_handler: (message: FeishuMessage) => void): void {}
   onCardAction(_handler: (action: CardAction) => void): void {}
+  getBotOpenId(): string | undefined {
+    return undefined;
+  }
+  async chatStats(_chatId: string): Promise<ChatStats | undefined> {
+    return undefined;
+  }
   async sendText(_chatId: string, _text: string): Promise<void> {}
   async sendCard(_chatId: string, _card: CardJson): Promise<SentCard> {
     return { messageId: 'msg-1' };

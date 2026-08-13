@@ -18,6 +18,7 @@ function message(overrides: Partial<FeishuMessage> = {}): FeishuMessage {
     chatType: 'p2p',
     senderOpenId: 'ou_user',
     text: 'hello',
+    mentions: [],
     createdAt: 1_700_000_000_000,
     ...overrides,
   };

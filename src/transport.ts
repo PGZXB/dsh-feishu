@@ -25,6 +25,7 @@ import {
 import type {
   CardAction,
   CardJson,
+  ChatStats,
   FeishuMessage,
   FeishuTransport,
   SentCard,
@@ -93,6 +94,9 @@ export function normalizeMessageEvent(data: RawMessageEvent): FeishuMessage | un
     chatType: message.chat_type === 'group' ? 'group' : 'p2p',
     senderOpenId,
     text,
+    mentions: (message.mentions ?? [])
+      .map((mention) => mention.id?.open_id)
+      .filter((id): id is string => id !== undefined && id !== ''),
     createdAt: Number(message.create_time) || Date.now(),
   };
 }
@@ -131,6 +135,8 @@ export class LarkTransport implements FeishuTransport {
   private handler: ((message: FeishuMessage) => void) | undefined;
   private actionHandler: ((action: CardAction) => void) | undefined;
   private readonly logger: TransportLogger | undefined;
+  private botOpenIdValue: string | undefined;
+  private readonly statsCache = new Map<string, { stats: ChatStats; at: number }>();
 
   constructor(options: LarkTransportOptions) {
     const { appId, appSecret } = options.credentials;
@@ -163,6 +169,55 @@ export class LarkTransport implements FeishuTransport {
       },
     });
     await this.ws.start({ eventDispatcher: this.dispatcher });
+    // Resolve the bot's own open id once the connection is up; the group
+    // mention gate needs it to tell "the bot was mentioned" apart from
+    // "someone else was mentioned".
+    void this.resolveBotOpenId().catch((error: unknown) => {
+      this.logger?.warn(`bot open id resolution failed: ${String(error)}`);
+    });
+  }
+
+  /** Fetch and cache the bot's own open id (`bot/v3/info`). */
+  private async resolveBotOpenId(): Promise<void> {
+    const response = await this.client.request<{
+      code?: number;
+      msg?: string;
+      data?: { open_id?: string };
+    }>({ method: 'GET', url: '/open-apis/bot/v3/info' });
+    const code = response?.code ?? -1;
+    if (code !== 0) {
+      throw new FeishuApiError('bot.v3.info', code, response?.msg ?? 'unknown error');
+    }
+    const openId = response.data?.open_id;
+    if (openId !== undefined && openId !== '') this.botOpenIdValue = openId;
+  }
+
+  /** The bot's own open id, or `undefined` until resolved. */
+  getBotOpenId(): string | undefined {
+    return this.botOpenIdValue;
+  }
+
+  /**
+   * Membership counts for a chat, cached for 5 minutes (`im.v1.chat.get`).
+   * @param chatId - the chat id.
+   * @returns counts, or `undefined` when the API is unavailable.
+   */
+  async chatStats(chatId: string): Promise<ChatStats | undefined> {
+    const cached = this.statsCache.get(chatId);
+    if (cached !== undefined && Date.now() - cached.at < 5 * 60_000) return cached.stats;
+    try {
+      const response = await this.client.im.v1.chat.get({ path: { chat_id: chatId } });
+      const code = response.code ?? -1;
+      if (code !== 0) return undefined;
+      const userCount = Number(response.data?.user_count);
+      const botCount = Number(response.data?.bot_count);
+      if (!Number.isFinite(userCount) || !Number.isFinite(botCount)) return undefined;
+      const stats: ChatStats = { userCount, botCount };
+      this.statsCache.set(chatId, { stats, at: Date.now() });
+      return stats;
+    } catch {
+      return undefined;
+    }
   }
 
   /** Disconnect the long connection. */

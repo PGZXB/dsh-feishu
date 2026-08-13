@@ -58,6 +58,12 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 
 ## Key behaviors
 
+- **Configurable group mention gate.** `groupMentionMode` (botmux
+  semantics): `always` requires an @-mention (relaxed in 1-person-1-bot solo
+  groups via cached chat member counts); `never` answers every group message;
+  `ambient` yields when a message redirects to another member; `topic`
+  behaves like `always` until threads land. `allowedChats` restricts which
+  chats are served at all.
 - **A chat is a session.** One Feishu chat maps to one dsh session id
   (`feishu-*`), persisted so a restart resumes every chat.
 - **Restart-safe session resolution.** For a chat with a mapped session and

@@ -17,6 +17,12 @@ export interface FeishuMessage {
   readonly senderOpenId: string;
   /** Plain text content, mentions stripped for group chats. */
   readonly text: string;
+  /**
+   * Open ids of mentioned members (the bot's own open id included when it is
+   * mentioned). `@all` entries carry no open id and are excluded. Empty for
+   * p2p messages and for group messages without mentions.
+   */
+  readonly mentions: readonly string[];
   /** Unix epoch milliseconds from the Feishu `create_time` string. */
   readonly createdAt: number;
 }
@@ -73,6 +79,12 @@ export interface CardAction {
   readonly value: Record<string, string>;
 }
 
+/** Group membership counts, used for the 1-person-1-bot solo relaxation. */
+export interface ChatStats {
+  readonly userCount: number;
+  readonly botCount: number;
+}
+
 /** The transport seam the surface renders into. */
 export interface FeishuTransport {
   /** Connect the long-lived channel and begin delivering messages. */
@@ -89,4 +101,14 @@ export interface FeishuTransport {
   sendCard(chatId: string, card: CardJson): Promise<SentCard>;
   /** Update an already-sent card in place (silent: no unread notification). */
   updateCard(messageId: string, card: CardJson): Promise<void>;
+  /**
+   * Membership counts for a chat, or `undefined` when unknown/unavailable.
+   * Used for the 1-person-1-bot solo relaxation of the group mention gate.
+   */
+  chatStats(chatId: string): Promise<ChatStats | undefined>;
+  /**
+   * The bot's own open id, or `undefined` until resolved (fetched lazily at
+   * start). Used to detect whether a group message mentions the bot.
+   */
+  getBotOpenId(): string | undefined;
 }

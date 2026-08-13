@@ -23,6 +23,7 @@ import { join } from 'node:path';
 import type {
   CardAction,
   CardJson,
+  ChatStats,
   FeishuMessage,
   FeishuTransport,
   SentCard,
@@ -34,6 +35,10 @@ export interface MemoryTransportOptions {
   readonly dir: string;
   /** Inbox poll interval in ms (default 200). */
   readonly pollIntervalMs?: number;
+  /** The bot's own open id (mention-gate tests). */
+  readonly botOpenId?: string;
+  /** Membership counts served for every chat (mention-gate tests). */
+  readonly chatStats?: ChatStats;
 }
 
 /** One recorded send/update in the outbox. */
@@ -54,6 +59,8 @@ export class MemoryTransport implements FeishuTransport {
   private handler: ((message: FeishuMessage) => void) | undefined;
   private actionHandler: ((action: CardAction) => void) | undefined;
   private timer: ReturnType<typeof setInterval> | null = null;
+  private readonly botOpenId: string | undefined;
+  private readonly stats: ChatStats | undefined;
   private seq = 0;
   private readonly inboxDir: string;
   private readonly outboxDir: string;
@@ -63,6 +70,18 @@ export class MemoryTransport implements FeishuTransport {
     this.inboxDir = join(options.dir, 'inbox');
     this.outboxDir = join(options.dir, 'outbox');
     this.pollIntervalMs = options.pollIntervalMs ?? 200;
+    this.botOpenId = options.botOpenId;
+    this.stats = options.chatStats;
+  }
+
+  /** The bot's own open id configured for this transport. */
+  getBotOpenId(): string | undefined {
+    return this.botOpenId;
+  }
+
+  /** Membership counts configured for this transport. */
+  async chatStats(_chatId: string): Promise<ChatStats | undefined> {
+    return this.stats;
   }
 
   /** Create the directories and begin polling the inbox. */

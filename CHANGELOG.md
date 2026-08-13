@@ -78,3 +78,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `⚠️` notice.
   - docs/feishu-setup.md: card callbacks must be switched to long connection
     separately from events (card actions are callbacks, not events).
+- Iteration-2 slice — configurable group mention gate:
+  - `groupMentionMode` (`always` default / `never` / `ambient` / `topic`),
+    botmux-compatible: `always` requires an @-mention but relaxes in
+    1-person-1-bot solo groups (chat member counts via `im.v1.chat.get`,
+    cached); `never` answers every message; `ambient` yields when a message
+    redirects to another member; `topic` behaves like `always` until threads.
+  - `allowedChats` chat allowlist (empty = serve all).
+  - Transport resolves the bot's own open id (`bot/v3/info`) for mention
+    matching; inbound messages carry mention open ids.
+  - 90 tests total.

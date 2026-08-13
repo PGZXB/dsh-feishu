@@ -18,6 +18,7 @@ import { StreamingCardManager } from '../src/cards/streaming.js';
 import type {
   CardAction,
   CardJson,
+  ChatStats,
   FeishuMessage,
   FeishuTransport,
   SentCard,
@@ -39,6 +40,15 @@ class RecordingTransport implements FeishuTransport {
     this.handler = handler;
   }
   onCardAction(_handler: (action: CardAction) => void): void {}
+  /** Configurable transport facts for the mention-gate tests. */
+  botOpenId: string | undefined = 'ou_bot';
+  stats: ChatStats | undefined = { userCount: 2, botCount: 1 };
+  getBotOpenId(): string | undefined {
+    return this.botOpenId;
+  }
+  async chatStats(_chatId: string): Promise<ChatStats | undefined> {
+    return this.stats;
+  }
 
   async sendText(chatId: string, text: string): Promise<void> {
     this.sentTexts.push({ chatId, text });
@@ -118,7 +128,14 @@ interface Harness {
   emit: (sessionId: string, event: SessionEvent) => void;
 }
 
-function makeHarness(options: { throttleMs?: number; mint?: () => string } = {}): Harness {
+function makeHarness(
+  options: {
+    throttleMs?: number;
+    mint?: () => string;
+    groupMentionMode?: 'always' | 'never' | 'ambient' | 'topic';
+    allowedChats?: readonly string[];
+  } = {},
+): Harness {
   const transport = new RecordingTransport();
   const agentStore = new FakeAgentStore();
   const sessionMap = new SessionMap(
@@ -144,6 +161,10 @@ function makeHarness(options: { throttleMs?: number; mint?: () => string } = {})
     cards,
     defaultCwd: '/work',
     logger: { info: () => {}, warn: () => {}, error: () => {} },
+    ...(options.groupMentionMode !== undefined
+      ? { groupMentionMode: options.groupMentionMode }
+      : {}),
+    ...(options.allowedChats !== undefined ? { allowedChats: options.allowedChats } : {}),
   });
   const emit = (sessionId: string, event: SessionEvent): void => {
     for (const listener of [...listeners]) listener(sessionId, event);
@@ -165,9 +186,15 @@ function message(overrides: Partial<FeishuMessage> = {}): FeishuMessage {
     chatType: 'p2p',
     senderOpenId: 'ou_user',
     text: 'hello',
+    mentions: [],
     createdAt: 1_700_000_000_000,
     ...overrides,
   };
+}
+
+/** A group message with the given mention open ids. */
+function groupMessage(mentions: string[], overrides: Partial<FeishuMessage> = {}): FeishuMessage {
+  return message({ chatType: 'group', mentions, ...overrides });
 }
 
 function chunkEvent(text: string): SessionEvent {
@@ -398,5 +425,55 @@ describe('Bridge', () => {
     expect(h.transport.sentCards).toHaveLength(2);
     const panel = h.transport.sentCards.at(-1);
     expect(panel?.header?.title.content).toBe('⚙️ dsh-feishu panel');
+  });
+  describe('group mention gate', () => {
+    it('always: responds when the bot is mentioned', async () => {
+      const h = makeHarness({ groupMentionMode: 'always' });
+      await h.bridge.handleMessage(groupMessage(['ou_bot']));
+      expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(1);
+    });
+
+    it('always: skips un-@ messages in a multi-member group', async () => {
+      const h = makeHarness({ groupMentionMode: 'always' });
+      await h.bridge.handleMessage(groupMessage([]));
+      expect(h.agentStore.followups.get('feishu-session-1')).toBeUndefined();
+    });
+
+    it('always: relaxes the @ requirement in a 1-person-1-bot solo group', async () => {
+      const h = makeHarness({ groupMentionMode: 'always' });
+      h.transport.stats = { userCount: 1, botCount: 1 };
+      await h.bridge.handleMessage(groupMessage([]));
+      expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(1);
+    });
+
+    it('never: answers un-@ messages', async () => {
+      const h = makeHarness({ groupMentionMode: 'never' });
+      await h.bridge.handleMessage(groupMessage([]));
+      expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(1);
+    });
+
+    it('ambient: answers un-@ messages', async () => {
+      const h = makeHarness({ groupMentionMode: 'ambient' });
+      await h.bridge.handleMessage(groupMessage([]));
+      expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(1);
+    });
+
+    it('ambient: stays quiet when the message redirects to another member', async () => {
+      const h = makeHarness({ groupMentionMode: 'ambient' });
+      await h.bridge.handleMessage(groupMessage(['ou_other']));
+      expect(h.agentStore.followups.get('feishu-session-1')).toBeUndefined();
+    });
+
+    it('ambient: answers when the bot and another member are both mentioned', async () => {
+      const h = makeHarness({ groupMentionMode: 'ambient' });
+      await h.bridge.handleMessage(groupMessage(['ou_bot', 'ou_other']));
+      expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(1);
+    });
+
+    it('respects the chat allowlist', async () => {
+      const h = makeHarness({ allowedChats: ['oc_allowed'] });
+      await h.bridge.handleMessage(message({ chatId: 'oc_other' }));
+      expect(h.agentStore.followups.get('feishu-session-1')).toBeUndefined();
+    });
   });
 });

@@ -59,6 +59,19 @@ export interface Config {
    * mounts it), so an ambient env key must be stored there to be usable.
    */
   readonly apiKeyEnv?: string;
+  /**
+   * Group mention policy (botmux-compatible): `always` requires an
+   * @-mention (relaxed in 1-person-1-bot solo groups); `never` answers every
+   * group message; `ambient` answers every message unless it redirects to
+   * another member; `topic` behaves like `always` until threads land.
+   * Default `always`.
+   */
+  readonly groupMentionMode?: 'always' | 'never' | 'ambient' | 'topic';
+  /**
+   * Chat allowlist: when non-empty, only these chat ids are served (anything
+   * else is ignored). Empty means all chats are served.
+   */
+  readonly allowedChats?: string[];
 }
 
 /** Validated plugin configuration (schemastery schema). */
@@ -71,6 +84,10 @@ export const Config: z<Config> = z.object({
   model: z.string().required(false),
   cardThrottleMs: z.natural().min(1).required(false),
   apiKeyEnv: z.string().required(false),
+  groupMentionMode: z
+    .union([z.const('always'), z.const('never'), z.const('ambient'), z.const('topic')])
+    .required(false),
+  allowedChats: z.array(z.string()).required(false),
 });
 
 /** Resolved credentials, or `undefined` when either value is missing. */
@@ -198,6 +215,8 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
     cards,
     defaultCwd: config.defaultCwd ?? process.cwd(),
     logger,
+    ...(config.groupMentionMode !== undefined ? { groupMentionMode: config.groupMentionMode } : {}),
+    ...(config.allowedChats !== undefined ? { allowedChats: config.allowedChats } : {}),
   });
   ctx.effect(() => () => {
     bridge.dispose();

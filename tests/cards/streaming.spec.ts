@@ -11,6 +11,7 @@ import { StreamingCardManager } from '../../src/cards/streaming.js';
 import type {
   CardAction,
   CardJson,
+  ChatStats,
   FeishuMessage,
   FeishuTransport,
   SentCard,
@@ -29,6 +30,12 @@ class RecordingTransport implements FeishuTransport {
     this.onMessageCalled = true;
   }
   onCardAction(_handler: (action: CardAction) => void): void {}
+  getBotOpenId(): string | undefined {
+    return undefined;
+  }
+  async chatStats(_chatId: string): Promise<ChatStats | undefined> {
+    return undefined;
+  }
   async sendText(_chatId: string, _text: string): Promise<void> {}
   async sendCard(_chatId: string, card: CardJson): Promise<SentCard> {
     this.sent.push(card);
