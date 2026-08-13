@@ -9,9 +9,22 @@ import {
   buildPanelCard,
   buildRepoPickerCard,
   escapeMarkdown,
-  REPO_PAGE_SIZE,
+  REPO_SELECT_MAX_OPTIONS,
   truncateTail,
 } from '../../src/cards/render.js';
+import type { ButtonAction, CardElement, SelectAction } from '../../src/feishu/types.js';
+
+/** Button-only labels of an action element (skips select dropdowns). */
+function buttonLabels(el: CardElement | undefined): string[] {
+  if (el === undefined || el.tag !== 'action') return [];
+  return el.actions.filter((a): a is ButtonAction => a.tag === 'button').map((a) => a.text.content);
+}
+
+/** The select dropdown of an action element, if any. */
+function selectOf(el: CardElement | undefined): SelectAction | undefined {
+  if (el === undefined || el.tag !== 'action') return undefined;
+  return el.actions.find((a): a is SelectAction => a.tag === 'select_static');
+}
 
 describe('escapeMarkdown', () => {
   it('collapses bold markers', () => {
@@ -88,16 +101,13 @@ describe('card buttons', () => {
   it('shows only the stop button while working', () => {
     const card = buildCard({ title: 'T', content: 'x', toolLines: [], status: 'working' });
     const action = card.elements.find((el) => el.tag === 'action');
-    expect(action && 'actions' in action ? action.actions.map((a) => a.text.content) : []).toEqual([
-      '⏹ Stop',
-    ]);
+    expect(buttonLabels(action)).toEqual(['⏹ Stop']);
   });
 
   it('shows copy/retry/panel when done', () => {
     const card = buildCard({ title: 'T', content: 'x', toolLines: [], status: 'done' });
     const action = card.elements.find((el) => el.tag === 'action');
-    const labels = action && 'actions' in action ? action.actions.map((a) => a.text.content) : [];
-    expect(labels).toEqual(['📋 Copy', '🔁 Retry', '⚙️ Panel']);
+    expect(buttonLabels(action)).toEqual(['📋 Copy', '🔁 Retry', '⚙️ Panel']);
   });
 });
 
@@ -110,19 +120,48 @@ describe('buildPanelCard', () => {
   });
 });
 describe('buildRepoPickerCard', () => {
-  it('renders one project button per candidate', () => {
-    const card = buildRepoPickerCard(['/work/a', '/work/b']);
+  it('renders a select_static dropdown inside an action container', () => {
+    const card = buildRepoPickerCard([
+      { name: 'a', path: '/work/a', type: 'repo', branch: 'main' },
+      { name: 'b', path: '/work/b', type: 'repo', branch: 'dev' },
+    ]);
     const action = card.elements.find((el) => el.tag === 'action');
-    const labels = action && 'actions' in action ? action.actions.map((a) => a.text.content) : [];
-    expect(labels).toEqual(['1. /work/a', '2. /work/b']);
+    const select = selectOf(action);
+    expect(select).toBeDefined();
+    expect(select?.options.map((o) => o.value)).toEqual(['/work/a', '/work/b']);
+    expect(select?.value).toEqual({ kind: 'repo-pick' });
   });
 
-  it('paginates with next buttons beyond the page size', () => {
-    const projects = Array.from({ length: REPO_PAGE_SIZE + 2 }, (_, i) => `/work/p${i}`);
+  it('labels dropdown options with name, branch, and worktree tag', () => {
+    const card = buildRepoPickerCard([
+      { name: 'a', path: '/work/a', type: 'repo', branch: 'main' },
+      { name: 'b', path: '/work/b', type: 'worktree', branch: 'feature' },
+    ]);
+    const action = card.elements.find((el) => el.tag === 'action');
+    const select = selectOf(action);
+    expect(select?.options.map((o) => o.text.content)).toEqual([
+      '1. a (main)',
+      '2. b (feature) [worktree]',
+    ]);
+  });
+
+  it('falls back to paginated buttons beyond the dropdown option cap', () => {
+    const projects = Array.from(
+      { length: REPO_SELECT_MAX_OPTIONS + 2 },
+      (_, i) =>
+        ({
+          name: `p${i}`,
+          path: `/work/p${i}`,
+          type: 'repo',
+          branch: 'main',
+        }) as const,
+    );
     const card = buildRepoPickerCard(projects, 0);
     const actions = card.elements.filter((el) => el.tag === 'action');
     const last = actions.at(-1);
-    const labels = last && 'actions' in last ? last.actions.map((a) => a.text.content) : [];
-    expect(labels).toEqual(['Next ›']);
+    expect(buttonLabels(last)).toEqual(['Next ›']);
+    const first = actions[0];
+    expect(selectOf(first)).toBeUndefined();
+    expect(buttonLabels(first).length).toBeGreaterThan(0);
   });
 });

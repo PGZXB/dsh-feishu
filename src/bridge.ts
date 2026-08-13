@@ -27,14 +27,10 @@ import {
   type CardStatus,
 } from './cards/render.js';
 import type { StreamingCardManager } from './cards/streaming.js';
-import {
-  type CommandInvocation,
-  CommandRegistry,
-  type CommandResult,
-  parseSlash,
-} from './commands.js';
+import { CommandRegistry, type CommandResult, parseSlash } from './commands.js';
 import type { CardAction, FeishuMessage, FeishuTransport } from './feishu/types.js';
 import { MessageDeduplicator } from './message-dedup.js';
+import { type ProjectInfo, scanMultipleProjects } from './projects.js';
 import type { SessionMap } from './session-map.js';
 
 /** Minimal logger surface the bridge needs. */
@@ -171,30 +167,13 @@ function resolveDirectory(
   return { ok: true, path: resolvedPath };
 }
 
-/** Scan each root one level deep for candidate project directories. */
-async function listProjects(roots: readonly string[]): Promise<string[]> {
-  const { readdirSync } = await import('node:fs');
-  const seen = new Set<string>();
-  const projects: string[] = [];
-  for (const root of roots) {
-    let entries: string[] = [];
-    try {
-      entries = readdirSync(root, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => entry.name);
-    } catch {
-      continue;
-    }
-    for (const name of entries) {
-      const full = resolvePath(root, name);
-      if (seen.has(full)) continue;
-      seen.add(full);
-      const looksLikeProject =
-        existsSync(resolvePath(full, '.git')) || existsSync(resolvePath(full, 'package.json'));
-      if (looksLikeProject) projects.push(full);
-    }
-  }
-  return projects;
+/**
+ * Scan the configured roots for candidate projects. Recursive (botmux
+ * semantics: up to depth 3, skipping dot/dependency directories, budgeted),
+ * so nested checkouts like `~/src/<repo>` are surfaced.
+ */
+async function listProjects(roots: readonly string[]): Promise<ProjectInfo[]> {
+  return scanMultipleProjects(roots);
 }
 
 export class Bridge {
@@ -476,7 +455,7 @@ export class Bridge {
    * @param action - the normalized card callback.
    */
   async handleCardAction(action: CardAction): Promise<void> {
-    const kind = action.value['kind'];
+    const kind = action.value.kind;
     this.options.logger.info(
       `card action ${kind ?? '?'} from ${action.operatorOpenId} in ${action.chatId}`,
     );
@@ -526,7 +505,9 @@ export class Bridge {
         break;
       }
       case 'repo-pick': {
-        const path = action.value['path'];
+        // Dropdown selections arrive in `option`; the button fallback stamps
+        // the path in `value.path`.
+        const path = action.option ?? action.value.path;
         if (path === undefined || path === '') {
           await this.options.transport.sendText(action.chatId, 'Invalid project selection.');
           break;
@@ -545,7 +526,7 @@ export class Bridge {
         break;
       }
       case 'repo-page': {
-        const page = Number(action.value['page']);
+        const page = Number(action.value.page);
         if (!Number.isInteger(page) || page < 0) break;
         const projects = await listProjects(this.options.repoRoots ?? []);
         try {
@@ -664,7 +645,7 @@ export class Bridge {
         try {
           await options.transport.sendCard(invocation.chatId, buildRepoPickerCard(projects));
           return { kind: 'success', text: '' };
-        } catch (error: unknown) {
+        } catch (_error: unknown) {
           if (projects.length === 0) {
             return {
               kind: 'error',
@@ -673,7 +654,7 @@ export class Bridge {
           }
           const lines = projects
             .slice(0, 20)
-            .map((project, index) => `${index + 1}. ${project}`)
+            .map((project, index) => `${index + 1}. ${project.path}`)
             .join('\n');
           return { kind: 'success', text: `Projects:\n${lines}` };
         }

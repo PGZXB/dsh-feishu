@@ -8,6 +8,7 @@
 
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import type { CardElement, CardJson } from '../feishu/types.js';
+import type { ProjectInfo } from '../projects.js';
 
 /** Terminal/working state of one streaming card. */
 export type CardStatus = 'working' | 'done' | 'error';
@@ -42,58 +43,96 @@ export type SurfaceAction =
   | { readonly kind: 'repo-page' };
 
 /**
- * Projects per picker card page.
+ * Projects per picker card page (the button-based fallback, used only when
+ * the project list exceeds the dropdown option cap).
  */
 export const REPO_PAGE_SIZE = 8;
 
-/** Build the interactive repo-picker card: numbered project buttons plus
- * pagination (Feishu silently drops form/select/input controls in this card
- * layout — botmux hit the same wall — so selection is button-based).
- * @param projects - candidate project paths.
- * @param page - zero-based page index.
+/**
+ * Hard cap on `select_static` option count for the repo dropdown. Feishu
+ * caps select options around this (botmux's `JUMP_PAGE_MAX_OPTIONS`); above
+ * it we fall back to the numbered-button list.
+ */
+export const REPO_SELECT_MAX_OPTIONS = 50;
+
+/**
+ * Build the interactive repo-picker card. With up to
+ * {@link REPO_SELECT_MAX_OPTIONS} projects, selection is a `select_static`
+ * dropdown placed DIRECTLY inside an `action` container (botmux pattern:
+ * Feishu silently drops form/select/input controls inside a `form` in this
+ * card layout, but a select inside an `action` renders and fires a card
+ * callback whose `option` field carries the chosen value; the select's own
+ * `value` carries the `{kind:'repo-pick'}` marker). Beyond the cap, the card
+ * falls back to numbered project buttons with pagination.
+ * @param projects - candidate projects (recursively scanned).
+ * @param page - zero-based page index (button fallback only).
  * @returns Feishu interactive card JSON (v1 layout).
  */
-export function buildRepoPickerCard(projects: readonly string[], page = 0): CardJson {
-  const start = page * REPO_PAGE_SIZE;
-  const pageProjects = projects.slice(start, start + REPO_PAGE_SIZE);
+export function buildRepoPickerCard(projects: readonly ProjectInfo[], page = 0): CardJson {
   const elements: CardElement[] = [
     {
       tag: 'markdown',
       content:
-        '**Pick a project directory** — tap one, or use `/cd <path>` for a custom directory.',
+        '**Pick a project directory** — choose one from the dropdown, or use `/cd <path>` for a custom directory.',
     },
     { tag: 'hr' },
   ];
-  const buttons = pageProjects.map((path, index) => ({
-    tag: 'button' as const,
-    text: { tag: 'plain_text' as const, content: `${start + index + 1}. ${path}` },
-    value: { kind: 'repo-pick', path },
-  }));
-  if (buttons.length > 0) {
-    elements.push({ tag: 'action', actions: buttons });
-  }
-  const hasPrev = page > 0;
-  const hasNext = start + pageProjects.length < projects.length;
-  if (hasPrev || hasNext) {
-    const nav: Array<{
-      tag: 'button';
-      text: { tag: 'plain_text'; content: string };
-      type?: 'default';
-      value: Record<string, string>;
-    }> = [];
-    if (hasPrev)
-      nav.push({
-        tag: 'button',
-        text: { tag: 'plain_text', content: '‹ Prev' },
-        value: { kind: 'repo-page', page: String(page - 1) },
-      });
-    if (hasNext)
-      nav.push({
-        tag: 'button',
-        text: { tag: 'plain_text', content: 'Next ›' },
-        value: { kind: 'repo-page', page: String(page + 1) },
-      });
-    elements.push({ tag: 'action', actions: nav });
+  if (projects.length > 0 && projects.length <= REPO_SELECT_MAX_OPTIONS) {
+    // Dropdown primary (botmux `repo_switch` pattern): the select lives
+    // inside an `action` container, not a `form`.
+    elements.push({
+      tag: 'action',
+      actions: [
+        {
+          tag: 'select_static',
+          placeholder: { tag: 'plain_text', content: 'Choose a project…' },
+          options: projects.map((project, index) => ({
+            text: {
+              tag: 'plain_text',
+              content: `${index + 1}. ${project.name} (${project.branch})${
+                project.type === 'worktree' ? ' [worktree]' : ''
+              }`,
+            },
+            value: project.path,
+          })),
+          value: { kind: 'repo-pick' },
+        },
+      ],
+    });
+  } else if (projects.length > REPO_SELECT_MAX_OPTIONS) {
+    const start = page * REPO_PAGE_SIZE;
+    const pageProjects = projects.slice(start, start + REPO_PAGE_SIZE);
+    const buttons = pageProjects.map((project, index) => ({
+      tag: 'button' as const,
+      text: { tag: 'plain_text' as const, content: `${start + index + 1}. ${project.path}` },
+      value: { kind: 'repo-pick', path: project.path },
+    }));
+    if (buttons.length > 0) {
+      elements.push({ tag: 'action', actions: buttons });
+    }
+    const hasPrev = page > 0;
+    const hasNext = start + pageProjects.length < projects.length;
+    if (hasPrev || hasNext) {
+      const nav: Array<{
+        tag: 'button';
+        text: { tag: 'plain_text'; content: string };
+        type?: 'default';
+        value: Record<string, string>;
+      }> = [];
+      if (hasPrev)
+        nav.push({
+          tag: 'button',
+          text: { tag: 'plain_text', content: '‹ Prev' },
+          value: { kind: 'repo-page', page: String(page - 1) },
+        });
+      if (hasNext)
+        nav.push({
+          tag: 'button',
+          text: { tag: 'plain_text', content: 'Next ›' },
+          value: { kind: 'repo-page', page: String(page + 1) },
+        });
+      elements.push({ tag: 'action', actions: nav });
+    }
   }
   return {
     config: { wide_screen_mode: true },

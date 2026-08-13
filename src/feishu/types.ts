@@ -53,19 +53,39 @@ export interface CardJson {
   readonly elements: readonly CardElement[];
 }
 
+/** A card button action item. */
+export interface ButtonAction {
+  readonly tag: 'button';
+  readonly text: { readonly tag: 'plain_text'; readonly content: string };
+  readonly type?: 'primary' | 'danger' | 'default';
+  /** Surface action payload, echoed back in the card callback. */
+  readonly value: Record<string, string>;
+}
+
+/**
+ * A `select_static` dropdown used AS an action item (inside an `action`
+ * container — not a `form`, which Feishu silently drops in this card
+ * layout). Choosing an option fires a card callback whose `option` field
+ * carries the selected value.
+ */
+export interface SelectAction {
+  readonly tag: 'select_static';
+  readonly placeholder: { readonly tag: 'plain_text'; readonly content: string };
+  readonly options: readonly {
+    readonly text: { readonly tag: 'plain_text'; readonly content: string };
+    readonly value: string;
+  }[];
+  /** Surface action payload, echoed back in the card callback. */
+  readonly value: Record<string, string>;
+}
+
 /** One card element the surface emits. */
 export type CardElement =
   | { readonly tag: 'markdown'; readonly content: string }
   | { readonly tag: 'hr' }
   | {
       readonly tag: 'action';
-      readonly actions: readonly {
-        readonly tag: 'button';
-        readonly text: { readonly tag: 'plain_text'; readonly content: string };
-        readonly type?: 'primary' | 'danger' | 'default';
-        /** Surface action payload, echoed back in the card callback. */
-        readonly value: Record<string, string>;
-      }[];
+      readonly actions: readonly (ButtonAction | SelectAction)[];
     }
   | {
       readonly tag: 'note';
@@ -81,6 +101,8 @@ export interface CardAction {
   readonly chatId: string;
   readonly operatorOpenId: string;
   readonly value: Record<string, string>;
+  /** The option selected by a `select_static` dropdown action. */
+  readonly option?: string;
   /** Values of form controls (select/input) when the button lives in a form. */
   readonly formValue?: Record<string, string>;
 }

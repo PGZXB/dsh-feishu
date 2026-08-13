@@ -562,23 +562,56 @@ describe('working directory commands', () => {
     expect(h.transport.sentTexts.some((t) => t.text.includes('does not exist'))).toBe(true);
   });
 
-  it('/repo posts a button picker card and selects via callback', async () => {
+  it('/repo posts a dropdown picker card and selects via callback option', async () => {
     const h = makeHarness({ repoRoots: [join(SCRATCH, 'projects')] });
-    const { mkdirSync } = await import('node:fs');
+    const { mkdirSync, writeFileSync } = await import('node:fs');
     const root = join(SCRATCH, 'projects');
-    mkdirSync(join(root, 'proj-a', '.git'), { recursive: true });
-    mkdirSync(join(root, 'proj-b', '.git'), { recursive: true });
+    // A valid git marker needs `.git/HEAD` (bare `.git/` dirs are skipped).
+    for (const name of ['proj-a', 'proj-b']) {
+      mkdirSync(join(root, name, '.git'), { recursive: true });
+      writeFileSync(join(root, name, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+    }
     await h.bridge.handleMessage(message({ text: '/repo' }));
     const picker = h.transport.sentCards.find((c) =>
       c.header?.title.content.includes('Pick a project'),
     );
     expect(picker).toBeDefined();
+    const action = picker?.elements.find((el) => el.tag === 'action');
+    expect(action && 'actions' in action ? action.actions[0]?.tag : undefined).toBe(
+      'select_static',
+    );
+    // Dropdown selection arrives in `action.option` (botmux repo_switch pattern).
     await h.bridge.handleCardAction({
       messageId: 'mem-1',
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
-      value: { kind: 'repo-pick', path: join(root, 'proj-b') },
+      value: { kind: 'repo-pick' },
+      option: join(root, 'proj-b'),
     });
     expect(h.sessionMap.cwdFor('oc_chat')).toBe(join(root, 'proj-b'));
+  });
+
+  it('/repo discovers nested git checkouts recursively (botmux depth-3 scan)', async () => {
+    const h = makeHarness({ repoRoots: [join(SCRATCH, 'nested-root')] });
+    const { mkdirSync, writeFileSync } = await import('node:fs');
+    const root = join(SCRATCH, 'nested-root');
+    // Depth 1 repo, a depth-2 repo under a non-project dir, and a dot-dir
+    // repo that must be skipped.
+    for (const rel of ['top', 'mid/inner', '.hidden']) {
+      mkdirSync(join(root, rel, '.git'), { recursive: true });
+      writeFileSync(join(root, rel, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+    }
+    await h.bridge.handleMessage(message({ text: '/repo' }));
+    const picker = h.transport.sentCards.find((c) =>
+      c.header?.title.content.includes('Pick a project'),
+    );
+    const action = picker?.elements.find((el) => el.tag === 'action');
+    const select = action && 'actions' in action ? action.actions[0] : undefined;
+    if (select?.tag === 'select_static') {
+      const paths = select.options.map((o) => o.value).sort();
+      expect(paths).toEqual([join(root, 'mid/inner'), join(root, 'top')]);
+    } else {
+      expect.fail('expected a dropdown picker card');
+    }
   });
 });

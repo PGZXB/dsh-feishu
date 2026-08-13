@@ -127,11 +127,13 @@ export function normalizeCardAction(data: RawCardActionEvent): CardAction | unde
     typeof rawForm === 'object' && rawForm !== null
       ? (rawForm as Record<string, string>)
       : undefined;
+  const option = data.action?.option;
   return {
     messageId,
     chatId,
     operatorOpenId,
     value: value as Record<string, string>,
+    ...(option !== undefined ? { option } : {}),
     ...(formValue !== undefined ? { formValue } : {}),
   };
 }
