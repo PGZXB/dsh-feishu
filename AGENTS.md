@@ -6,10 +6,21 @@ before making changes; more specific instructions take precedence.
 ## Project
 
 dsh-feishu is a native [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
-(dsh) plugin that turns Feishu (Lark) into a dsh surface: one Feishu chat maps
-to one dsh session, the chat bot is the agent's avatar, and output streams
-back as live Feishu cards. It is built as a dsh **bundle** (an npm package
-whose manifest declares `dsh.bundle.patch`) that rides on `@deepseek-ai/dsh-base`.
+(dsh) plugin that turns Feishu (Lark) into dsh's own surface: one Feishu chat
+maps to one dsh session, the chat bot is the agent's avatar, and output
+streams back as live Feishu cards.
+
+**Core identity: DSH-native — born for dsh, not bridged to it.** The surface
+targets exactly one agent (dsh) and integrates in-process; it does not bridge
+external CLIs and does not reimplement agent capabilities. Three promises
+follow (see README):
+no bridge/capture (no CLI adapters, no tmux/screen/ANSI), full transparency
+(every token/tool/question/approval streams out; the agent never does
+anything to be seen), and everything-is-a-card (every dsh surface element
+maps to a Feishu card).
+
+It is built as a dsh **bundle** (an npm package whose manifest declares
+`dsh.bundle.patch`) that rides on `@deepseek-ai/dsh-base`.
 
 The development roadmap lives in `PLAN.md` (currently the bilingual planning
 artifact; shipped docs are English only). Work proceeds in **iterations**:
