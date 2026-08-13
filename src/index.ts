@@ -19,9 +19,10 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Context } from '@deepseek-ai/cordis';
 // Empty type imports carry the Context merges (`ctx.commands`, `ctx.agents`,
-// and the `session/event` event) into this compilation.
+// `ctx.credentials`, and the `session/event` event) into this compilation.
 import type {} from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-commands';
+import { credentialRef } from '@deepseek-ai/dsh-credentials';
 import type { SessionId } from '@deepseek-ai/dsh-session';
 import z from '@deepseek-ai/schemastery';
 import { type AgentStore, Bridge, type BridgeLogger } from './bridge.js';
@@ -51,6 +52,13 @@ export interface Config {
   readonly model?: string;
   /** Streaming-card patch throttle in ms (default 150). */
   readonly cardThrottleMs?: number;
+  /**
+   * Environment variable naming the model API key to promote into the dsh
+   * credentials seam at boot (default `DEEPSEEK_API_KEY`). The llm adapter
+   * only consults the credentials seam when the service exists (dsh-base
+   * mounts it), so an ambient env key must be stored there to be usable.
+   */
+  readonly apiKeyEnv?: string;
 }
 
 /** Validated plugin configuration (schemastery schema). */
@@ -62,6 +70,7 @@ export const Config: z<Config> = z.object({
   provider: z.string().required(false),
   model: z.string().required(false),
   cardThrottleMs: z.natural().min(1).required(false),
+  apiKeyEnv: z.string().required(false),
 });
 
 /** Resolved credentials, or `undefined` when either value is missing. */
@@ -194,10 +203,43 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
     bridge.dispose();
     sessionMap.persist();
   });
+  promoteAmbientApiKey(ctx, config);
   void transport
     .start()
     .then(() => ctx.logger.info('[feishu] bridge ready'))
     .catch((error: unknown) => ctx.logger.error(`[feishu] bridge start failed: ${String(error)}`));
+}
+
+/**
+ * Promote the ambient model API key into the dsh credentials seam.
+ *
+ * The llm adapter resolves the key through `ctx.credentials` when the
+ * service exists (dsh-base mounts it) and only falls back to the launch
+ * environment when it does not — so an env-exported key is invisible to the
+ * agent on a base profile unless it is stored in the seam. The web surface
+ * writes the key from its Models page; this surface does the same at boot
+ * from the configured environment variable, without overwriting an existing
+ * stored value.
+ * @param ctx - plugin context.
+ * @param config - validated plugin config.
+ */
+function promoteAmbientApiKey(ctx: Context, config: Config): void {
+  const envName = config.apiKeyEnv ?? 'DEEPSEEK_API_KEY';
+  const ambient = process.env[envName];
+  const credentials = ctx.get('credentials');
+  if (ambient === undefined || ambient === '' || credentials === undefined) return;
+  void (async () => {
+    try {
+      if ((await credentials.resolve(credentialRef(envName))) === undefined) {
+        await credentials.set(credentialRef(envName), ambient);
+        ctx.logger.info(`[feishu] stored ${envName} into the dsh credentials seam`);
+      }
+    } catch (error: unknown) {
+      ctx.logger.warn(
+        `[feishu] could not store ${envName} into the credentials seam: ${String(error)}`,
+      );
+    }
+  })();
 }
 
 /**

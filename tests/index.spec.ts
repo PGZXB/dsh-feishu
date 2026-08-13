@@ -36,7 +36,12 @@ class FakeTransport implements FeishuTransport {
 }
 
 /** Minimal fake of the cordis context surface the plugin touches. */
-function makeFakeContext(options: { withCommands?: boolean } = {}): {
+function makeFakeContext(
+  options: {
+    withCommands?: boolean;
+    credentials?: { resolve: () => Promise<unknown>; set: () => unknown };
+  } = {},
+): {
   ctx: Context;
   registered: RegisteredCommand[];
   logs: string[];
@@ -57,7 +62,7 @@ function makeFakeContext(options: { withCommands?: boolean } = {}): {
   } as unknown as CommandRuntime;
   const get = (service: string): unknown => {
     if (service === 'commands' && options.withCommands !== false) return commands;
-    if (service === 'agents') return undefined;
+    if (service === 'credentials') return options.credentials;
     return undefined;
   };
   const on = vi.fn(() => () => {});
@@ -164,6 +169,31 @@ describe('apply', () => {
     expect(logs.some((line) => line.includes('env_app'))).toBe(true);
     // start() is fire-and-forget; give the microtask queue a tick.
     return Promise.resolve().then(() => expect(transport.started).toBe(true));
+  });
+
+  it('promotes the ambient model key into the credentials seam when absent', async () => {
+    process.env.FEISHU_APP_ID = 'env_app';
+    process.env.FEISHU_APP_SECRET = 'env_secret';
+    process.env.DEEPSEEK_API_KEY = 'sk-test-key';
+    const set = vi.fn(async () => {});
+    const credentials = { resolve: async () => undefined, set };
+    const { ctx } = makeFakeContext({ credentials });
+    apply(ctx, {}, { createTransport: () => new FakeTransport() });
+    await vi.waitFor(() => expect(set).toHaveBeenCalledWith('DEEPSEEK_API_KEY', 'sk-test-key'));
+    delete process.env.DEEPSEEK_API_KEY;
+  });
+
+  it('does not overwrite an existing stored model key', async () => {
+    process.env.FEISHU_APP_ID = 'env_app';
+    process.env.FEISHU_APP_SECRET = 'env_secret';
+    process.env.DEEPSEEK_API_KEY = 'sk-test-key';
+    const set = vi.fn(async () => {});
+    const credentials = { resolve: async () => ({ value: 'sk-existing' }), set };
+    const { ctx } = makeFakeContext({ credentials });
+    apply(ctx, {}, { createTransport: () => new FakeTransport() });
+    await Promise.resolve();
+    expect(set).not.toHaveBeenCalled();
+    delete process.env.DEEPSEEK_API_KEY;
   });
 
   it('registers the feishu-status command when the commands service exists', () => {

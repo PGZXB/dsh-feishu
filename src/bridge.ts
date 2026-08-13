@@ -134,6 +134,9 @@ export class Bridge {
    */
   async handleMessage(message: FeishuMessage): Promise<void> {
     if (!this.dedup.claim(message.messageId)) return;
+    this.options.logger.info(
+      `inbound message ${message.messageId} in ${message.chatId} (${message.chatType}): ${message.text.slice(0, 80)}`,
+    );
     const sessionId = this.options.sessionMap.ensure(message.chatId);
     const agent = await this.resolveAgent(message.chatId, sessionId);
     this.turns.set(message.chatId, {
@@ -151,6 +154,7 @@ export class Bridge {
         `streaming card unavailable, continuing text-only: ${String(error)}`,
       );
     }
+    this.options.logger.info(`delivering message ${message.messageId} to agent`);
     agent.followup(
       createUserMessage({
         content: [{ type: 'text', text: message.text }],
@@ -225,6 +229,16 @@ export class Bridge {
         if (event.data.reason.kind === 'error') {
           const error = event.data.reason.error;
           this.options.logger.error(`turn failed: ${error.code}: ${error.message}`);
+          // A corrupt persisted log breaks every turn that resumes it; rebind
+          // the chat to a fresh session so the next message starts clean.
+          if (error.message.includes('corrupt session log')) {
+            this.options.logger.warn(
+              `session log for chat ${chatId} is corrupt; rebinding a fresh session`,
+            );
+            this.options.sessionMap.remint(chatId);
+          }
+        } else {
+          this.options.logger.info(`turn completed for chat ${chatId}`);
         }
         turn.status = status;
         this.patch(chatId, turn);
