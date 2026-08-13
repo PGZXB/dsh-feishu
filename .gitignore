@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Build output
+lib/
+dist/
+
+# Test output
+coverage/
+
+# Local development state (isolated DSH home used by feasibility tests)
+_dev/
+.dev/
+
+# Reference checkouts used during research/development (never part of the package)
+_tmp/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+
+# Machine-local pnpm store/cache paths
+.npmrc

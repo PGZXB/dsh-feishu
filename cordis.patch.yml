@@ -1,0 +1,14 @@
+# @dsh-feishu/dsh-feishu bundle patch: the Feishu (Lark) surface over the
+# dsh-base layer. Applied after dsh-base's insert; rows here override base
+# rows by id, with the profile's own cordis.patch.yml and any --patch
+# overlays still to come.
+#
+# Iteration 0: mount only the bridge entry point. It starts in "not
+# configured" mode until credentials are supplied (via the appId/appSecret
+# config keys or the FEISHU_APP_ID / FEISHU_APP_SECRET environment
+# variables), so the bundle is safe to add to any profile without
+# credentials. The Feishu transport, session bridge, and streaming cards
+# arrive in later iterations.
+- insert:
+    - id: feishu
+      name: '@dsh-feishu/dsh-feishu'
