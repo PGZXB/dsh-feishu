@@ -17,11 +17,11 @@
     "dsh-feishu-setup": "lib/setup/cli.js"
   },
   "files": [
-    "lib",
+    "lib/",
     "cordis.patch.yml",
-    "docs",
-    "LICENSE",
-    "README.md"
+    "README.md",
+    "README.zh.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=22.13"
@@ -87,5 +87,8 @@
     "lark",
     "bot",
     "deepseek-harness"
-  ]
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
 }

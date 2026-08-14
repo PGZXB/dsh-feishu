@@ -65,6 +65,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after reminders, the after firing to a Reminder card, and /schedule
   listing the active every.
 
+- **Chinese documentation (`*.zh.md`, harness pattern).** Every user-facing
+  doc now has a separate Chinese version — `README.zh.md`, and
+  `docs/{ux-specification,feishu-setup,development,architecture,pitfalls}.zh.md`
+  — following the DeepSeek Harness convention: the English files stay the
+  canonical source and gain a top-of-file language link
+  (`English | [中文](…zh.md)`); no UI/i18n work (per decision).
+- **Release pipeline.** `scripts/release.mjs` (version bump → CI gates →
+  tag) and `.github/workflows/release.yml` (tag-triggered npm publish via
+  `NODE_AUTH_TOKEN` + GitHub Release), plus `examples/feishu-profile/` (a
+  complete, copy-pasteable profile with the common options documented),
+  `publishConfig.access: public` + npm `files` whitelist, and a `SECURITY.md`
+  refresh (allowlists now real; rotate the app secret before any public
+  release).
+
 ### Removed
 
 - **`/history` card replay (user decision).** The command duplicated

@@ -6,7 +6,9 @@
 >
 > 状态：**Iteration 1–2 ✅**（私聊/群聊闭环、重启安全、命令体系（17 个表面命令 + 完整按钮面板 + DSH web 命令包装 `/plan /goal /compact /feedback /permission`、surface-native `/model`）、会话生命周期 `/sessions /resume /clear`、UX 打磨（下拉选择卡、note 状态、按钮分行）、**工作目录门禁**（未显式选 repo 前拒绝工作）；`/export` 因 Web-only 浏览器下载通道有意排除）；**Iteration 3 ✅（交互审批卡 + 提问卡 + 统一交互机制 `cards/interactions.ts`，fail-closed 语义）**；299 测试全绿（含 21 个真实组合集成测试，其中 2 个为真实审批链路：沙箱升级工具调用 → 审批卡 → Allow/Reject → 工具继续/报错）。**Iteration 4 ✅（两阶段表情回执 + `allowedUsers` 用户白名单 + 群内主动 @ 提醒；`/history` 卡片回放已按产品决策移除——与 `/export` 重复且全量刷卡难看，会话日志统一走 `/export` 文件消息）**；**338 单元测试 + 45 真实组合集成测试（主套件 27 + 场景套件 18）全绿**。`/export` 已落地为**文件消息**（web 浏览器下载的飞书等价物），`ask_user_question` 提问工具已随 bundle 挂载（与 web standard/code 预设对齐）；场景套件（重启恢复、群模式、提问变体、去重等）使用独立 `_dev/dsh-home-scenarios`，与主套件并行不冲突。
 >
-> 已确认决策（2026-08）：npm 包名 `@dsh-feishu/dsh-feishu`；未知 slash 命令默认报错提示（附 `/help` 指引，配置项留后门）；飞书测试机器人由用户自行申请、稍后提供凭据。
+> 状态补充：**Iteration 4 收尾 ✅（`/feishu-status` 诊断卡；断线重连已核查为 SDK autoReconnect 自带，无需新做）**；**Iteration 5 进行中 ✅ 核心（定时提醒 dsh-schedule：聊天内配置、到期以 `⏰ Reminder` 卡片渲染、`/schedule` 只读列出）**；**393 测试全绿（单元 + 主套件 27 + 场景套件 20，含提醒全链路真实进程测试）**。其余 Iteration 5 工作：文档中文版（`*.zh.md`，参考 DeepSeek Harness 做法）+ v1 发布收尾。
+>
+> 已确认决策（2026-08）：npm 包名 `@dsh-feishu/dsh-feishu`；未知 slash 命令默认报错提示（附 `/help` 指引，配置项留后门）；飞书测试机器人由用户自行申请、稍后提供凭据。**Iteration 4/5 特性取舍（逐项确认）**：砍掉——长输出折叠、会话摘要、限流/退避/重试、性能/压力专项、多机器人、话题粒度会话、`/relay`+`/adopt`、消息配额卡、群成员角色、飞书 web 面板、webhook 触发（飞书 API 已能外部直推，且保住纯出站网络模型）；断线重连无需新做（SDK autoReconnect 已实现）；i18n 不做 UI 文案表，改为**全文档提供独立中文版 `*.zh.md`**（英文原文档不动，顶部加语言链接，参考 DeepSeek Harness）；定时推送做（dsh-schedule 任务结果以提醒回合卡片呈现，聊天内配置）。
 >
 > 评审补充（2026-08）：① **部署主机无需公网 IP**（全出站，见 §1.4 网络要求）；② **权限审核（`ctx.approval`）与用户提问（`ctx.userQuestions`）统一以飞书交互卡呈现**，已并入 §1.5、§2.3、§3 P1、Iteration 3。
 >
@@ -279,12 +281,12 @@ examples/            # 最小可运行 profile 配置 + 飞书后台配置指南
 **测试**：压力/长会话集成测试；断线重连测试
 **验收**：连续长时间使用无卡片堆积、无频控报错。
 
-### Iteration 5 —— P2 精选功能 + 发布
+### Iteration 5 —— 精简版：提醒 + 中文文档 + 发布
 **交付**：
-- 按 §3 P2 清单挑选（默认：定时任务 + webhook 触发 + 多机器人 + `/relay`）
-- i18n（zh/en 文案表）
-- 开源收尾：完整双语 README、安装文档（飞书后台配置步骤 + `dsh plugin add`）、发布脚本（OIDC）、GitHub Release、`examples/` 完善
-**验收**：npm publish 后按 README 从零安装可用。
+- **定时提醒（已交付）**：挂载 `@deepseek-ai/dsh-schedule`（cordis 行）→ agent 获得 `schedule_create/delete/list` 工具，聊天内配置（"5 分钟后提醒我"）；到期注入 plugin 来源的 user message，bridge 对 agent 主动回合开 `⏰ Reminder` 卡片渲染；`/schedule` 只读列出活跃提醒（动态 import + 降级）。集成测试覆盖全链路（every+after 创建 → after 到期出卡 → /schedule 列出）
+- **文档中文版（进行中）**：`README.zh.md` + `docs/*.zh.md`（ux-specification / feishu-setup / development / architecture / pitfalls），英文原文档仅加顶部语言链接；做法参考 DeepSeek Harness（`English | [中文](README.zh.md)`）。UI 不做 i18n（按决策）
+- **开源收尾（进行中）**：`scripts/release.mjs`（版本戳 + 门禁 + tag）、`.github/workflows/release.yml`（tag 触发 npm publish（NPM_TOKEN）+ GitHub Release）、`examples/feishu-profile/` 完整示例、README 双语与从零安装、SECURITY 补 app secret 轮换提示
+**验收**：npm publish 后按 README 从零安装可用；中文文档与英文版结构一致。
 
 ---
 

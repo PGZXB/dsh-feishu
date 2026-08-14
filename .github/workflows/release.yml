@@ -1,0 +1,64 @@
+name: Release
+
+# Publish @dsh-feishu/dsh-feishu to npm and create a GitHub Release.
+# Triggered by a `v*` tag (e.g. v0.1.0). The tag must match the version in
+# package.json (see scripts/release.mjs which bumps, builds, gates, tags).
+# npm publish uses the NPM_TOKEN secret (registry-url + token auth — the
+# same pattern the DeepSeek Harness release workflow uses).
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write # create the GitHub Release
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish to npm + GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Release gates: the exact CI commands, then the publish bytes.
+      - name: Lint
+        run: pnpm run lint
+      - name: Typecheck
+        run: pnpm run typecheck
+      - name: Build
+        run: pnpm run build
+      - name: Test (unit + integration)
+        env:
+          FEISHU_INT_REQUIRED: '1'
+        run: pnpm run test
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm publish --access public --no-git-checks
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ github.ref_name }}"
+          gh release create "$tag" \
+            --title "dsh-feishu $tag" \
+            --notes "See [CHANGELOG.md](CHANGELOG.md) for what changed in this release." \
+            --generate-notes
