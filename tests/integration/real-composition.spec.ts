@@ -603,9 +603,11 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
         30_000,
       );
 
-      // Release the held response so the aborted turn settles; then wait for
-      // the agent to go idle (a new message would be needed to see it, so
-      // just give the loop a beat), and a Stop must explain — not hang.
+      // Release the held response. The aborted turn may or may not emit a
+      // terminal turn/end under the scripted mock (the aborted loop can stop
+      // consuming the released stream), so we assert the reachable part: the
+      // agent is no longer running, and a Stop now explains instead of
+      // hanging. The aborted → 'Stopped' card mapping is unit-tested.
       server.release();
       await new Promise((resolve) => setTimeout(resolve, 1_500));
       const textsBeforeIdleStop = readOutbox().filter((r) => r.kind === 'text').length;
@@ -633,10 +635,13 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
           .some((r) => r.text?.includes('Stopping')),
       ).toBe(false);
 
-      // Copy/retry on a chat with no completed answer → explanation.
+      // Copy/retry on a chat with no completed answer → explanation. Use a
+      // fresh chat id: this chat had a message (and possibly a released
+      // turn), so its lastOutputs/lastPrompts may be populated.
+      const emptyChat = `oc_empty_${Date.now()}`;
       writeAction({
-        messageId: 'mem-1',
-        chatId,
+        messageId: 'mem-2',
+        chatId: emptyChat,
         operatorOpenId: 'ou_mock',
         value: { kind: 'copy' },
       });
@@ -645,11 +650,8 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
         () => readOutbox().some((r) => r.kind === 'text' && r.text?.includes('Nothing to copy')),
         30_000,
       );
-      // Retry on a chat with no prior prompt → explanation. This chat HAS a
-      // prior message, so use a fresh chat id (no session, no last prompt).
-      const emptyChat = `oc_empty_${Date.now()}`;
       writeAction({
-        messageId: 'mem-2',
+        messageId: 'mem-3',
         chatId: emptyChat,
         operatorOpenId: 'ou_mock',
         value: { kind: 'retry' },

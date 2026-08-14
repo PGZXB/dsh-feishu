@@ -709,6 +709,61 @@ describe('Bridge', () => {
       expect(idleLabels).toEqual(['🔁 Retry last', '📋 Copy last']);
     });
 
+    it('stop mid-turn then aborted turn/end → card shows Stopped, not Done', async () => {
+      // User report: after Stop, the card finalized green ('Done') — an
+      // aborted turn must read 'Stopped' (DSH web: message.stopped).
+      const h = makeHarness({ throttleMs: 0 });
+      await h.bridge.handleMessage(message());
+      await h.bridge.handleEvent('feishu-session-1', chunkEvent('partial output'));
+      h.agentStore.setStatus('feishu-session-1', 'running');
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'stop' },
+      });
+      expect(h.transport.sentTexts.some((t) => t.text.includes('Stopping'))).toBe(true);
+      // The agent aborts → turn/end with kind 'aborted'.
+      await h.bridge.handleEvent(
+        'feishu-session-1',
+        turnEndEvent({ kind: 'aborted' }) as SessionEvent,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const card = h.transport.updatedCards.at(-1);
+      // Orange header (not green), status line reads Stopped.
+      expect(card?.header?.template).toBe('orange');
+      expect(
+        card?.elements.some(
+          (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('Stopped'),
+        ),
+      ).toBe(true);
+      expect(
+        card?.elements.some(
+          (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('Done'),
+        ),
+      ).toBe(false);
+      // Stopped is terminal: Retry/Panel buttons, no Stop.
+      const action = card?.elements.find((el) => el.tag === 'action');
+      const labels =
+        action && 'actions' in action
+          ? action.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
+          : [];
+      expect(labels).toContain('🔁 Retry');
+      expect(labels).not.toContain('⏹ Stop');
+      // After the abort the agent goes idle; the panel reflects stopped.
+      h.agentStore.setStatus('feishu-session-1', 'idle');
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'panel' },
+      });
+      const panel = h.transport.sentCards.at(-1);
+      const panelMarkdown = panel?.elements.find(
+        (el): el is Extract<CardElement, { tag: 'markdown' }> => el.tag === 'markdown',
+      );
+      expect(panelMarkdown?.content).toContain('Stopped');
+    });
     it('panel after done does not reset the streaming card to working', async () => {
       // The user-reported regression: done → panel → the streaming card
       // reverted to the non-done state. The state machine's single syncCard

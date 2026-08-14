@@ -18,8 +18,10 @@ import type { ProjectInfo } from '../projects.js';
 import { markdownToElements } from './markdown.js';
 import { toolRowTitle } from './tool-summary.js';
 
-/** Terminal/working state of one streaming card. */
-export type CardStatus = 'working' | 'done' | 'error';
+/** Terminal/working state of one streaming card. `stopped` is the terminal
+ *  state of a turn aborted by the user (Stop) — distinct from `done` so the
+ *  card reads "Stopped", not "Done" (DSH web: message.stopped). */
+export type CardStatus = 'working' | 'done' | 'error' | 'stopped';
 
 /** One think row: a reasoning block, line = `☁️ Think · Thinking`.
  *  The line always reads "Thinking" (a live latest-line would flicker
@@ -67,11 +69,13 @@ export interface CardSnapshot {
   readonly status: CardStatus;
 }
 
-/** Header template color per status. */
+/** Header template color per status. `stopped` uses amber — the DSH web
+ *  warning semantic for interrupted work (StateDot warning). */
 const STATUS_TEMPLATE: Record<CardStatus, string> = {
   working: 'blue',
   done: 'green',
   error: 'red',
+  stopped: 'orange',
 };
 
 /** Longest card body we ever send; the Feishu card cap is ~109KB. */
@@ -414,9 +418,11 @@ export function buildCard(snapshot: CardSnapshot): CardJson {
     const statusLine =
       snapshot.status === 'error'
         ? '**⚠️ Turn ended with an error**'
-        : snapshot.status === 'done'
-          ? '**✅ Done**'
-          : '**… working**';
+        : snapshot.status === 'stopped'
+          ? '**⏹ Stopped**'
+          : snapshot.status === 'done'
+            ? '**✅ Done**'
+            : '**… working**';
     elements.push({ tag: 'markdown', content: statusLine });
   }
   elements.push(statusButtons(snapshot.status, snapshot.rows.length > 0, collapsed));

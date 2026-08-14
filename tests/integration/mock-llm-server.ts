@@ -42,10 +42,11 @@ export interface MockLlmServer {
    */
   setScripts(scripts: readonly (readonly MockScriptChunk[])[]): void;
   /**
-   * Hold the response to the next completion request open until
-   * `release()` is called, keeping the agent `running` — the window an
-   * integration test needs to exercise running-state interactions (stop
-   * mid-turn, panel-while-running).
+   * Stream the response to the next completion request with a leading chunk
+   * and then pause until `release()` — the agent enters `running` with some
+   * content, and stays running while the test drives card actions (stop
+   * mid-turn, panel-while-running). After cancel, the agent aborts the turn
+   * (turn/end aborted) whether or not the stream was released.
    */
   holdNextResponse(): void;
   /** Release a held response; no-op when none is held. */
@@ -131,8 +132,10 @@ export async function startMockLlmServer(): Promise<MockLlmServer> {
       });
       if (hold) {
         hold = false;
-        // Keep the agent running: the response body stays open until the
-        // test releases it.
+        // Stream one leading chunk so the agent is running WITH content,
+        // then keep the body open until the test releases it. If the agent
+        // cancels first, its abort closes the turn regardless.
+        res.write(sseChunk({ content: 'starting…' }));
         releaseHold = () => {
           writeScripted(res);
           res.end('data: [DONE]\n\n');

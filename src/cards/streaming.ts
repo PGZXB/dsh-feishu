@@ -115,9 +115,9 @@ export class StreamingCardManager {
    * Mark the card terminal: flush any pending snapshot with the final
    * status, then retire the active entry (no further patches).
    * @param chatId - the chat whose card to finalize.
-   * @param status - terminal status (`done` or `error`).
+   * @param status - terminal status (`done`, `error`, or `stopped`).
    */
-  async finalize(chatId: string, status: 'done' | 'error'): Promise<void> {
+  async finalize(chatId: string, status: 'done' | 'error' | 'stopped'): Promise<void> {
     const card = this.active.get(chatId);
     if (card === undefined || card.closed) return;
     card.closed = true;

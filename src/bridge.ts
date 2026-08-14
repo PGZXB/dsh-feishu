@@ -512,7 +512,12 @@ export class Bridge {
         break;
       }
       case 'turn/end': {
-        const status: CardStatus = event.data.reason.kind === 'error' ? 'error' : 'done';
+        const status: CardStatus =
+          event.data.reason.kind === 'error'
+            ? 'error'
+            : event.data.reason.kind === 'aborted'
+              ? 'stopped'
+              : 'done';
         if (event.data.reason.kind === 'error') {
           const error = event.data.reason.error;
           this.options.logger.error(`turn failed: ${error.code}: ${error.message}`);
@@ -536,10 +541,11 @@ export class Bridge {
         await this.options.cards.finalize(chatId, status);
         const finalText = state.content.trim();
         if (finalText !== '') this.lastOutputs.set(chatId, finalText);
-        // The card holds the full answer and finalizes green in place; the
-        // initial card send already notified, so a completed turn sends no
+        // The card holds the full answer and finalizes in place; the initial
+        // card send already notified, so a completed or stopped turn sends no
         // second bubble. Failures keep a notice — a broken turn must not go
-        // unnoticed.
+        // unnoticed. A stopped turn's '⏹ Stopping…' was already sent by the
+        // stop action; the card's '⏹ Stopped' is the terminal state.
         if (status === 'error') {
           await this.options.transport.sendText(chatId, '⚠️ Turn failed — see the card for details');
         }
@@ -728,12 +734,16 @@ export class Bridge {
       case 'panel': {
         const agent = this.liveAgent(action.chatId);
         const running = agent !== undefined && agent.status === 'running';
+        const state = this.cardStates.get(action.chatId);
+        const stopped = state !== undefined && state.status === 'stopped';
         const output = this.lastOutputs.get(action.chatId);
         const statusLine = running
           ? '**Running** — a turn is in progress.'
-          : output === undefined
-            ? '**Idle** — send a message to start a turn.'
-            : '**Ready** — the last answer is in the card above; copy or retry it.';
+          : stopped
+            ? '**Stopped** — the last turn was interrupted.'
+            : output === undefined
+              ? '**Idle** — send a message to start a turn.'
+              : '**Ready** — the last answer is in the card above; copy or retry it.';
         await this.options.transport.sendCard(action.chatId, buildPanelCard(statusLine, running));
         this.syncCard(action.chatId);
         break;

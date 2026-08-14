@@ -31,7 +31,7 @@ user feedback rounds 2–5.
 2. **The complete answer** — the turn's final output, markdown-rendered
    (Section 4), at the bottom.
 3. **Execution status line** — `**… working**` / `**✅ Done**` /
-   `**⚠️ Turn ended with an error**`.
+   `**⏹ Stopped**` (user-interrupted) / `**⚠️ Turn ended with an error**`.
 4. **Button area** — Section 3.
 
 The card is **collapsed by default**: the row sequence is replaced by one
@@ -46,20 +46,23 @@ working after panel" — the design that replaced ad-hoc per-action patches).
 
 One `ChatCardState` per chat is the **single authoritative source** for the
 streaming card: `title`, `content`, `rows`, `openThinkId`, `status`
-(working/done/error), `collapsed`. The bridge renders the card from this
-state and nothing else.
+(working/done/stopped/error), `collapsed`. The bridge renders the card from
+this state and nothing else.
 
 ```
-(none)  --message/retry-->  working  --turn/end-->  done | error
+(none)  --message/retry-->  working  --turn/end(aborted)-->  stopped
 working --stop------------>  (unchanged until turn/end aborts it)
-done|error --any action--->  done|error (state unchanged; card re-synced)
+working --turn/end-------->  done | error
+done|stopped|error --any action--->  same (state unchanged; card re-synced)
 ```
 
 - **Entering working**: message or retry sets a fresh state (collapsed by
   default) and opens a new card.
 - **Streaming**: session events mutate the working state and call
   `syncCard` (through the streaming manager).
-- **turn/end**: status moves to done/error; `finalize` flushes the terminal
+- **turn/end**: `completed` → done, `aborted` (user Stop) → **stopped**,
+  `error` → error. An aborted turn must read **Stopped**, never Done (DSH
+  web `message.stopped`; user report). `finalize` flushes the terminal
   render. The state stays in the map (rows/content survive for the ⋯
   buttons and later re-sync).
 - **Card actions** mutate the state (toggle flips `collapsed`) or not, then
