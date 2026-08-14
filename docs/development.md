@@ -189,13 +189,15 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   "https://api.github.com/repos/PGZXB/dsh-feishu/actions/runs?head_sha=$SHA"
 ```
 
-Merge once the PR's `mergeable_state` is `clean` (checks green):
+Merge once the PR's `mergeable_state` is `clean` (checks green). Use
+`merge_method: "rebase"` to keep `main` linear — "merge" always adds a merge
+commit even when a fast-forward is possible, leaving two commits per PR:
 
 ```sh
 curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
   -H 'Accept: application/vnd.github+json' -H 'Content-Type: application/json' \
   https://api.github.com/repos/PGZXB/dsh-feishu/pulls/<number>/merge \
-  --data '{"commit_title":"...","merge_method":"merge"}'
+  --data '{"commit_title":"...","merge_method":"rebase"}'
 ```
 
 Before opening the PR, rebase onto the latest `origin/main` and re-run the
