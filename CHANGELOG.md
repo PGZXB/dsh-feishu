@@ -106,6 +106,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AGENTS.md` adds a "no machine-specific details in tracked docs"
   convention so absolute paths and ambient env values never land in
   committed docs again.
+- **Integration suite expansion (pre-release hardening).** New
+  real-composition tests: mutating commands and the compact button are
+  refused while a turn runs; hostile markdown, blank, and very long
+  messages all complete safely; consecutive messages to one chat are each
+  answered (burst messages merge into one step by agent inbox semantics).
+  New scenario test: a stop button on a pre-restart card explains there is
+  no live session and the chat stays usable. New unit edge cases cover
+  blank messages and malformed/unknown card actions.
 
 ### Fixed
 
@@ -158,6 +166,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The writer merges the guided options on both create and update without
   touching unrelated keys. `FEISHU_ALLOWED_USERS`-style env overrides are
   unaffected.
+
+- **`/compact` wedged the chat in "working"** (user report): the harness
+  compaction transaction emits `compaction/start → summary → end` plus a
+  checkpoint `user/message` with plugin source `compact` — and no
+  `turn/end`. The bridge rendered the checkpoint as a card that nothing
+  ever finalized: the chat stayed "working" forever and every later
+  command was refused with "a turn is running — stop it first." The bridge
+  now owns the compaction card lifecycle — `compaction/start` opens a
+  🧹 Compacting card immediately (button feedback, not a silent wait),
+  `compaction/summary` renders the summary, and `compaction/end` finalizes
+  it (green, or red with a failure notice when the transaction failed),
+  releasing the working-state gate. Regression tests at both layers
+  (`tests/bridge.spec.ts` compaction lifecycle + a real-composition test
+  that taps the compact button end to end).
 
 - **README gains an Uninstall section** (user request): the proper
   `dsh plugin --profile feishu remove @dsh-feishu/dsh-feishu` plus the

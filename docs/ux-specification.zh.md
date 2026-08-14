@@ -33,6 +33,7 @@
 (none)  --message/retry-->  working  --turn/end(aborted)-->  stopped
 working --stop------------>  (unchanged until turn/end aborts it)
 working --turn/end-------->  done | error
+working --compaction/end-->  done | error   （compaction 不是回合）
 done|stopped|error --any action--->  same (state unchanged; card re-synced)
 ```
 
@@ -41,6 +42,13 @@ done|stopped|error --any action--->  same (state unchanged; card re-synced)
 - **turn/end**：`completed` → done，`aborted`（用户 Stop）→ **stopped**，`error` → error。被中止的回合必须显示 **Stopped**，绝不能是 Done（DSH web `message.stopped`；用户报告）。`finalize` 冲刷终态渲染。状态保留在 map 中（rows/content 为 ⋯ 按钮和后续重新同步而保留）。
 - **卡片操作** 变更状态（toggle 翻转 `collapsed`）或不变更，然后**总是**调用 `syncCard` —— 唯一的渲染路径。已完成卡片被原地重新 patch，通过 macrotask 延迟，使回调 ACK 先到达（botmux 规则：否则 Lark 可能恢复点击前的卡片 —— 这是"reverts to working"类 bug 的根源）。
 - **折叠**：`collapsed` 是状态的一部分；`▸ Expand`/`▾ Collapse` 翻转它。折叠期间序列行持续流式更新（每次同步时根据 rows 重新计算）。新回合重置为折叠。
+- **compaction 不是回合**（用户报告）：`/compact` 运行
+  `compaction/start → summary → end` 事务，**没有** `turn/end`，因此
+  bridge 自己掌管 compaction 卡的生命周期——`compaction/start` 立即打开
+  一张 🧹 Compacting 卡（按钮即时反馈，而非静默等待），`compaction/summary`
+  渲染摘要，`compaction/end` 定稿（成功为 done；事务失败时为 error 并附带
+  失败通知），从而释放 working 状态门禁。plugin 源为 `compact` 的 checkpoint
+  `user/message` 会作为兜底打开 Compacting 卡。
 - **任何操作都不能让卡片停留在过期状态**：panel、stop、retry、copy、row-details 都以 `syncCard` 收尾，因此屏幕上的卡片始终反映权威状态。
 
 ### 1.3 流式机制
@@ -69,6 +77,9 @@ done|stopped|error --any action--->  same (state unchanged; card re-synced)
 | `tool/result` | 将匹配的工具行标记为 done/error，存储结果 |
 | `assistant/message` | 用组装好的文本替换答案 |
 | `turn/end` | 稳定思考行；状态 done/error；定稿卡片；保留 snapshot + rows 供重新断言和 ⋯ 按钮使用 |
+| `compaction/start` | 打开 🧹 Compacting 卡，状态 working（compaction 事务不是回合） |
+| `compaction/summary` | 用压缩摘要替换卡片答案 |
+| `compaction/end` | 状态 done（事务失败时为 error，附带失败通知）；定稿卡片——释放 working 状态门禁 |
 
 ---
 

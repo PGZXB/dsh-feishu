@@ -312,6 +312,74 @@ describe.skipIf(!integrationReady)('scenario integration (real process)', () => 
     }
   }, 240_000);
 
+  it('a stop button on a pre-restart card explains there is no live session', async () => {
+    try {
+      mock?.setScripts([[{ content: 'Pre-restart answer.' }]]);
+      await spawnBridge();
+      const chatId = `oc_stale_${Date.now()}`;
+      await pinWorkingDir(chatId);
+      sendMessage(chatId, 'before the restart');
+      await waitFor(
+        'the green card',
+        () => readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'green'),
+        90_000,
+      );
+
+      // Kill the daemon and start a fresh process (the session map is
+      // durable, but no agent is live until a message resumes it).
+      const first = child;
+      if (first === undefined) throw new Error('child not spawned');
+      first.kill('SIGTERM');
+      await waitForChildExit(first);
+      bridgeReady = false;
+      child = undefined;
+      await spawnBridge();
+
+      // Tapping Stop on the OLD card must explain the stale state instead
+      // of silently ignoring the tap (user-facing staleness, not a no-op).
+      writeAction({
+        messageId: 'mem-stale-1',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'stop' },
+      });
+      await waitFor(
+        'the no-live-session stop notice',
+        () =>
+          readOutbox().some(
+            (r) => r.kind === 'text' && r.text?.includes('No active session to stop'),
+          ),
+        30_000,
+      );
+      // The chat still works after the stale tap: a fresh message resumes
+      // the durable session (session durability itself is covered by the
+      // restart test above).
+      sendMessage(chatId, 'after the restart');
+      await waitFor(
+        'a new card after the restart',
+        () =>
+          readOutbox().some(
+            (r) =>
+              r.kind === 'card' &&
+              r.chatId === chatId &&
+              r.card?.header?.title.content === 'after the restart',
+          ),
+        90_000,
+      );
+      sendMessage(chatId, '/status');
+      await waitFor(
+        'the /status reply after restart',
+        () =>
+          readOutbox().some(
+            (r) => r.kind === 'text' && r.chatId === chatId && r.text?.includes(`chat: ${chatId}`),
+          ),
+        30_000,
+      );
+    } catch (error) {
+      failWithLogs(error);
+    }
+  }, 240_000);
+
   it('/status is read-only and answers while a turn is running', async () => {
     try {
       mock?.holdNextResponse();

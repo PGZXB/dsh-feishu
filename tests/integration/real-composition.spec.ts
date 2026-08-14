@@ -972,6 +972,356 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
     }
   }, 120_000);
 
+  /** The user-reported compact regression: tapping 🧹 Compact must open a
+   *  compaction card immediately (button feedback), finalize it when the
+   *  transaction ends, and leave the chat servable again — previously the
+   *  chat stayed "working" forever and every later command was refused with
+   *  "a turn is running — stop it first." */
+  it('compact button finalizes the compaction card and unlocks the chat (regression)', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_compact_${Date.now()}`;
+      await pinWorkingDir(chatId);
+      // A first turn gives the session history to compact.
+      sendMessage(chatId, 'hello from the compact regression test');
+      await waitFor(
+        'the first turn to finalize',
+        () => readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'green'),
+        90_000,
+      );
+
+      // Open the panel and tap the 🧹 Compact palette button.
+      writeAction({
+        messageId: 'mem-compact-1',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'panel' },
+      });
+      await waitFor(
+        'the panel card',
+        () =>
+          readOutbox()
+            .filter((r) => r.kind === 'card' && r.chatId === chatId)
+            .some((r) => r.card?.header?.title.content === '⚙️ dsh-feishu panel'),
+        30_000,
+      );
+      writeAction({
+        messageId: 'mem-compact-2',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'command', name: 'compact' },
+      });
+
+      // Immediate feedback: a Compacting card opens (not a silent wait).
+      await waitFor(
+        'the Compacting card',
+        () =>
+          readOutbox()
+            .filter((r) => r.kind === 'card' && r.chatId === chatId)
+            .some((r) => r.card?.header?.title.content === '🧹 Compacting…'),
+        30_000,
+      );
+
+      // The transaction settles: either a "Compacted …" result message or
+      // the failure notice — never a permanently working card.
+      await waitFor(
+        'the compaction outcome',
+        () =>
+          readOutbox().some(
+            (r) =>
+              r.chatId === chatId &&
+              r.kind === 'text' &&
+              (r.text?.includes('Compacted') ||
+                r.text?.includes('No compactable history') ||
+                r.text?.includes('Compaction failed') ||
+                r.text?.includes('unavailable on this deployment')),
+          ),
+        90_000,
+      );
+
+      // THE REGRESSION: the chat is servable again — a later command must
+      // NOT be refused with "a turn is running — stop it first."
+      sendMessage(chatId, '/status');
+      await waitFor(
+        'the /status reply after compaction',
+        () =>
+          readOutbox().some(
+            (r) => r.kind === 'text' && r.chatId === chatId && r.text?.includes(`chat: ${chatId}`),
+          ),
+        30_000,
+      );
+      const after = readOutbox();
+      expect(
+        after.some(
+          (r) => r.chatId === chatId && r.text?.includes('a turn is running — stop it first.'),
+        ),
+      ).toBe(false);
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 180_000);
+
+  /** The state-machine matrix rule end-to-end: while a turn is running,
+   *  mutating commands — including the 🧹 Compact button and a typed
+   *  `/repo` — are refused with "a turn is running — stop it first."
+   *  (the surface must not start a second turn over a live one). */
+  it('mutating commands and the compact button are refused while a turn is running', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      // Hold the LLM response so the agent stays running while we act.
+      server.holdNextResponse();
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_refuse_${Date.now()}`;
+      await pinWorkingDir(chatId);
+      sendMessage(chatId, 'hold this turn open');
+      await waitFor(
+        'the working streaming card',
+        () => readOutbox().some((r) => r.kind === 'card' && r.chatId === chatId),
+        30_000,
+      );
+
+      // Compact button (palette command) while running → refused.
+      writeAction({
+        messageId: 'mem-refuse-1',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'command', name: 'compact' },
+      });
+      await waitFor(
+        'the compact refusal',
+        () =>
+          readOutbox().some(
+            (r) =>
+              r.kind === 'text' &&
+              r.chatId === chatId &&
+              r.text?.includes('a turn is running — stop it first.'),
+          ),
+        30_000,
+      );
+
+      // Typed /repo while running → refused the same way.
+      sendMessage(chatId, '/repo');
+      await waitFor(
+        'the /repo refusal',
+        () =>
+          readOutbox()
+            .filter((r) => r.kind === 'text' && r.chatId === chatId)
+            .filter((r) => r.text?.includes('a turn is running — stop it first.')).length >= 2,
+        30_000,
+      );
+
+      // Release the held response: the turn completes and the chat is
+      // servable again.
+      server.release();
+      await waitFor(
+        'the turn to finalize after release',
+        () => readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'green'),
+        60_000,
+      );
+      sendMessage(chatId, '/status');
+      await waitFor(
+        'the /status reply after the held turn',
+        () =>
+          readOutbox().some(
+            (r) => r.kind === 'text' && r.chatId === chatId && r.text?.includes(`chat: ${chatId}`),
+          ),
+        30_000,
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 180_000);
+
+  /** Hostile/unexpected input must never break the surface: markdown-heavy
+   *  text, a blank message, and a very long message all produce a completed
+   *  green turn (lark_md has no reliable escaping — the surface must not
+   *  crash or wedge on attacker-shaped text). */
+  it('hostile markdown, blank, and very long messages all complete safely', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_hostile_${Date.now()}`;
+      await pinWorkingDir(chatId);
+      const greens = () =>
+        readOutbox().filter((r) => r.kind === 'patch' && r.card?.header?.template === 'green')
+          .length;
+
+      // 1. Markdown/HTML/mention-shaped hostile text.
+      sendMessage(
+        chatId,
+        'hello **bold** `inline code` [link](https://example.com) <at id="ou_x"></at> 🚀 `**nested**`',
+      );
+      await waitFor('the hostile turn to finalize', () => greens() >= 1, 90_000);
+      // The card title derives from the user's message and must carry the
+      // hostile text verbatim (the surface never crashes on it).
+      const titles = readOutbox()
+        .filter((r) => r.kind === 'patch' && r.card?.header?.template === 'green')
+        .map((r) => r.card?.header?.title.content ?? '');
+      expect(titles.some((t) => t.includes('bold'))).toBe(true);
+
+      // 2. A blank message (whitespace only) still completes.
+      sendMessage(chatId, '   ');
+      await waitFor('the blank turn to finalize', () => greens() >= 2, 90_000);
+
+      // 3. A very long message: the card title is capped, the turn completes.
+      sendMessage(chatId, `${'x'.repeat(500)} tail`);
+      await waitFor('the long turn to finalize', () => greens() >= 3, 90_000);
+      const longCard = readOutbox()
+        .filter((r) => r.kind === 'patch' && r.card?.header?.template === 'green')
+        .at(-1)?.card;
+      const title = longCard?.header?.title.content ?? '';
+      expect(title.length).toBeLessThanOrEqual(41);
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 180_000);
+
+  /** Consecutive messages to one chat: each must be answered — the surface
+   *  must never drop or wedge a follow-up message behind the previous turn.
+   *  (Burst messages arriving within one step are merged by the agent's
+   *  inbox `next-step` claim — that is harness semantics, not a loss.) */
+  it('consecutive messages to one chat are each answered', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_seq_${Date.now()}`;
+      await pinWorkingDir(chatId);
+      const greens = () =>
+        readOutbox().filter((r) => r.kind === 'patch' && r.card?.header?.template === 'green')
+          .length;
+
+      // Message A: wait for its turn to complete before sending B.
+      sendMessage(chatId, 'first message');
+      await waitFor('the first turn to finalize', () => greens() >= 1, 90_000);
+      // Message B: its own turn completes too — nothing is dropped.
+      sendMessage(chatId, 'second message');
+      await waitFor('the second turn to finalize', () => greens() >= 2, 90_000);
+
+      // Burst (same step): the agent merges them into one turn — still at
+      // least one completed turn, never a wedged chat.
+      sendMessage(chatId, 'burst one');
+      sendMessage(chatId, 'burst two');
+      await waitFor('the burst turn to finalize', () => greens() >= 3, 120_000);
+      // The chat is servable after the burst.
+      sendMessage(chatId, '/status');
+      await waitFor(
+        'the /status reply after the burst',
+        () =>
+          readOutbox().some(
+            (r) => r.kind === 'text' && r.chatId === chatId && r.text?.includes(`chat: ${chatId}`),
+          ),
+        30_000,
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 180_000);
+
   /** The web-command wrapper end-to-end: bare /permission opens the preset
    *  picker card (from the real ctx.permissionPresets service), and a pick
    *  applies the preset — a button press actually switches permissions

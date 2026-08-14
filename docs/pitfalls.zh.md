@@ -138,6 +138,17 @@ harness 沙箱（以及本 checkout 的环境）有一些特定规则：
   harness 源码中的 "Web-only"；实现一个表面原生的等价物（`/model` 读取
   `ctx.llm.listProviders` × `listModels` 和 `ctx.agentDefaultModel`）。
 
+## compaction 不是回合
+
+- `/compact` 运行一个持久事务——`compaction/start → summary → end`——
+  并且**不会**发出 `turn/end`。如果表面只在 `turn/end` 时定稿卡片，
+  聊天会永远停在 "working"：之后每个命令都被 "a turn is running —
+  stop it first." 拒绝（用户报告）。应该自己掌管 compaction 卡的
+  生命周期：在 `compaction/start` 打开（按钮即时反馈）、渲染
+  `compaction/summary`、在 `compaction/end` 定稿——该事件无论成败都会
+  发出（失败的关闭会携带 `error`）。plugin 源为 `compact` 的 checkpoint
+  `user/message` 是表面替换标记，不是回合开始。
+
 ## 服务接缝：getter vs 方法
 
 - 结构化的 `ctx.get(name)` 接缝必须镜像 REAL 服务的形状。

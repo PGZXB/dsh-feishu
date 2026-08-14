@@ -152,6 +152,18 @@ The harness sandbox (and this checkout's environment) has specific rules:
   surface-native equivalent (`/model` reads `ctx.llm.listProviders` ×
   `listModels` and `ctx.agentDefaultModel`).
 
+## Compaction is not a turn
+
+- `/compact` runs a durable transaction — `compaction/start → summary →
+  end` — and emits NO `turn/end`. A surface that only finalizes its card on
+  `turn/end` leaves the chat "working" forever: every later command is
+  refused with "a turn is running — stop it first." (user report). Own the
+  compaction card lifecycle instead: open on `compaction/start` (immediate
+  button feedback), render `compaction/summary`, and finalize on
+  `compaction/end` — which the seam emits on success AND failure (a failed
+  close carries `error`). The checkpoint `user/message` (plugin source
+  `compact`) is a surface-replacement marker, not a turn start.
+
 ## Service seams: getters vs methods
 
 - A structural `ctx.get(name)` seam must mirror the REAL service shape.

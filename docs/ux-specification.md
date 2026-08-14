@@ -58,6 +58,7 @@ this state and nothing else.
 (none)  --message/retry-->  working  --turn/end(aborted)-->  stopped
 working --stop------------>  (unchanged until turn/end aborts it)
 working --turn/end-------->  done | error
+working --compaction/end-->  done | error   (compaction is NOT a turn)
 done|stopped|error --any action--->  same (state unchanged; card re-synced)
 ```
 
@@ -78,6 +79,14 @@ done|stopped|error --any action--->  same (state unchanged; card re-synced)
 - **Collapsed**: `collapsed` is part of the state; `▸ Expand`/`▾ Collapse`
   flips it. While collapsed, the sequence line streams (recomputed from
   rows on every sync). A new turn resets to collapsed.
+- **Compaction is not a turn** (user report): `/compact` runs a
+  `compaction/start → summary → end` transaction with no `turn/end`, so the
+  bridge owns the compaction card lifecycle itself — `compaction/start`
+  opens a 🧹 Compacting card (immediate button feedback, not a silent
+  wait), `compaction/summary` renders the summary, and `compaction/end`
+  finalizes it (done, or error with a failure notice when the transaction
+  failed), releasing the working-state gate. A checkpoint `user/message`
+  with plugin source `compact` opens a Compacting card as a fallback.
 - **No action can leave the card in a stale state**: panel, stop, retry,
   copy, row-details all end with `syncCard`, so the on-screen card always
   reflects the authoritative state.
@@ -114,6 +123,9 @@ Reference: botmux streaming card; our `StreamingCardManager`.
 | `tool/result` | mark the matching tool row done/error, store result |
 | `assistant/message` | replace answer with assembled text |
 | `turn/end` | settle think row; status done/error; finalize card; keep snapshot + rows for re-assertion and the ⋯ buttons |
+| `compaction/start` | open a 🧹 Compacting card, status working (a compaction transaction is not a turn) |
+| `compaction/summary` | replace the card answer with the compaction summary |
+| `compaction/end` | status done (or error, with a failure notice, when the transaction failed); finalize the card — releases the working-state gate |
 
 ---
 

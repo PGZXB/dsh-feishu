@@ -363,6 +363,14 @@ describe('Bridge', () => {
     expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(1);
   });
 
+  it('a blank message is delivered as-is (no crash, no special case)', async () => {
+    const h = makeHarness();
+    await h.bridge.handleMessage(message({ text: '   ' }));
+    expect(h.agentStore.followups.get('feishu-session-1')?.[0]?.content).toEqual([
+      { type: 'text', text: '   ' },
+    ]);
+  });
+
   it('reuses the existing agent for a second message in the same chat', async () => {
     const h = makeHarness();
     await h.bridge.handleMessage(message());
@@ -2004,6 +2012,30 @@ describe('panel command palette', () => {
     expect(h.transport.sentTexts).toHaveLength(0);
   });
 
+  it('a malformed card action (missing kind) is ignored without side effects', async () => {
+    const h = makeHarness();
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: {},
+    });
+    expect(h.transport.sentTexts).toHaveLength(0);
+    expect(h.transport.sentCards).toHaveLength(0);
+    expect(h.agentStore.followups.size).toBe(0);
+  });
+
+  it('an unknown action kind is ignored without side effects', async () => {
+    const h = makeHarness();
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'totally-unknown' },
+    });
+    expect(h.transport.sentTexts).toHaveLength(0);
+    expect(h.transport.sentCards).toHaveLength(0);
+  });
 });
 
 describe('dsh web command wrappers', () => {
