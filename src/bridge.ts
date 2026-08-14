@@ -28,10 +28,12 @@ import {
   buildRowDetailsCard,
   type CardSnapshot,
   type CardStatus,
+  type PanelCommand,
   type ThinkRow,
   type ToolRow,
   type TurnRow,
 } from './cards/render.js';
+import { buildSessionsCard, type SessionRowView } from './cards/session-list.js';
 import type { StreamingCardManager } from './cards/streaming.js';
 import { toolRowSummary } from './cards/tool-summary.js';
 import { CommandRegistry, type CommandResult, parseSlash } from './commands.js';
@@ -60,6 +62,22 @@ export interface AgentStore {
   resume(sessionId: string): Promise<Agent>;
   /** Create an agent (and its session) for the given id and working directory. */
   create(sessionId: string, cwd: string): Promise<Agent>;
+}
+
+/** One `/sessions` row as the surface lists it (structural subset of dsh's
+ *  session corpus; titles folded by the query engine). */
+export interface SessionListRow {
+  readonly sessionId: string;
+  /** Latest session title, or `undefined` when the log has none. */
+  readonly title: string | undefined;
+  /** Working directory the session was created in, or `undefined`. */
+  readonly cwd: string | undefined;
+  /** Unix epoch milliseconds when the session was created. */
+  readonly createdAt: number;
+  /** Whether the session currently has a live agent. */
+  readonly live: boolean;
+  /** Whether the session has a persisted log. */
+  readonly persisted: boolean;
 }
 
 /** Options for {@link Bridge}. */
@@ -95,7 +113,13 @@ export interface BridgeOptions {
    * agent through the dsh command registry. Absent, registry commands are
    * not available (every unknown slash line falls to the unknown policy).
    */
-  readonly executeCommand?: (agent: Agent, line: string) => Promise<string | undefined>;
+  readonly executeCommand?: (agent: Agent, line: string) => Promise<CommandResult | undefined>;
+  /**
+   * List the session corpus for `/sessions` and `/resume` (newest-first,
+   * with folded titles). Absent, the surface degrades to a
+   * bound-sessions-only listing.
+   */
+  readonly listSessions?: () => Promise<readonly SessionListRow[] | undefined>;
   /**
    * Policy for an unknown slash line: `error` replies with an unknown-command
    * notice (default); `passthrough` delivers the line to the model as a
@@ -211,6 +235,43 @@ async function listProjects(roots: readonly string[]): Promise<ProjectInfo[]> {
   return scanMultipleProjects(roots);
 }
 
+/** Surface-wrapped dsh web commands (mounted by dsh-base's command rows):
+ *  thin handlers that ensure an agent, then execute the dsh registry command
+ *  with the same arguments — the Feishu surface covers the web command set
+ *  in-chat, buttons included. `/export` is intentionally absent: it is a
+ *  Web-only command whose handler a browser download plugin observes. */
+const HARNESS_COMMANDS: ReadonlyArray<{
+  readonly name: string;
+  readonly description: string;
+  readonly buttonLabel: string;
+}> = [
+  {
+    name: 'plan',
+    description: 'Enter or leave plan mode (dsh web)',
+    buttonLabel: '🗺️ Plan mode',
+  },
+  {
+    name: 'goal',
+    description: 'Set or view the goal for a long-running task (dsh web)',
+    buttonLabel: '🎯 Goal',
+  },
+  {
+    name: 'compact',
+    description: 'Compact older conversation history (dsh web)',
+    buttonLabel: '🧹 Compact',
+  },
+  {
+    name: 'feedback',
+    description: 'Send feedback (dsh web)',
+    buttonLabel: '💬 Feedback',
+  },
+  {
+    name: 'permission',
+    description: 'Switch the permission preset — sandbox mode + approval policy (dsh web)',
+    buttonLabel: '🔐 Permission',
+  },
+];
+
 export class Bridge {
   private readonly dedup = new MessageDeduplicator();
   /** The authoritative streaming-card state per chat (the state machine). */
@@ -219,6 +280,8 @@ export class Bridge {
   private readonly lastOutputs = new Map<string, string>();
   /** Active repo-picker card message id per chat; a pick consumes it. */
   private readonly pickerMessageIds = new Map<string, string>();
+  /** Active /sessions picker card message id per chat (stale-callback guard). */
+  private readonly sessionPickerMessageIds = new Map<string, string>();
 
   /** The live agent for a chat, or `undefined` (no session or not attached). */
   private liveAgent(chatId: string): Agent | undefined {
@@ -283,6 +346,19 @@ export class Bridge {
   ): Promise<void> {
     const command = this.commands.find(slash.name);
     if (command !== undefined) {
+      // The state-machine matrix rule: mutating commands are refused while a
+      // turn is running (read-only commands — help/status/sessions — and
+      // cancel/group stay available).
+      if (
+        this.refuseWhileWorking(message.chatId) &&
+        !Bridge.ALLOWED_WHILE_WORKING.has(slash.name)
+      ) {
+        await this.replyCommandResult(message.chatId, {
+          kind: 'error',
+          text: 'a turn is running — stop it first.',
+        });
+        return;
+      }
       const result = await command.handler({
         chatId: message.chatId,
         senderOpenId: message.senderOpenId,
@@ -295,9 +371,9 @@ export class Bridge {
     const sessionId = this.options.sessionMap.get(message.chatId);
     const agent = sessionId === undefined ? undefined : this.options.agentStore.get(sessionId);
     if (this.options.executeCommand !== undefined && agent !== undefined) {
-      const text = await this.options.executeCommand(agent, line);
-      if (text !== undefined) {
-        await this.options.transport.sendText(message.chatId, text);
+      const result = await this.options.executeCommand(agent, line);
+      if (result !== undefined) {
+        await this.replyCommandResult(message.chatId, result);
         return;
       }
     }
@@ -315,6 +391,200 @@ export class Bridge {
   private async replyCommandResult(chatId: string, result: CommandResult): Promise<void> {
     const text = result.kind === 'error' ? `⚠️ ${result.text}` : result.text;
     if (text !== '') await this.options.transport.sendText(chatId, text);
+  }
+
+  /**
+   * The working-state gate (state-machine matrix rule): while a turn is
+   * running, only read-only commands may run; mutating commands are refused
+   * with an explanation so a mid-turn session rebind/remint can never
+   * corrupt the live card.
+   * @param chatId - the chat.
+   * @returns whether the chat is mid-turn (caller should refuse).
+   */
+  private refuseWhileWorking(chatId: string): boolean {
+    return this.cardStates.get(chatId)?.status === 'working';
+  }
+
+  /**
+   * Commands allowed while a turn is running (read-only or safe):
+   * `help`/`status`/`sessions` read state, `cancel` is the stop itself, and
+   * `group` creates a separate chat.
+   */
+  private static readonly ALLOWED_WHILE_WORKING = new Set([
+    'help',
+    'status',
+    'sessions',
+    'cancel',
+    'group',
+  ]);
+
+  /** Reset a chat's card state: no live card, no copy/retry targets. Used by
+   *  /clear and /resume so the resumed/new conversation starts clean. */
+  private resetChatState(chatId: string): void {
+    this.cardStates.delete(chatId);
+    this.lastOutputs.delete(chatId);
+    this.lastPrompts.delete(chatId);
+  }
+
+  /**
+   * The shared /resume flow (slash line and /sessions Resume button). The
+   * chat must be idle; the target session must not be running elsewhere;
+   * then bind the chat to the session (moving the previous binding) and
+   * resume a persisted agent when none is live.
+   * @param chatId - the chat to rebind.
+   * @param sessionId - the session to resume.
+   * @returns the surface outcome text.
+   */
+  private async resumeSession(chatId: string, sessionId: string): Promise<CommandResult> {
+    if (this.refuseWhileWorking(chatId)) {
+      return { kind: 'error', text: 'a turn is running — stop it first.' };
+    }
+    if (this.options.sessionMap.get(chatId) === sessionId) {
+      return { kind: 'error', text: `session ${sessionId} is already active in this chat.` };
+    }
+    const agent = this.options.agentStore.get(sessionId);
+    if (agent !== undefined && agent.status === 'running') {
+      return {
+        kind: 'error',
+        text: `session ${sessionId} has an active turn — stop it in its chat first.`,
+      };
+    }
+    if (agent === undefined) {
+      try {
+        await this.options.agentStore.resume(sessionId);
+      } catch (error: unknown) {
+        this.options.logger.warn(`resume of session ${sessionId} failed: ${String(error)}`);
+        return {
+          kind: 'error',
+          text: `could not resume session ${sessionId}: ${String(error)}`,
+        };
+      }
+    }
+    // Bind the chat to the session (both directions stay consistent; the
+    // previous binding — if any — is detached). Resume does not change the
+    // chat's pinned cwd: /cd remains the way to set where new sessions start.
+    this.options.sessionMap.set(chatId, sessionId);
+    this.resetChatState(chatId);
+    return {
+      kind: 'success',
+      text: `Resumed session ${sessionId} — send a message to continue it.`,
+    };
+  }
+
+  /**
+   * Load the session list for /sessions, marking the chat's current session.
+   * Degrades to a bound-sessions-only listing when the query service is
+   * absent (loud in the log).
+   * @param chatId - the requesting chat.
+   * @returns session rows, or `undefined` when listing is unavailable.
+   */
+  private async loadSessions(chatId: string): Promise<readonly SessionRowView[] | undefined> {
+    if (this.options.listSessions === undefined) {
+      this.options.logger.warn(
+        '[feishu] listSessions unavailable; /sessions degraded to bound sessions',
+      );
+      const current = this.options.sessionMap.get(chatId);
+      const seen = new Set<string>();
+      const rows: SessionRowView[] = [];
+      for (const chat of this.options.sessionMap.chats()) {
+        const sessionId = this.options.sessionMap.get(chat);
+        if (sessionId === undefined || seen.has(sessionId)) continue;
+        seen.add(sessionId);
+        rows.push({
+          sessionId,
+          title: chat === chatId ? 'this chat' : `chat ${chat}`,
+          cwd: this.options.sessionMap.cwdFor(chat),
+          createdAt: 0,
+          live: this.options.agentStore.get(sessionId) !== undefined,
+          persisted: false,
+          current: sessionId === current,
+        });
+      }
+      return rows;
+    }
+    const listed = await this.options.listSessions();
+    if (listed === undefined) return undefined;
+    const current = this.options.sessionMap.get(chatId);
+    return listed.map((row) => ({
+      ...row,
+      current: row.sessionId === current,
+    }));
+  }
+
+  /** Post the /sessions picker card (the resume-by-button surface). */
+  private async openSessionsPicker(chatId: string): Promise<void> {
+    const rows = await this.loadSessions(chatId);
+    if (rows === undefined) {
+      await this.options.transport.sendText(
+        chatId,
+        'Session list unavailable — the session query service is not mounted.',
+      );
+      return;
+    }
+    try {
+      const sent = await this.options.transport.sendCard(chatId, buildSessionsCard(rows, 0));
+      // Record the active picker card so a resume can consume it (and stale
+      // callbacks from an older picker are rejected).
+      this.sessionPickerMessageIds.set(chatId, sent.messageId);
+    } catch (error: unknown) {
+      this.options.logger.warn(`sessions picker send failed: ${String(error)}`);
+    }
+  }
+
+  /** The panel command palette: every surface command as a button, grouped
+   *  by category (session → chat → system) so the palette reads as sections
+   *  regardless of registration order. */
+  private panelCommands(): PanelCommand[] {
+    const categoryOrder = ['session', 'chat', 'system'];
+    return [...this.commands.list()]
+      .sort((a, b) => categoryOrder.indexOf(a.category) - categoryOrder.indexOf(b.category))
+      .map((command) => ({
+        name: command.name,
+        buttonLabel: command.buttonLabel ?? command.name,
+        category: command.category,
+      }));
+  }
+
+  /**
+   * Open (or page) the control panel card: the core buttons plus the full
+   * command palette, paginated. The panel is stateless — each open/pager
+   * posts a fresh card built from the current authoritative state.
+   * @param chatId - the chat.
+   * @param page - zero-based palette page.
+   */
+  private async openPanel(chatId: string, page = 0): Promise<void> {
+    const agent = this.liveAgent(chatId);
+    const running = agent !== undefined && agent.status === 'running';
+    const state = this.cardStates.get(chatId);
+    const stopped = state !== undefined && state.status === 'stopped';
+    const output = this.lastOutputs.get(chatId);
+    const statusLine = running
+      ? '**Running** — a turn is in progress.'
+      : stopped
+        ? '**Stopped** — the last turn was interrupted.'
+        : output === undefined
+          ? '**Idle** — send a message to start a turn.'
+          : '**Ready** — the last answer is in the card above; copy or retry it.';
+    await this.options.transport.sendCard(
+      chatId,
+      buildPanelCard(statusLine, running, this.panelCommands(), page),
+    );
+    this.syncCard(chatId);
+  }
+
+  /**
+   * Ensure a session and live agent exist for the chat (used by the dsh web
+   * command wrappers, which execute against an agent). Mints a session on a
+   * fresh chat — documented wrapper behavior.
+   * @param chatId - the chat.
+   * @returns a live agent bound to the chat's session.
+   */
+  private async ensureAgent(chatId: string): Promise<Agent> {
+    const sessionId = this.options.sessionMap.ensure(chatId);
+    const live = this.options.agentStore.get(sessionId);
+    if (live !== undefined) return live;
+    const cwd = this.options.sessionMap.cwdFor(chatId) ?? this.options.defaultCwd;
+    return this.options.agentStore.create(sessionId, cwd);
   }
 
   /** The normal turn flow: session resolution, streaming card, followup. */
@@ -748,20 +1018,80 @@ export class Bridge {
         break;
       }
       case 'panel': {
-        const agent = this.liveAgent(action.chatId);
-        const running = agent !== undefined && agent.status === 'running';
-        const state = this.cardStates.get(action.chatId);
-        const stopped = state !== undefined && state.status === 'stopped';
-        const output = this.lastOutputs.get(action.chatId);
-        const statusLine = running
-          ? '**Running** — a turn is in progress.'
-          : stopped
-            ? '**Stopped** — the last turn was interrupted.'
-            : output === undefined
-              ? '**Idle** — send a message to start a turn.'
-              : '**Ready** — the last answer is in the card above; copy or retry it.';
-        await this.options.transport.sendCard(action.chatId, buildPanelCard(statusLine, running));
-        this.syncCard(action.chatId);
+        await this.openPanel(action.chatId);
+        break;
+      }
+      case 'panel-page': {
+        const page = Number(action.value.page);
+        if (!Number.isInteger(page) || page < 0) break;
+        await this.openPanel(action.chatId, page);
+        break;
+      }
+      case 'command': {
+        // A panel palette button: same handler as the slash line, with the
+        // same working-state gate for mutating commands (matrix rule).
+        const name = action.value.name;
+        const command = name === undefined ? undefined : this.commands.find(name);
+        if (command === undefined) {
+          this.options.logger.warn(`command button for unknown command ${name ?? '(missing)'}`);
+          break;
+        }
+        if (
+          name !== undefined &&
+          this.refuseWhileWorking(action.chatId) &&
+          !Bridge.ALLOWED_WHILE_WORKING.has(name)
+        ) {
+          await this.replyCommandResult(action.chatId, {
+            kind: 'error',
+            text: 'a turn is running — stop it first.',
+          });
+          break;
+        }
+        const result = await command.handler({
+          chatId: action.chatId,
+          senderOpenId: action.operatorOpenId,
+          rawInput: '',
+        });
+        await this.replyCommandResult(action.chatId, result);
+        break;
+      }
+      case 'resume-session': {
+        const sessionId = action.value.sessionId;
+        if (sessionId === undefined || sessionId === '') break;
+        // Only the active /sessions card may resume (stale-card guard).
+        if (action.messageId !== this.sessionPickerMessageIds.get(action.chatId)) {
+          this.options.logger.info(`ignoring stale session resume from card ${action.messageId}`);
+          break;
+        }
+        const result = await this.resumeSession(action.chatId, sessionId);
+        await this.replyCommandResult(action.chatId, result);
+        break;
+      }
+      case 'sessions-page': {
+        if (action.messageId !== this.sessionPickerMessageIds.get(action.chatId)) {
+          this.options.logger.info(`ignoring stale sessions page from card ${action.messageId}`);
+          break;
+        }
+        const page = Number(action.value.page);
+        if (!Number.isInteger(page) || page < 0) break;
+        const rows = await this.loadSessions(action.chatId);
+        if (rows === undefined) {
+          await this.options.transport.sendText(
+            action.chatId,
+            'Session list unavailable — the session query service is not mounted.',
+          );
+          break;
+        }
+        try {
+          const sent = await this.options.transport.sendCard(
+            action.chatId,
+            buildSessionsCard(rows, page),
+          );
+          // The page flip posts a fresh picker card — it becomes the active one.
+          this.sessionPickerMessageIds.set(action.chatId, sent.messageId);
+        } catch (error: unknown) {
+          this.options.logger.warn(`sessions picker page refresh failed: ${String(error)}`);
+        }
         break;
       }
       default: {
@@ -904,6 +1234,92 @@ export class Bridge {
         return { kind: 'success', text: lines.join('\n') };
       },
     });
+    this.commands.register({
+      name: 'sessions',
+      description: 'List saved sessions and resume one in this chat',
+      category: 'session',
+      buttonLabel: '🗂️ Sessions',
+      handler: async (invocation) => {
+        await this.openSessionsPicker(invocation.chatId);
+        return { kind: 'success', text: '' };
+      },
+    });
+    this.commands.register({
+      name: 'resume',
+      description: 'Resume a saved session (no id opens the session list)',
+      category: 'session',
+      buttonLabel: '🔁 Resume session',
+      handler: async (invocation) => {
+        const target = invocation.rawInput.trim();
+        if (target === '') {
+          await this.openSessionsPicker(invocation.chatId);
+          return { kind: 'success', text: '' };
+        }
+        const result = await this.resumeSession(invocation.chatId, target);
+        return result;
+      },
+    });
+    // /clear and /new share one handler: start a fresh conversation. The old
+    // session is NOT deleted — it stays saved and resumable (/sessions) — so
+    // the reset never destroys user data (content-integrity rule).
+    const startFresh = async (invocation: {
+      readonly chatId: string;
+      readonly senderOpenId: string;
+      readonly rawInput: string;
+    }): Promise<CommandResult> => {
+      if (this.refuseWhileWorking(invocation.chatId)) {
+        return { kind: 'error', text: 'a turn is running — stop it first.' };
+      }
+      if (options.sessionMap.get(invocation.chatId) === undefined) {
+        return { kind: 'error', text: 'nothing to clear — this chat has no session yet.' };
+      }
+      options.sessionMap.remint(invocation.chatId);
+      this.resetChatState(invocation.chatId);
+      return {
+        kind: 'success',
+        text: 'New conversation started — the previous session stays saved; /sessions can resume it.',
+      };
+    };
+    this.commands.register({
+      name: 'clear',
+      description: 'Start a fresh conversation (previous session stays saved)',
+      category: 'session',
+      buttonLabel: '🧹 Fresh start',
+      handler: startFresh,
+    });
+    this.commands.register({
+      name: 'new',
+      description: 'Start a new conversation (alias of /clear)',
+      category: 'session',
+      buttonLabel: '➕ New chat',
+      handler: startFresh,
+    });
+    for (const spec of HARNESS_COMMANDS) {
+      this.commands.register({
+        name: spec.name,
+        description: spec.description,
+        category: 'system',
+        buttonLabel: spec.buttonLabel,
+        handler: async (invocation) => {
+          if (this.refuseWhileWorking(invocation.chatId)) {
+            return { kind: 'error', text: 'a turn is running — stop it first.' };
+          }
+          if (options.executeCommand === undefined) {
+            return {
+              kind: 'error',
+              text: `/${spec.name} is unavailable — the dsh command registry is not mounted.`,
+            };
+          }
+          const agent = await this.ensureAgent(invocation.chatId);
+          const result = await options.executeCommand(agent, `/${spec.name}${invocation.rawInput}`);
+          if (result !== undefined) return result;
+          return {
+            kind: 'error',
+            text: `/${spec.name} is unavailable on this deployment.`,
+          };
+        },
+      });
+    }
   }
 
   /**

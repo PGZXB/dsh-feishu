@@ -12,6 +12,9 @@ import {
   buildRepoPickerCard,
   buildRowDetailsCard,
   collapseSequence,
+  PANEL_PAGE_SIZE,
+  type PanelCommand,
+  panelPages,
   REPO_SELECT_MAX_OPTIONS,
   repoOptionLabel,
   repoRelativePath,
@@ -551,5 +554,114 @@ describe('toolRowSummary / toolRowTitle', () => {
     expect(toolRowTitle('job_list')).toBe('List Jobs');
     expect(toolRowTitle('job_kill')).toBe('Kill Job');
     expect(toolRowSummary('job_output', '{"job_id":"bash-1"}')).toBe('bash-1');
+  });
+});
+
+const paletteCommands: PanelCommand[] = [
+  { name: 'cancel', buttonLabel: '⏹ Stop', category: 'session' },
+  { name: 'cd', buttonLabel: '📁 Change dir', category: 'session' },
+  { name: 'repo', buttonLabel: '📚 Pick project', category: 'session' },
+  { name: 'sessions', buttonLabel: '🗂️ Sessions', category: 'session' },
+  { name: 'resume', buttonLabel: '🔁 Resume session', category: 'session' },
+  { name: 'clear', buttonLabel: '🧹 Fresh start', category: 'session' },
+  { name: 'new', buttonLabel: '➕ New chat', category: 'session' },
+  { name: 'group', buttonLabel: '👥 New group', category: 'chat' },
+  { name: 'help', buttonLabel: '❓ Help', category: 'system' },
+  { name: 'status', buttonLabel: '📊 Status', category: 'system' },
+  { name: 'plan', buttonLabel: '🗺️ Plan mode', category: 'system' },
+  { name: 'goal', buttonLabel: '🎯 Goal', category: 'system' },
+  { name: 'compact', buttonLabel: '🧹 Compact', category: 'system' },
+  { name: 'feedback', buttonLabel: '💬 Feedback', category: 'system' },
+  { name: 'permission', buttonLabel: '🔐 Permission', category: 'system' },
+];
+
+describe('panelPages', () => {
+  it('groups by category with one header per group', () => {
+    const pages = panelPages(paletteCommands);
+    const headers = pages.flat().filter((e) => e.type === 'header');
+    expect(headers.map((h) => ('label' in h ? h.label : ''))).toEqual([
+      'session',
+      'chat',
+      'system',
+    ]);
+  });
+
+  it('paginates by button count, not entry count', () => {
+    const pages = panelPages(paletteCommands);
+    const buttonCounts = pages.map((page) => page.filter((e) => e.type === 'button').length);
+    expect(buttonCounts).toEqual([PANEL_PAGE_SIZE, paletteCommands.length - PANEL_PAGE_SIZE]);
+  });
+
+  it('rides a stranded category header onto the next page', () => {
+    const pages = panelPages(
+      [
+        { name: 'a', buttonLabel: 'A', category: 'session' },
+        { name: 'b', buttonLabel: 'B', category: 'system' },
+        { name: 'c', buttonLabel: 'C', category: 'system' },
+      ],
+      1,
+    );
+    // The system header would strand on page 1 (its first button starts page
+    // 2); it rides along so page 2 labels its commands.
+    expect(pages.map((p) => p.map((e) => (e.type === 'header' ? e.label : e.name)))).toEqual([
+      ['session', 'a'],
+      ['system', 'b'],
+      ['c'],
+    ]);
+  });
+});
+
+describe('buildPanelCard palette', () => {
+  it('keeps the core buttons first, then the palette page', () => {
+    const card = buildPanelCard('**Idle**', false, paletteCommands, 0);
+    const actions = card.elements.filter(
+      (el): el is Extract<CardElement, { tag: 'action' }> => el.tag === 'action',
+    );
+    expect(buttonLabels(actions[0])).toEqual(['🔁 Retry last', '📋 Copy last']);
+    // Page 1: session group + chat group (8 buttons).
+    const page1 = buttonLabels(actions[1]);
+    expect(page1).toHaveLength(PANEL_PAGE_SIZE);
+    expect(page1[0]).toBe('⏹ Stop');
+    expect(page1).toContain('👥 New group');
+    // Category headers render as markdown lines.
+    const markdowns = card.elements.filter(
+      (el): el is Extract<CardElement, { tag: 'markdown' }> => el.tag === 'markdown',
+    );
+    expect(markdowns.some((m) => m.content === '**Session**')).toBe(true);
+    expect(markdowns.some((m) => m.content === '**Chat**')).toBe(true);
+    // Page header line.
+    expect(markdowns.some((m) => m.content.includes('page 1/2'))).toBe(true);
+  });
+
+  it('stamps command payloads on palette buttons', () => {
+    const card = buildPanelCard('**Idle**', false, paletteCommands, 0);
+    const pageAction = card.elements
+      .filter((el): el is Extract<CardElement, { tag: 'action' }> => el.tag === 'action')
+      .find((el) =>
+        el.actions.some((a) => a.tag === 'button' && 'value' in a && a.value.kind === 'command'),
+      );
+    expect(pageAction).toBeDefined();
+    const command = pageAction?.actions.find(
+      (a): a is ButtonAction => a.tag === 'button' && a.value.kind === 'command',
+    );
+    expect(command?.value).toEqual({ kind: 'command', name: 'cancel' });
+  });
+
+  it('hides Stop unless running', () => {
+    const idle = buildPanelCard('**Idle**', false, [], 0);
+    const idleCore = idle.elements.find((el) => el.tag === 'action');
+    expect(buttonLabels(idleCore)).toEqual(['🔁 Retry last', '📋 Copy last']);
+    const running = buildPanelCard('**Running**', true, [], 0);
+    const runningCore = running.elements.find((el) => el.tag === 'action');
+    expect(buttonLabels(runningCore)).toEqual(['⏹ Stop current', '🔁 Retry last', '📋 Copy last']);
+  });
+
+  it('renders no palette section when there are no commands', () => {
+    const card = buildPanelCard('**Idle**', false, [], 0);
+    expect(
+      card.elements.some(
+        (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('Commands'),
+      ),
+    ).toBe(false);
   });
 });

@@ -13,9 +13,11 @@ import type { Agent } from '@deepseek-ai/dsh-agent';
 import type { UserMessage } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Bridge, turnTitle } from '../src/bridge.js';
+import { Bridge, type SessionListRow, turnTitle } from '../src/bridge.js';
 import { StreamingCardManager } from '../src/cards/streaming.js';
+import type { CommandResult } from '../src/commands.js';
 import type {
+  ButtonAction,
   CardAction,
   CardElement,
   CardJson,
@@ -153,9 +155,10 @@ function makeHarness(
     mint?: () => string;
     groupMentionMode?: 'always' | 'never' | 'ambient' | 'topic';
     allowedChats?: readonly string[];
-    executeCommand?: (agent: Agent, line: string) => Promise<string | undefined>;
+    executeCommand?: (agent: Agent, line: string) => Promise<CommandResult | undefined>;
     unknownCommand?: 'error' | 'passthrough';
     repoRoots?: readonly string[];
+    listSessions?: () => Promise<readonly SessionListRow[] | undefined>;
   } = {},
 ): Harness {
   const transport = new RecordingTransport();
@@ -190,6 +193,7 @@ function makeHarness(
     ...(options.executeCommand !== undefined ? { executeCommand: options.executeCommand } : {}),
     ...(options.unknownCommand !== undefined ? { unknownCommand: options.unknownCommand } : {}),
     ...(options.repoRoots !== undefined ? { repoRoots: options.repoRoots } : {}),
+    ...(options.listSessions !== undefined ? { listSessions: options.listSessions } : {}),
   });
   const emit = (sessionId: string, event: SessionEvent): void => {
     for (const listener of [...listeners]) listener(sessionId, event);
@@ -690,14 +694,12 @@ describe('Bridge', () => {
         value: { kind: 'panel' },
       });
       const runningPanel = h.transport.sentCards.at(-1);
+      // The FIRST action element is the core button row (Stop/Retry/Copy);
+      // the palette (command buttons + page nav) follows it.
+      const runningAction = runningPanel?.elements.find((el) => el.tag === 'action');
       const runningLabels =
-        runningPanel?.elements.find((el) => el.tag === 'action') &&
-        'actions' in runningPanel!.elements.find((el) => el.tag === 'action')!
-          ? runningPanel.elements
-              .filter((el) => el.tag === 'action')
-              .at(-1)!
-              .actions.filter((a) => a.tag === 'button')
-              .map((a) => a.text.content)
+        runningAction && 'actions' in runningAction
+          ? runningAction.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
           : [];
       expect(runningLabels).toEqual(['⏹ Stop current', '🔁 Retry last', '📋 Copy last']);
       // Turn ends → agent idle → panel has no Stop button.
@@ -710,12 +712,11 @@ describe('Bridge', () => {
         value: { kind: 'panel' },
       });
       const idlePanel = h.transport.sentCards.at(-1);
+      const idleAction = idlePanel?.elements.find((el) => el.tag === 'action');
       const idleLabels =
-        idlePanel?.elements
-          .filter((el) => el.tag === 'action')
-          .at(-1)!
-          .actions.filter((a) => a.tag === 'button')
-          .map((a) => a.text.content) ?? [];
+        idleAction && 'actions' in idleAction
+          ? idleAction.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
+          : [];
       expect(idleLabels).toEqual(['🔁 Retry last', '📋 Copy last']);
     });
 
@@ -1268,13 +1269,16 @@ describe('Bridge', () => {
     });
 
     it('forwards unknown commands to the dsh registry', async () => {
+      // /compact is now a surface wrapper; use a command only the dsh
+      // registry knows so the passthrough path is exercised.
       const h = makeHarness({
-        executeCommand: async (_agent, line) => (line === '/compact' ? 'Compacted.' : undefined),
+        executeCommand: async (_agent, line) =>
+          line === '/dsh-check' ? { kind: 'success', text: 'Checked.' } : undefined,
       });
       // A live session must exist for the dsh registry to execute against.
       await h.bridge.handleMessage(message());
-      await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/compact' }));
-      expect(h.transport.sentTexts.some((t) => t.text === 'Compacted.')).toBe(true);
+      await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/dsh-check' }));
+      expect(h.transport.sentTexts.some((t) => t.text === 'Checked.')).toBe(true);
     });
 
     it('replies unknown-command when the dsh registry has no match', async () => {
@@ -1304,8 +1308,12 @@ describe('working directory commands', () => {
     const { mkdirSync } = await import('node:fs');
     const target = join(SCRATCH, 'proj-cd');
     mkdirSync(target, { recursive: true });
-    // A session exists first; /cd rebinds it to a fresh id in the new dir.
+    // A session exists first and the turn is finished (a running turn
+    // refuses mutating commands — the matrix rule); /cd then rebinds it to
+    // a fresh id in the new dir.
     await h.bridge.handleMessage(message());
+    await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+    await new Promise((resolve) => setTimeout(resolve, 0));
     await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: `/cd ${target}` }));
     expect(h.sessionMap.cwdFor('oc_chat')).toBe(target);
     expect(h.sessionMap.get('oc_chat')).toBe('feishu-session-2');
@@ -1501,5 +1509,475 @@ describe('UX state machine (bug 2 regression)', () => {
         .at(-1)
         ?.elements.some((el) => el.tag === 'markdown' && 'content' in el && el.content === 'bash'),
     ).toBe(true);
+  });
+});
+
+/** Session rows for /sessions tests: a persisted older session and the live
+ *  current one (the default mint `feishu-session-1` after one message). */
+function sessionRows(): SessionListRow[] {
+  return [
+    {
+      sessionId: 'feishu-session-9',
+      title: 'Old project',
+      cwd: '/work/old',
+      createdAt: Date.now() - 3_600_000,
+      live: false,
+      persisted: true,
+    },
+    {
+      sessionId: 'feishu-session-1',
+      title: 'Current chat',
+      cwd: '/work',
+      createdAt: Date.now() - 60_000,
+      live: true,
+      persisted: true,
+    },
+  ];
+}
+
+/** End the current turn and idle the agent (the matrix rule refuses mutating
+ *  commands while a turn runs). */
+async function finishTurn(h: Harness): Promise<void> {
+  await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  h.agentStore.setStatus('feishu-session-1', 'idle');
+}
+
+/** The message id the recording transport assigned to the last sent card. */
+function lastCardId(h: Harness): string {
+  return `msg-${h.transport.sentCards.length}`;
+}
+
+describe('session commands (/sessions /resume /clear /new)', () => {
+  it('/sessions on an empty corpus shows the empty state card', async () => {
+    const h = makeHarness({ listSessions: async () => [] });
+    await h.bridge.handleMessage(message({ text: '/sessions' }));
+    const card = h.transport.sentCards.at(-1);
+    expect(card?.header?.title.content).toBe('🗂️ Sessions');
+    expect(
+      card?.elements.some(
+        (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('No sessions yet'),
+      ),
+    ).toBe(true);
+  });
+
+  it('/sessions lists sessions with resume buttons and marks the current one', async () => {
+    const h = makeHarness({ listSessions: async () => sessionRows() });
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/sessions' }));
+    const card = h.transport.sentCards.at(-1);
+    // The current session's row carries the ★ current badge (row text is a
+    // lark_md div inside the column_set).
+    expect(
+      card?.elements.some((el) => el.tag === 'column_set') &&
+        card?.elements.some((el) =>
+          el.tag === 'column_set'
+            ? el.columns.some((column) =>
+                column.elements.some(
+                  (element) => element.tag === 'div' && element.text.content.includes('★ current'),
+                ),
+              )
+            : false,
+        ),
+    ).toBe(true);
+    // Resume buttons exist for non-current rows with the session id payload.
+    const resumeValues =
+      card?.elements.flatMap((el) =>
+        el.tag === 'column_set'
+          ? el.columns.flatMap((column) =>
+              column.elements
+                .filter((element) => element.tag === 'button')
+                .map((button) => button.value),
+            )
+          : [],
+      ) ?? [];
+    expect(resumeValues).toContainEqual({
+      kind: 'resume-session',
+      sessionId: 'feishu-session-9',
+    });
+    // The current row offers no Resume button.
+    expect(resumeValues.some((v) => v.sessionId === 'feishu-session-1')).toBe(false);
+  });
+
+  it('paginates the sessions card beyond one page', async () => {
+    const many = Array.from({ length: 25 }, (_, index) => ({
+      sessionId: `feishu-session-${index}`,
+      title: `Session ${index}`,
+      cwd: undefined,
+      createdAt: Date.now() - index * 1000,
+      live: false,
+      persisted: true,
+    }));
+    const h = makeHarness({ listSessions: async () => many });
+    await h.bridge.handleMessage(message({ text: '/sessions' }));
+    const card = h.transport.sentCards.at(-1);
+    expect(
+      card?.elements.some(
+        (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('page 1/3'),
+      ),
+    ).toBe(true);
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'sessions-page', page: '1' },
+    });
+    expect(
+      h.transport.sentCards
+        .at(-1)
+        ?.elements.some(
+          (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('page 2/3'),
+        ),
+    ).toBe(true);
+  });
+
+  it('a resume button resumes a persisted session and rebinds the chat', async () => {
+    const h = makeHarness({ listSessions: async () => sessionRows() });
+    await h.bridge.handleMessage(message());
+    await finishTurn(h);
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/sessions' }));
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'resume-session', sessionId: 'feishu-session-9' },
+    });
+    expect(h.agentStore.resumed).toContain('feishu-session-9');
+    expect(h.sessionMap.get('oc_chat')).toBe('feishu-session-9');
+    expect(
+      h.transport.sentTexts.some((t) => t.text.includes('Resumed session feishu-session-9')),
+    ).toBe(true);
+    // The previous binding is detached (1:1 chat↔session model).
+    expect(h.sessionMap.chatFor('feishu-session-1')).toBeUndefined();
+  });
+
+  it('rejects a stale resume from a superseded sessions card', async () => {
+    const h = makeHarness({ listSessions: async () => sessionRows() });
+    await h.bridge.handleMessage(message());
+    await finishTurn(h);
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/sessions' }));
+    // A callback from an older card id is ignored.
+    await h.bridge.handleCardAction({
+      messageId: 'msg-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'resume-session', sessionId: 'feishu-session-9' },
+    });
+    expect(h.agentStore.resumed).not.toContain('feishu-session-9');
+    expect(h.sessionMap.get('oc_chat')).toBe('feishu-session-1');
+  });
+
+  it('/resume with an id resumes and rebinds', async () => {
+    const h = makeHarness({ listSessions: async () => sessionRows() });
+    await h.bridge.handleMessage(message({ text: '/resume feishu-session-9' }));
+    expect(h.agentStore.resumed).toContain('feishu-session-9');
+    expect(h.sessionMap.get('oc_chat')).toBe('feishu-session-9');
+  });
+
+  it('/resume with no id opens the sessions picker', async () => {
+    const h = makeHarness({ listSessions: async () => sessionRows() });
+    await h.bridge.handleMessage(message({ text: '/resume' }));
+    expect(h.transport.sentCards.at(-1)?.header?.title.content).toBe('🗂️ Sessions');
+  });
+
+  it('/resume of the current session reports already active', async () => {
+    const h = makeHarness();
+    await h.bridge.handleMessage(message());
+    await finishTurn(h);
+    await h.bridge.handleMessage(
+      message({ messageId: 'om_msg2', text: '/resume feishu-session-1' }),
+    );
+    expect(h.transport.sentTexts.some((t) => t.text.includes('already active'))).toBe(true);
+  });
+
+  it('/resume of a session running in another chat is refused', async () => {
+    const h = makeHarness({ listSessions: async () => sessionRows() });
+    await h.bridge.handleMessage(message());
+    await finishTurn(h);
+    // A live agent for the target session exists and is running.
+    await h.agentStore.resume('feishu-session-9');
+    h.agentStore.setStatus('feishu-session-9', 'running');
+    await h.bridge.handleMessage(
+      message({ messageId: 'om_msg2', text: '/resume feishu-session-9' }),
+    );
+    expect(h.transport.sentTexts.some((t) => t.text.includes('active turn'))).toBe(true);
+    expect(h.sessionMap.get('oc_chat')).toBe('feishu-session-1');
+  });
+
+  it('/resume of a session with no persisted log reports the failure', async () => {
+    const h = makeHarness({ listSessions: async () => sessionRows() });
+    h.agentStore.resumeFailures = 1;
+    await h.bridge.handleMessage(message({ text: '/resume feishu-session-9' }));
+    expect(h.transport.sentTexts.some((t) => t.text.includes('could not resume session'))).toBe(
+      true,
+    );
+    // The session map is untouched by a failed resume.
+    expect(h.sessionMap.get('oc_chat')).toBeUndefined();
+  });
+
+  it('/resume while a turn is running is refused', async () => {
+    const h = makeHarness({ listSessions: async () => sessionRows() });
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleMessage(
+      message({ messageId: 'om_msg2', text: '/resume feishu-session-9' }),
+    );
+    expect(h.transport.sentTexts.some((t) => t.text.includes('a turn is running'))).toBe(true);
+    expect(h.agentStore.resumed).not.toContain('feishu-session-9');
+  });
+
+  it('/clear starts a fresh conversation; the old session stays listed', async () => {
+    let seq = 0;
+    const h = makeHarness({
+      mint: () => `feishu-session-${++seq}`,
+      listSessions: async () => sessionRows(),
+    });
+    await h.bridge.handleMessage(message());
+    await finishTurn(h);
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/clear' }));
+    expect(h.sessionMap.get('oc_chat')).toBe('feishu-session-2');
+    expect(h.transport.sentTexts.some((t) => t.text.includes('New conversation started'))).toBe(
+      true,
+    );
+    // The card state was reset: copy no longer finds the old answer.
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'copy' },
+    });
+    expect(h.transport.sentTexts.some((t) => t.text.includes('Nothing to copy'))).toBe(true);
+  });
+
+  it('/new is an alias of /clear', async () => {
+    let seq = 0;
+    const h = makeHarness({ mint: () => `feishu-session-${++seq}` });
+    await h.bridge.handleMessage(message());
+    await finishTurn(h);
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/new' }));
+    expect(h.sessionMap.get('oc_chat')).toBe('feishu-session-2');
+  });
+
+  it('/clear with no session explains', async () => {
+    const h = makeHarness();
+    await h.bridge.handleMessage(message({ text: '/clear' }));
+    expect(h.transport.sentTexts.some((t) => t.text.includes('nothing to clear'))).toBe(true);
+  });
+
+  it('/clear while a turn is running is refused', async () => {
+    const h = makeHarness();
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/clear' }));
+    expect(h.transport.sentTexts.some((t) => t.text.includes('a turn is running'))).toBe(true);
+    expect(h.sessionMap.get('oc_chat')).toBe('feishu-session-1');
+  });
+
+  it('degrades to bound sessions when listSessions is absent', async () => {
+    const h = makeHarness();
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/sessions' }));
+    const card = h.transport.sentCards.at(-1);
+    expect(card?.header?.title.content).toBe('🗂️ Sessions');
+    expect(
+      card?.elements.some(
+        (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('this chat'),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe('panel command palette', () => {
+  it('includes every registered command as a button', async () => {
+    const h = makeHarness();
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel' },
+    });
+    const panel = h.transport.sentCards.at(-1);
+    const labels =
+      panel?.elements.flatMap((el) =>
+        el.tag === 'action'
+          ? el.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
+          : [],
+      ) ?? [];
+    // Page 1 holds the session group (7) plus chat (1) — 8 buttons; the
+    // system group (help/status + the dsh web wrappers) is on page 2.
+    expect(labels).toContain('🗂️ Sessions');
+    expect(labels).toContain('🧹 Fresh start');
+    expect(labels).toContain('➕ New chat');
+    expect(labels).toContain('🔁 Resume session');
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel-page', page: '1' },
+    });
+    const panel2 = h.transport.sentCards.at(-1);
+    const labels2 =
+      panel2?.elements.flatMap((el) =>
+        el.tag === 'action'
+          ? el.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
+          : [],
+      ) ?? [];
+    expect(labels2).toContain('🗺️ Plan mode');
+    expect(labels2).toContain('🎯 Goal');
+    expect(labels2).toContain('🔐 Permission');
+  });
+
+  it('paginates the palette with nav buttons at page bounds', async () => {
+    const h = makeHarness();
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel' },
+    });
+    const panel = h.transport.sentCards.at(-1);
+    expect(
+      panel?.elements.some(
+        (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('page 1/2'),
+      ),
+    ).toBe(true);
+    const navLabels = (card: CardJson | undefined): string[] =>
+      card?.elements.flatMap((el) =>
+        el.tag === 'action'
+          ? el.actions
+              .filter(
+                (a): a is ButtonAction =>
+                  a.tag === 'button' &&
+                  (a.text.content === 'Next ▶️' || a.text.content === '◀️ Prev'),
+              )
+              .map((a) => a.text.content)
+          : [],
+      ) ?? [];
+    expect(navLabels(panel)).toEqual(['Next ▶️']);
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel-page', page: '1' },
+    });
+    const panel2 = h.transport.sentCards.at(-1);
+    expect(
+      panel2?.elements.some(
+        (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('page 2/2'),
+      ),
+    ).toBe(true);
+    expect(navLabels(panel2)).toEqual(['◀️ Prev']);
+  });
+
+  it('a command button executes the same handler as the slash line', async () => {
+    const h = makeHarness();
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'command', name: 'help' },
+    });
+    expect(h.transport.sentTexts.some((t) => t.text.includes('dsh-feishu commands'))).toBe(true);
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'command', name: 'clear' },
+    });
+    expect(h.transport.sentTexts.some((t) => t.text.includes('nothing to clear'))).toBe(true);
+  });
+
+  it('a mutating command button is refused while working; read-only allowed', async () => {
+    const h = makeHarness();
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'command', name: 'clear' },
+    });
+    expect(h.transport.sentTexts.some((t) => t.text.includes('a turn is running'))).toBe(true);
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'command', name: 'help' },
+    });
+    expect(h.transport.sentTexts.some((t) => t.text.includes('dsh-feishu commands'))).toBe(true);
+  });
+
+  it('an unknown command button is logged and ignored', async () => {
+    const h = makeHarness();
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'command', name: 'nope' },
+    });
+    expect(h.transport.sentTexts).toHaveLength(0);
+  });
+});
+
+describe('dsh web command wrappers', () => {
+  it('/goal executes through the dsh registry, minting an agent when needed', async () => {
+    const h = makeHarness({
+      executeCommand: async (_agent, line) =>
+        line === '/goal set the thing' ? { kind: 'success', text: 'Goal set.' } : undefined,
+    });
+    await h.bridge.handleMessage(message({ text: '/goal set the thing' }));
+    expect(h.transport.sentTexts.some((t) => t.text === 'Goal set.')).toBe(true);
+    expect(h.agentStore.created.some((c) => c.sessionId === 'feishu-session-1')).toBe(true);
+  });
+
+  it('wrapper surfaces registry error kinds as ⚠️', async () => {
+    const h = makeHarness({
+      executeCommand: async (_agent, line) =>
+        line === '/permission nope' ? { kind: 'error', text: 'unknown preset "nope"' } : undefined,
+    });
+    await h.bridge.handleMessage(message({ text: '/permission nope' }));
+    expect(
+      h.transport.sentTexts.some((t) => t.text.includes('⚠️') && t.text.includes('unknown preset')),
+    ).toBe(true);
+  });
+
+  it('wrapper reports unavailable when the dsh registry is not mounted', async () => {
+    const h = makeHarness();
+    await h.bridge.handleMessage(message({ text: '/goal' }));
+    expect(h.transport.sentTexts.some((t) => t.text.includes('not mounted'))).toBe(true);
+  });
+
+  it('wrapper is refused while a turn is running', async () => {
+    const h = makeHarness();
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/goal' }));
+    expect(h.transport.sentTexts.some((t) => t.text.includes('a turn is running'))).toBe(true);
+  });
+});
+
+describe('state machine matrix extension (command / resume-session actions)', () => {
+  it('working × mutating command → refused; done × mutating command → allowed', async () => {
+    const h = makeHarness({ throttleMs: 0 });
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/clear' }));
+    expect(h.transport.sentTexts.some((t) => t.text.includes('a turn is running'))).toBe(true);
+    await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await h.bridge.handleMessage(message({ messageId: 'om_msg3', text: '/clear' }));
+    expect(h.transport.sentTexts.some((t) => t.text.includes('New conversation started'))).toBe(
+      true,
+    );
+  });
+
+  it('working × resume-session → refused (session untouched)', async () => {
+    const h = makeHarness({ listSessions: async () => sessionRows() });
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/sessions' }));
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'resume-session', sessionId: 'feishu-session-9' },
+    });
+    expect(h.transport.sentTexts.some((t) => t.text.includes('a turn is running'))).toBe(true);
+    expect(h.agentStore.resumed).not.toContain('feishu-session-9');
+    expect(h.sessionMap.get('oc_chat')).toBe('feishu-session-1');
   });
 });

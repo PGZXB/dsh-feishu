@@ -51,17 +51,31 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 | `src/memory-transport.ts` | File-channel in-memory transport (`FEISHU_TRANSPORT=memory`): the integration-test / debugging seam — `inbox/` delivers messages, `outbox/` records every send. |
 | `src/message-dedup.ts` | Bounded in-memory message-id dedup (platform redelivery). |
 | `src/session-map.ts` | Durable chat ↔ session mapping (atomic JSON writes), reverse lookup for events. |
-| `src/cards/render.ts` | Pure rendering: session events → card JSON (schema 2.0), markdown escaping, tail truncation. |
+| `src/cards/render.ts` | Pure rendering: session events → card JSON (v1 layout), markdown escaping, tail truncation, control-panel palette (grouped, paginated), session-list rows. |
+| `src/cards/session-list.ts` | The `/sessions` picker card: paginated rows with per-row Resume buttons (pure rendering). |
 | `src/cards/streaming.ts` | One card per turn: POST on open, throttled/coalesced `message.patch` updates, terminal finalize. |
-| `src/bridge.ts` | Orchestrator: message → session → `agent.followup`; `session/event` → card patches; turn end → final message. Agent resolution ladder: live → resume mapped session → create → rebind fresh id on collision. |
+| `src/bridge.ts` | Orchestrator: message → session → `agent.followup`; `session/event` → card patches; turn end → finalize in place. Agent resolution ladder: live → resume mapped session → create → rebind fresh id on collision. Owns the surface command registry (15 commands), the card state machine (`ChatCardState` + one `syncCard` path), the working-state gate, and the session lifecycle (`/sessions /resume /clear`). |
 | `src/index.ts` | Plugin entry: config, credential resolution, agent options (config or `agentDefaultModel`), wiring, `feishu-status` command. |
 
 ## Key behaviors
 
-- **Slash commands with button parity.** Plugin commands (`/help`,
-  `/group`, `/cancel`, `/status`) and dsh-registry passthrough share the
-  same handler path; every command declares a panel category and button
-  label for the control-panel rendering (Iteration 2 continuation).
+- **Slash commands with button parity.** All 15 surface commands
+  (`/help /status /cancel /cd /repo /group /sessions /resume /clear /new`
+  plus the five dsh web wrappers `/plan /goal /compact /feedback
+  /permission`) share one handler between the slash line and the panel
+  palette button. `ctx.commands.execute` passthrough handles anything else;
+  `/export` is excluded (web-only browser download).
+- **Session lifecycle.** `/sessions` lists the persisted corpus through
+  `ctx.sessionQuery.listSessions()` + batch `readTitleSnapshots()` (degraded
+  bound-sessions fallback when the service is absent). `/resume <id>` and
+  the picker's Resume button rebind the chat (`SessionMap.set` — 1:1
+  model) and `agents.resume` when no live agent exists; a running target is
+  refused; resume resets the card state (no history replay).
+  `/clear`/`/new` remint a fresh session non-destructively (the old session
+  stays saved and resumable).
+- **Working-state gate.** While a turn runs, only read-only commands run
+  (`/help /status /sessions /cancel /group`); mutating commands refuse with
+  an explanation, keeping the state machine coherent (see ux-spec §8.2).
 - **Configurable group mention gate.** `groupMentionMode` (botmux
   semantics): `always` requires an @-mention (relaxed in 1-person-1-bot solo
   groups via cached chat member counts); `never` answers every group message;
@@ -86,7 +100,10 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 ## Testing
 
 - **Unit tests** (`tests/`): every module, via fake contexts and recording
-  fakes — 67 tests.
+  fakes — including the full card state-machine matrix (state × action,
+  extended with the command/resume-session actions), the panel palette
+  pagination, the session-list builder, and the `executeDshCommand` result
+  mapping.
 - **Real-composition integration** (`tests/integration/`): a real dsh
   process booted from a real profile runs a real agent turn against a mock
   LLM server, with Feishu swapped for the memory transport. Asserts the

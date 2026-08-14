@@ -4,7 +4,7 @@
 >
 > 开发方式：**迭代式**——先完成核心功能并测试，再逐步叠加新功能。
 >
-> 状态：**Iteration 1 已完成**（私聊闭环 + 重启安全（resume 阶梯）+ 真实组合集成测试通过（68 测试全绿））；**真机验收待用户提供飞书测试机器人凭据**。待确认后进入 Iteration 2（群聊 + 命令体系 + 持久化）。
+> 状态：**Iteration 1 ✅**（私聊闭环 + 重启安全（resume 阶梯）+ 真实组合集成测试）；**Iteration 2 ✅**（群聊 @ 触发 + 命令体系 + 卡片按钮 + 完整按钮面板 + 会话生命周期 `/sessions /resume /clear` + DSH web 命令包装 `/plan /goal /compact /feedback /permission`；`/export` 因 Web-only 浏览器下载通道有意排除）；**Iteration 3（P1：交互审批/提问卡）待开始**。
 >
 > 已确认决策（2026-08）：npm 包名 `@dsh-feishu/dsh-feishu`；未知 slash 命令默认报错提示（附 `/help` 指引，配置项留后门）；飞书测试机器人由用户自行申请、稍后提供凭据。
 >
@@ -182,17 +182,17 @@ examples/            # 最小可运行 profile 配置 + 飞书后台配置指南
 
 ## 3. 功能清单（按迭代优先级）
 
-### P0 —— 核心可用（Iteration 1–2）
-- [ ] WS 长连接收消息（私聊 + 群聊 @）
-- [ ] 每聊天一个 DSH 会话；`agent.followup` 注入用户消息
-- [ ] **流式卡片**：`assistant/chunk` → 节流 patch；`assistant/message` 封口；**turn 完成 → 最终答案以新消息送达**（保证通知）
-- [ ] 工具调用渲染（`tool/call`/`tool/result` 卡片内嵌）、todo 进度
-- [ ] 文本兜底通道（卡片失败/被禁时）
-- [ ] 消息按 `message_id` 持久化去重；同一聊天内严格 FIFO 串行化（botmux 经验）
-- [ ] 插件自有命令：`/help`（命令列表卡，botmux `/list-slash-command` 思路）、`/repo`（cwd 白名单选择）、`/resume`、`/sessions`（列表卡片）、`/cancel`、`/clear`
-- [ ] DSH 命令透传：`/compact`、`/model`、`/plan`、`/goal` 等注册表中的命令
-- [ ] chat↔session 映射持久化 + 重启恢复（resume）
-- [ ] 卡片 ~109KB 截断保尾部、patch 节流、错误码转译、@mention 解析（WS 对象形 + REST 字符串形）
+### P0 —— 核心可用（Iteration 1–2）✅
+- [x] WS 长连接收消息（私聊 + 群聊 @）
+- [x] 每聊天一个 DSH 会话；`agent.followup` 注入用户消息
+- [x] **流式卡片**：`assistant/chunk` → 节流 patch；最终答案由卡片就地封口承载（不再另发重复气泡）；失败才发 ⚠️ 通知
+- [x] 工具调用渲染（`tool/call`/`tool/result` 卡片内嵌 + 折叠序列 + 详情卡）
+- [x] 文本兜底通道（卡片失败/被禁时）
+- [x] 消息按 `message_id` 去重（进程内）
+- [x] 插件自有命令（15 个）：`/help /status /cancel /cd /repo /group /sessions /resume /clear /new` + DSH web 包装 `/plan /goal /compact /feedback /permission`；面板按钮与 slash 同一 handler
+- [x] DSH 命令透传：`ctx.commands.execute`；`/export` 有意排除（Web-only 浏览器下载通道，见 ux-spec §8.1）
+- [x] chat↔session 映射持久化 + 重启恢复（resume）+ `/sessions` 会话列表 + `/resume` 跨聊天搬移 + `/clear`（非破坏性新会话）
+- [x] 卡片截断保尾部、patch 节流、错误码转译（表格 5 上限兜底）、@mention 解析
 
 ### P1 —— 交互与多会话（Iteration 3–4）
 - [ ] **审批卡（高优先级，用户介入核心场景）**：监听 `approval/request` → 审批卡（工具名+原因+允许一次/拒绝）→ 回调 → `allowed-once/rejected`；超时/`/cancel` → `cancelled`；断线期间请求 fail-closed 为 `unavailable`（DSH 语义）
@@ -244,16 +244,19 @@ examples/            # 最小可运行 profile 配置 + 飞书后台配置指南
 **测试**：`transport` 用 fake client（内存实现 lark-oapi 接口）；`bridge` 用 fake ctx + 录制事件流断言卡片 patch 序列；**集成**：boot 最小 profile + fake transport，跑一轮真实 DSH agent（需 DEEPSEEK_API_KEY 的用例打 tag，无 key 自跳，参照 harness `test:e2e` 模式）
 **验收**：真实飞书机器人私聊发消息 → 收到流式更新的卡片直至完成。
 
-### Iteration 2 —— P0 群聊与命令体系
-**交付**：
-- 群聊 @ 触发与 mention 解析；chat 白名单
-- `commands.ts`：插件命令 `/help /repo /resume /sessions /cancel /clear`；DSH 透传（`ctx.commands.execute`）；未知命令策略配置
-- `/repo`：cwd 白名单 → 交互卡选择（或文本编号选择，若卡片未就绪）
-- session-map 持久化 + 启动时恢复（`agents.resume`）
-- `dsh-session-persistence-sqlite` 由 bundle patch insert（cc-tui 模式）
-- 截断/节流/错误转译
-**测试**：命令解析单测；透传执行用 fake command registry；集成测试覆盖 `/repo /resume /sessions` 全链路
-**验收**：真实飞书群内 @ 机器人 → 正常对话 + slash 命令可用；重启 daemon 后 `/resume` 恢复会话。
+### Iteration 2 —— P0 群聊与命令体系 ✅
+**交付（已完成）**：
+- 群聊 @ 触发与 mention 解析（always/never/ambient/topic）；chat 白名单
+- 命令体系（15 个表面命令 + DSH 透传）：`/help /status /cancel /cd /repo /group /sessions /resume /clear /new` + DSH web 包装 `/plan /goal /compact /feedback /permission`（`ctx.commands.execute`）；未知命令策略配置；`/export` 有意排除
+- **完整按钮面板**：Panel 弹出全量命令按钮（按分类分组、每页 8 个、分页导航），按钮与 slash 同一 handler（`{kind:'command', name}`）
+- `/repo`：cwd 白名单递归扫描 → 下拉/按钮交互卡
+- `/sessions`：会话列表卡（标题/id/cwd/时长/live/已保存 徽标、分页、每行 Resume 按钮、陈旧回调守卫）
+- `/resume`：跨聊天搬移会话（1:1 模型）；运行中目标拒绝；不重放历史
+- `/clear`/`/new`：非破坏性新会话（旧会话仍可 `/sessions` 恢复）
+- session-map 持久化 + 启动时恢复（`agents.resume`）；dsh-base 自带 `session-persistence-jsonl`
+- 截断/节流/错误转译；**working 状态门**（运行中仅只读命令可用）
+**测试**：命令解析单测；透传 fake command registry；完整状态机矩阵扩展（command/resume-session × 5 状态）；集成测试覆盖 `/repo /resume /sessions` 全链路 + 面板按钮 + 真 harness `/permission`
+**验收**：真实飞书群内 @ 机器人 → 正常对话 + slash 命令/面板按钮可用；重启 daemon 后会话恢复。
 
 ### Iteration 3 —— P1 交互卡片：审批 + 提问 + 多会话
 **交付**：

@@ -95,7 +95,11 @@ export type SurfaceAction =
   | { readonly kind: 'row-details'; readonly id: string }
   | { readonly kind: 'toggle-rows' }
   | { readonly kind: 'repo-pick' }
-  | { readonly kind: 'repo-page' };
+  | { readonly kind: 'repo-page' }
+  | { readonly kind: 'command'; readonly name: string }
+  | { readonly kind: 'resume-session'; readonly sessionId: string }
+  | { readonly kind: 'panel-page'; readonly page: string }
+  | { readonly kind: 'sessions-page'; readonly page: string };
 
 /**
  * Projects per picker card page (the button-based fallback, used only when
@@ -245,12 +249,13 @@ export function buildRepoPickedCard(path: string): CardJson {
   };
 }
 
-/** Encode a surface action as a button value payload. */
+/** Encode a surface action as a button value payload (kind + extra fields). */
 export function actionValue(action: SurfaceAction): Record<string, string> {
-  return {
-    kind: action.kind,
-    ...('id' in action && action.id !== undefined ? { id: action.id } : {}),
-  };
+  const value: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(action)) {
+    if (entry !== undefined) value[key] = String(entry);
+  }
+  return value;
 }
 
 /** The button row appended by status: working → stop; done → copy/retry/panel;
@@ -517,31 +522,106 @@ export function buildRowDetailsCard(row: TurnRow): CardJson {
   };
 }
 
+/** One command button shown on the control panel. */
+export interface PanelCommand {
+  readonly name: string;
+  /** Button label (defaults to the command name when absent). */
+  readonly buttonLabel: string;
+  /** Panel grouping category ('session' | 'chat' | 'system'). */
+  readonly category: string;
+}
+
+/** Command buttons per panel page (Feishu wraps the row; the repo-picker
+ *  button fallback uses the same 8-per-page pattern). */
+export const PANEL_PAGE_SIZE = 8;
+
+/** A panel page entry: a category header or one command button. */
+export type PanelPageEntry =
+  | { readonly type: 'header'; readonly label: string }
+  | { readonly type: 'button'; readonly name: string; readonly label: string };
+
+/**
+ * Paginate the panel command palette. Commands are grouped by category in
+ * input order; a category header precedes its first button (and rides to the
+ * next page when the break lands between the header and that button, so a
+ * page never shows an unlabeled command group).
+ * @param commands - panel commands (already grouped by category).
+ * @param pageSize - buttons per page.
+ * @returns pages of entries (headers + buttons).
+ */
+export function panelPages(
+  commands: readonly PanelCommand[],
+  pageSize = PANEL_PAGE_SIZE,
+): readonly (readonly PanelPageEntry[])[] {
+  const entries: PanelPageEntry[] = [];
+  let lastCategory: string | undefined;
+  for (const command of commands) {
+    if (command.category !== lastCategory) {
+      entries.push({ type: 'header', label: command.category });
+      lastCategory = command.category;
+    }
+    entries.push({ type: 'button', name: command.name, label: command.buttonLabel });
+  }
+  const pages: PanelPageEntry[][] = [];
+  let current: PanelPageEntry[] = [];
+  let buttons = 0;
+  for (const entry of entries) {
+    if (entry.type === 'button' && buttons >= pageSize && current.length > 0) {
+      // A header stranded on the previous page (its first button starts the
+      // next page) rides along so the new page labels its commands.
+      const last = current[current.length - 1];
+      const stranded = last?.type === 'header' ? current.pop() : undefined;
+      pages.push(current);
+      current = [];
+      buttons = 0;
+      if (stranded !== undefined) current.push(stranded);
+    }
+    if (entry.type === 'button') buttons += 1;
+    current.push(entry);
+  }
+  if (current.length > 0) pages.push(current);
+  return pages;
+}
+
+/** Capitalize a category id for display ('session' → 'Session'). */
+function categoryLabel(category: string): string {
+  return category === '' ? category : `${category.charAt(0).toUpperCase()}${category.slice(1)}`;
+}
+
 /**
  * Build the control-panel card: a standing operation surface the user can
- * click without typing a slash command (stop / retry / copy / panel).
- * The Stop button only appears while a turn is actually running — a
- * finished turn has nothing to stop, so offering it is misleading.
+ * click without typing a slash command. The first action row carries the
+ * core buttons (Stop while running / Retry / Copy); below it the full
+ * command palette — every registered surface command as a button, grouped by
+ * category and paginated (everything-is-a-card: the button executes the same
+ * handler as the slash line).
  * @param statusLine - a short current-state line for the panel body.
  * @param running - whether a turn is actively running (show Stop).
+ * @param commands - the full command palette (registration order).
+ * @param page - zero-based palette page.
  * @returns Feishu interactive card JSON (v1 layout).
  */
-export function buildPanelCard(statusLine: string, running: boolean): CardJson {
-  const actions: {
+export function buildPanelCard(
+  statusLine: string,
+  running: boolean,
+  commands: readonly PanelCommand[] = [],
+  page = 0,
+): CardJson {
+  const core: Array<{
     readonly tag: 'button';
     readonly text: { readonly tag: 'plain_text'; readonly content: string };
     readonly type?: 'primary' | 'danger' | 'default';
     readonly value: Record<string, string>;
-  }[] = [];
+  }> = [];
   if (running) {
-    actions.push({
+    core.push({
       tag: 'button',
       text: { tag: 'plain_text', content: '⏹ Stop current' },
       type: 'danger',
       value: actionValue({ kind: 'stop' }),
     });
   }
-  actions.push(
+  core.push(
     {
       tag: 'button',
       text: { tag: 'plain_text', content: '🔁 Retry last' },
@@ -553,12 +633,63 @@ export function buildPanelCard(statusLine: string, running: boolean): CardJson {
       value: actionValue({ kind: 'copy' }),
     },
   );
+  const elements: CardElement[] = [
+    { tag: 'markdown', content: statusLine },
+    { tag: 'hr' },
+    { tag: 'action', actions: core },
+  ];
+  if (commands.length > 0) {
+    const pages = panelPages(commands);
+    const total = pages.length;
+    const index = Math.min(Math.max(page, 0), total - 1);
+    const entries = pages[index] ?? [];
+    elements.push({ tag: 'markdown', content: `**Commands** — page ${index + 1}/${total}` });
+    const pageButtons: Array<{
+      readonly tag: 'button';
+      readonly text: { readonly tag: 'plain_text'; readonly content: string };
+      readonly value: Record<string, string>;
+    }> = [];
+    for (const entry of entries) {
+      if (entry.type === 'header') {
+        elements.push({ tag: 'markdown', content: `**${categoryLabel(entry.label)}**` });
+      } else {
+        pageButtons.push({
+          tag: 'button',
+          text: { tag: 'plain_text', content: entry.label },
+          value: actionValue({ kind: 'command', name: entry.name }),
+        });
+      }
+    }
+    if (pageButtons.length > 0) elements.push({ tag: 'action', actions: pageButtons });
+    if (total > 1) {
+      const nav: Array<{
+        readonly tag: 'button';
+        readonly text: { readonly tag: 'plain_text'; readonly content: string };
+        readonly value: Record<string, string>;
+      }> = [];
+      if (index > 0) {
+        nav.push({
+          tag: 'button',
+          text: { tag: 'plain_text', content: '◀️ Prev' },
+          value: actionValue({ kind: 'panel-page', page: String(index - 1) }),
+        });
+      }
+      if (index < total - 1) {
+        nav.push({
+          tag: 'button',
+          text: { tag: 'plain_text', content: 'Next ▶️' },
+          value: actionValue({ kind: 'panel-page', page: String(index + 1) }),
+        });
+      }
+      elements.push({ tag: 'action', actions: nav });
+    }
+  }
   return {
     config: { wide_screen_mode: true },
     header: {
       title: { tag: 'plain_text', content: '⚙️ dsh-feishu panel' },
       template: 'wathet',
     },
-    elements: [{ tag: 'markdown', content: statusLine }, { tag: 'hr' }, { tag: 'action', actions }],
+    elements,
   };
 }

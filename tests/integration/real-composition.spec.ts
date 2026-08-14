@@ -676,4 +676,281 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
       );
     }
   }, 180_000);
+
+  /**
+   * The session lifecycle chain against the real process: a turn in chat A,
+   * /sessions from a fresh chat B, resume via the picker's button (binding
+   * moves), a follow-up that continues the resumed session, and /clear
+   * starting fresh — with a no-replay check between resume and follow-up.
+   */
+  it('session lifecycle chain: /sessions, resume by button, continue, /clear', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      server.setScripts([[{ content: 'Chain answer one.' }], [{ content: 'Chain answer two.' }]]);
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatA = `oc_chain_a_${Date.now()}`;
+      sendMessage(chatA, 'start the chain in A');
+      await waitFor(
+        'the green final card patch for A',
+        () => readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'green'),
+        90_000,
+      );
+      // Learn A's session id from the persisted session map.
+      const map = JSON.parse(
+        readFileSync(join(DSH_HOME, 'feishu', 'session-map.json'), 'utf8') as string,
+      ) as { entries: Record<string, string> };
+      const sessionA = map.entries[chatA];
+      expect(sessionA).toBeDefined();
+      if (sessionA === undefined) throw new Error('session map missing entry for chat A');
+
+      // A fresh chat B lists sessions; the picker shows A's session.
+      const chatB = `oc_chain_b_${Date.now()}`;
+      sendMessage(chatB, '/sessions');
+      await waitFor(
+        'the sessions picker card',
+        () =>
+          readOutbox()
+            .filter((r) => r.kind === 'card')
+            .some((r) => r.card?.header?.title.content === '🗂️ Sessions'),
+        30_000,
+      );
+      expect(
+        readOutbox()
+          .filter((r) => r.kind === 'card')
+          .some((r) => JSON.stringify(r.card?.elements).includes(sessionA)),
+      ).toBe(true);
+
+      // Resume A's session from B through the picker's Resume button. The
+      // picker's message id comes from its own outbox record (not a computed
+      // counter — the process may have sent other cards in between).
+      const pickerRecord = [...readOutbox()]
+        .reverse()
+        .find((r) => r.kind === 'card' && r.card?.header?.title.content === '🗂️ Sessions');
+      expect(pickerRecord?.messageId).toBeDefined();
+      const pickerId = pickerRecord?.messageId ?? '';
+      writeAction({
+        messageId: pickerId,
+        chatId: chatB,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'resume-session', sessionId: sessionA },
+      });
+      await waitFor(
+        'the resume confirmation text',
+        () =>
+          readOutbox().some(
+            (r) => r.kind === 'text' && r.text?.includes(`Resumed session ${sessionA}`),
+          ),
+        30_000,
+      );
+
+      // Resume must not replay history into a card: no new card appears
+      // until the next user message.
+      const cardsAfterResume = readOutbox().filter((r) => r.kind === 'card').length;
+      await new Promise((resolve) => setTimeout(resolve, 2_500));
+      expect(readOutbox().filter((r) => r.kind === 'card').length).toBe(cardsAfterResume);
+
+      // The follow-up continues the resumed session in B: a fresh card
+      // streams the next answer.
+      sendMessage(chatB, 'continue in B');
+      await waitFor(
+        'the continued card in B',
+        () => readOutbox().filter((r) => r.kind === 'card').length > cardsAfterResume,
+        90_000,
+      );
+      await waitFor(
+        'the green continued card',
+        () => {
+          const all = readOutbox().filter((r) => r.kind === 'patch');
+          const last = all.at(-1)?.card;
+          return (
+            all.length > 0 &&
+            last?.header?.template === 'green' &&
+            JSON.stringify(last.elements).includes('Chain answer two.')
+          );
+        },
+        90_000,
+      );
+
+      // /clear in B starts fresh; A's session stays listed for /sessions.
+      sendMessage(chatB, '/clear');
+      await waitFor(
+        'the fresh-conversation text',
+        () =>
+          readOutbox().some(
+            (r) => r.kind === 'text' && r.text?.includes('New conversation started'),
+          ),
+        30_000,
+      );
+      sendMessage(chatB, '/sessions');
+      await waitFor(
+        'the sessions picker after clear',
+        () =>
+          readOutbox()
+            .filter((r) => r.kind === 'card')
+            .some((r) => r.card?.header?.title.content === '🗂️ Sessions'),
+        30_000,
+      );
+      expect(
+        readOutbox()
+          .filter((r) => r.kind === 'card')
+          .some((r) => JSON.stringify(r.card?.elements).includes(sessionA)),
+      ).toBe(true);
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 240_000);
+
+  /** The panel palette button end-to-end: one tap executes the same handler
+   *  as the slash line (everything-is-a-card). */
+  it('panel palette command button executes the command handler', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_palette_${Date.now()}`;
+      writeAction({
+        messageId: 'mem-1',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'panel' },
+      });
+      await waitFor(
+        'the panel card',
+        () =>
+          readOutbox()
+            .filter((r) => r.kind === 'card')
+            .some((r) => r.card?.header?.title.content === '⚙️ dsh-feishu panel'),
+        30_000,
+      );
+      // The palette renders command buttons with payloads.
+      const panel = readOutbox()
+        .filter((r) => r.kind === 'card')
+        .at(-1)?.card;
+      const commandPayloads =
+        panel?.elements.flatMap((el) =>
+          el.tag === 'action'
+            ? el.actions.filter((a) => a.tag === 'button' && a.value.kind === 'command')
+            : [],
+        ) ?? [];
+      expect(commandPayloads.length).toBeGreaterThan(0);
+
+      // Tap the /status button: the status text arrives (same handler as
+      // typing /status).
+      writeAction({
+        messageId: 'mem-2',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'command', name: 'status' },
+      });
+      await waitFor(
+        'the status command reply',
+        () => readOutbox().some((r) => r.kind === 'text' && r.text?.includes(`chat: ${chatId}`)),
+        30_000,
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 120_000);
+
+  /** The web-command wrapper end-to-end: /permission executes the REAL
+   *  harness command through the dsh registry, minting a session on a fresh
+   *  chat. */
+  it('web-command wrapper executes the real harness /permission', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_wrapper_${Date.now()}`;
+      sendMessage(chatId, '/permission');
+      // The harness /permission handler reports the current preset.
+      await waitFor(
+        'the permission preset text',
+        () => readOutbox().some((r) => r.kind === 'text' && r.text?.includes('current preset')),
+        60_000,
+      );
+      // The wrapper minted a session + agent for the fresh chat.
+      const map = JSON.parse(
+        readFileSync(join(DSH_HOME, 'feishu', 'session-map.json'), 'utf8') as string,
+      ) as { entries: Record<string, string> };
+      expect(map.entries[chatId]).toBeDefined();
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 120_000);
 });

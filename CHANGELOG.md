@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Full command surface (Iteration 2 completion).** Fifteen surface
+  commands, each sharing one handler between the slash line and the control
+  panel palette button: `/help /status /cancel /cd /repo /group /sessions
+  /resume /clear /new` plus the five dsh web command wrappers
+  `/plan /goal /compact /feedback /permission` (thin handlers that ensure a
+  session/agent and execute the harness command through `ctx.commands.execute`).
+- **Panel command palette.** `buildPanelCard` now renders the full command
+  set as buttons — grouped by category (session → chat → system), paginated
+  (`PANEL_PAGE_SIZE = 8`) with page nav, command payload
+  `{kind:'command', name}` — behind the unchanged core row (Stop/Retry/Copy).
+- **Session lifecycle.** `/sessions` lists the persisted session corpus
+  (`ctx.sessionQuery.listSessions()` + batch title folds) as a paginated
+  picker card with per-row Resume buttons and a stale-callback guard;
+  `/resume [<id>]` rebinds the chat to a saved session (refuses a running
+  target, reports "already active", never replays history into the card);
+  `/clear` and `/new` start a fresh conversation non-destructively — the
+  previous session stays saved and resumable.
+- **Working-state gate.** While a turn runs, only read-only commands run
+  (`/help /status /sessions /cancel /group`); every mutating command is
+  refused with an explanation (state-machine matrix rule, one place).
+- `executeDshCommand` now maps harness `success`/`error` kinds to surface
+  `CommandResult` (error kinds surface as ⚠️) instead of swallowing errors.
+
+### Changed
+
+- The full card state-machine matrix in `tests/bridge.spec.ts` is extended
+  with the command and resume-session action classes; new unit suites cover
+  the panel palette, the `/sessions` picker builder, and the
+  `executeDshCommand` mapping.
+- Real-composition integration now covers the session lifecycle chain
+  (`/sessions` → resume by button → continue → `/clear`, with a no-replay
+  check), the panel palette button end-to-end, and the real harness
+  `/permission` through the wrapper.
+
+### Removed
+
+- `/export` is intentionally not surfaced: `dsh-session-log-export`
+  registers a Web-only command observed by a browser download plugin; a
+  native Feishu log export is a later iteration.
+
+
 - Repository scaffold: bundle manifest (`dsh.bundle.patch`), `cordis.patch.yml`,
   strict TypeScript build, Biome lint/format, Vitest unit tests, CI workflow,
   English documentation set (README, AGENTS.md, CONTRIBUTING, SECURITY,

@@ -25,8 +25,9 @@ import type {} from '@deepseek-ai/dsh-commands';
 import { credentialRef } from '@deepseek-ai/dsh-credentials';
 import type { SessionId } from '@deepseek-ai/dsh-session';
 import z from '@deepseek-ai/schemastery';
-import { type AgentStore, Bridge, type BridgeLogger } from './bridge.js';
+import { type AgentStore, Bridge, type BridgeLogger, type SessionListRow } from './bridge.js';
 import { StreamingCardManager } from './cards/streaming.js';
+import type { CommandResult } from './commands.js';
 import { consoleExporter } from './console-exporter.js';
 import type { FeishuTransport } from './feishu/types.js';
 import { createMemoryTransport } from './memory-transport.js';
@@ -135,6 +136,34 @@ export function defaultDataDir(): string {
  * @param dataDir - the surface data directory used for the memory channel.
  * @returns the factory selected for this process.
  */
+
+/**
+ * Structural subset of the `ctx.sessionQuery` service (`@deepseek-ai/dsh-session-query`,
+ * mounted by dsh-base's `session-query-sqlite` row). Kept local so the plugin
+ * compiles without a dependency on the query package; `ctx.get('sessionQuery')`
+ * returns the full engine at runtime.
+ */
+type SessionQueryLike = {
+  listSessions(signal?: AbortSignal): Promise<
+    readonly {
+      header: { readonly id: unknown; readonly createdAt: number; readonly cwd?: string };
+      readonly live: boolean;
+      readonly persisted: boolean;
+    }[]
+  >;
+  readTitleSnapshots(
+    sessionIds: readonly unknown[],
+    signal?: AbortSignal,
+  ): Promise<
+    readonly {
+      readonly sessionId: unknown;
+      readonly status: 'fulfilled';
+      readonly value: { readonly title?: { readonly title?: string } };
+    }[]
+  >;
+};
+
+/** The default transport factory picks this up; see below. */
 function defaultTransportFactory(
   dataDir: string,
 ): (credentials: Credentials, logger: BridgeLogger) => FeishuTransport {
@@ -143,6 +172,38 @@ function defaultTransportFactory(
     return (_credentials, _logger) => createMemoryTransport({ dir });
   }
   return createLarkTransport;
+}
+
+/**
+ * List the session corpus for `/sessions` and `/resume` through the mounted
+ * query engine. Newest-first records with folded titles; `undefined` when the
+ * engine is absent (the surface falls back to a degraded bound-sessions list).
+ * @param ctx - plugin context.
+ * @returns session rows, or `undefined` when `sessionQuery` is unavailable.
+ */
+async function listSessions(ctx: Context): Promise<readonly SessionListRow[] | undefined> {
+  const sessionQuery = ctx.get('sessionQuery') as SessionQueryLike | undefined;
+  if (sessionQuery === undefined) {
+    ctx.logger.warn('[feishu] sessionQuery service unavailable; /sessions is degraded');
+    return undefined;
+  }
+  const records = await sessionQuery.listSessions();
+  const ids = records.map((record) => record.header.id);
+  const observations = await sessionQuery.readTitleSnapshots(ids);
+  const titles = new Map<string, string | undefined>();
+  for (const observation of observations) {
+    if (observation.status === 'fulfilled') {
+      titles.set(String(observation.sessionId), observation.value.title?.title);
+    }
+  }
+  return records.map((record) => ({
+    sessionId: String(record.header.id),
+    title: titles.get(String(record.header.id)),
+    cwd: record.header.cwd,
+    createdAt: record.header.createdAt,
+    live: record.live,
+    persisted: record.persisted,
+  }));
 }
 
 /** Injectable dependencies so `apply` is unit-testable without a network. */
@@ -235,6 +296,7 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
     ...(config.unknownCommand !== undefined ? { unknownCommand: config.unknownCommand } : {}),
     ...(config.repoRoots !== undefined ? { repoRoots: config.repoRoots } : {}),
     executeCommand: (agent, line) => executeDshCommand(ctx, agent, line),
+    listSessions: () => listSessions(ctx),
   });
   ctx.effect(() => () => {
     bridge.dispose();
@@ -308,19 +370,31 @@ function resolveAgentOptions(
   };
 }
 
-/** Execute a slash line through the dsh command registry, if present. */
-async function executeDshCommand(
+/**
+ * Execute a slash line through the dsh command registry, if present. Maps
+ * the harness result kind to the surface CommandResult (error kinds surface
+ * as ⚠️ via the caller); `undefined` when the registry is absent, the
+ * command does not resolve, or the handler throws.
+ * @param ctx - plugin context (unit tests inject a fake `commands` service).
+ * @param agent - the agent to execute against.
+ * @param line - the complete slash-command line.
+ * @returns the mapped result, or `undefined`.
+ */
+export async function executeDshCommand(
   ctx: Context,
   agent: Agent,
   line: string,
-): Promise<string | undefined> {
+): Promise<CommandResult | undefined> {
   const commands = ctx.get('commands');
   if (commands === undefined) return undefined;
   try {
     const execution = await commands.execute(agent, line, new AbortController().signal);
     if (execution === undefined) return undefined;
-    return execution.result.kind === 'success' ? execution.result.text : undefined;
-  } catch {
+    return execution.result.kind === 'success'
+      ? { kind: 'success', text: execution.result.text ?? '' }
+      : { kind: 'error', text: execution.result.text };
+  } catch (error: unknown) {
+    ctx.logger.warn(`[feishu] dsh command ${line} failed: ${String(error)}`);
     return undefined;
   }
 }

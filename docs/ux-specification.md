@@ -254,3 +254,86 @@ rounds 1–5.
    stale picker callbacks are ignored.
 7. Every step has a unit test; state-machine transitions are covered as
    explicit tests (see `tests/bridge.spec.ts` UX state machine block).
+
+## 8. Command surface
+
+### 8.1 Command set (15 surface commands)
+
+Every command is a `SurfaceCommand`: one handler shared by the slash line
+and the panel button (button = command, botmux `/list-slash-command`
+palette idea). `category` groups the panel palette.
+
+| Command | Category | Behavior |
+|---|---|---|
+| `/help` | system | list all surface commands + passthrough note |
+| `/status` | system | chat/session/agent/last-output/mention line |
+| `/cancel` | session | stop the current turn |
+| `/cd <path>` | session | set the chat's working directory, rebind a fresh session |
+| `/repo [<path>]` | session | project picker card (dropdown ≤ 50, buttons + pages above) |
+| `/group [<name>]` | chat | create a group with the bot and sender |
+| `/sessions` | session | session list card (title/id/cwd/age/live/saved), paginated, per-row Resume buttons |
+| `/resume [<id>]` | session | resume a saved session; no id opens the `/sessions` picker |
+| `/clear` | session | start a fresh conversation — **non-destructive**: the previous session stays saved and resumable (content-integrity rule) |
+| `/new` | session | alias of `/clear` (web/cc-tui "new chat" parity) |
+| `/plan` `/goal` `/compact` `/feedback` `/permission` | system | **dsh web wrappers**: ensure a session/agent, then execute the harness command through `ctx.commands.execute` (dsh-base mounts all five); error kinds surface as ⚠️ |
+
+`/export` is **intentionally absent**: `dsh-session-log-export` registers a
+Web-only command whose handler a *browser* download plugin observes
+("Register the Web-only `/export` command that the browser download plugin
+observes"); on a Feishu surface nothing would download. A native Feishu
+log-export (file message) is a later-iteration feature. Unknown slash lines
+keep the passthrough/fallback path.
+
+### 8.2 Working-state gate (state-machine rule)
+
+While a turn is running (`cardStates[chatId].status === 'working'`), only
+read-only commands may run: `/help`, `/status`, `/sessions` (read state),
+`/cancel` (the stop itself), `/group` (separate chat). Every other command —
+`/cd /repo /clear /new /resume` and the five web wrappers — is refused with
+"a turn is running — stop it first." The gate lives in `handleCommand` and
+the panel `command` action (one rule, two entry points), so a mid-turn
+session rebind/remint can never corrupt the live card.
+
+### 8.3 Session lifecycle commands
+
+- `/sessions` + `/resume` data: `ctx.sessionQuery` (mounted by dsh-base's
+  `session-query-sqlite`), `listSessions()` newest-first + batch
+  `readTitleSnapshots()` for titles. When the service is absent the surface
+  degrades to a bound-sessions-only listing (loud log).
+- Resume flow (shared by `/resume <id>` and the picker's Resume button):
+  the chat must be idle; the target session must not be running in another
+  chat ("has an active turn — stop it in its chat first"); resuming the
+  chat's own session reads "already active". Then `SessionMap.set` rebinds
+  (the previous binding detaches — 1:1 chat↔session model) and
+  `agents.resume` loads a persisted agent when none is live. A failed
+  resume (no persisted log) reports ⚠️ and leaves the map untouched.
+  Resume does **not** change the chat's pinned cwd (`/cd` owns that), and it
+  resets the card state so history is never replayed into a card.
+- `/clear`/`/new`: `SessionMap.remint` + full card-state reset (no live
+  card, no copy/retry targets). The old session stays persisted → still
+  listed by `/sessions` and resumable.
+
+### 8.4 Panel palette
+
+`buildPanelCard(statusLine, running, commands, page)`: the core row
+(Stop while running / Retry / Copy) stays first; below it the full command
+palette — all 15 commands as buttons, grouped by category
+(session → chat → system) with category headers, `PANEL_PAGE_SIZE = 8`
+buttons per page and ◀️/▶️ nav hidden at the bounds. Each button stamps
+`{kind:'command', name}` and executes the same handler as the slash line.
+The panel is stateless: every open/pager posts a fresh card built from the
+current authoritative state (no stale-guard needed).
+
+### 8.5 State-machine matrix for the new actions
+
+| Action \ Status | none | working | done | stopped | error |
+|---|---|---|---|---|---|
+| command (read-only) | allowed | **allowed** | allowed | allowed | allowed |
+| command (mutating) | allowed | **refused** "stop first" | allowed | allowed | allowed |
+| resume-session | allowed* | **refused** | allowed* | allowed* | allowed* |
+| panel-page / sessions-page | stateless page re-send (no card-state transition) | | | | |
+
+\* plus target-running → refused; target == current → already-active.
+All cells ACK `{}` and end in a consistent state through `syncCard`
+(existing rule); the matrix is unit-tested in `tests/bridge.spec.ts`
+"state machine matrix extension".

@@ -8,7 +8,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis';
-import type { CommandRuntime } from '@deepseek-ai/dsh-commands';
+import type { CommandExecution, CommandId, CommandRuntime } from '@deepseek-ai/dsh-commands';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   CardAction,
@@ -18,7 +18,14 @@ import type {
   FeishuTransport,
   SentCard,
 } from '../src/feishu/types.js';
-import { apply, Config, dshHome, name, resolveCredentials } from '../src/index.js';
+import {
+  apply,
+  Config,
+  dshHome,
+  executeDshCommand,
+  name,
+  resolveCredentials,
+} from '../src/index.js';
 
 /** A recorded command registration as the fake registry sees it. */
 interface RegisteredCommand {
@@ -251,5 +258,56 @@ describe('apply', () => {
     apply(ctx, {});
     expect(registered).toHaveLength(0);
     expect(logs.some((line) => line.includes('commands service unavailable'))).toBe(true);
+  });
+});
+
+describe('executeDshCommand', () => {
+  function makeCommands(
+    result: { kind: 'success'; text?: string } | { kind: 'error'; text: string } | undefined,
+  ): { execute: CommandRuntime['execute'] } {
+    return {
+      execute: async (): Promise<CommandExecution | undefined> =>
+        result === undefined ? undefined : { commandId: 'c1' as CommandId, result },
+    };
+  }
+
+  const ctxWith = (commands: unknown): Context =>
+    ({
+      get: (name: string) => (name === 'commands' ? commands : undefined),
+      logger: { warn: () => {} },
+    }) as unknown as Context;
+
+  it('maps a success result to a success CommandResult', async () => {
+    const ctx = ctxWith(makeCommands({ kind: 'success', text: 'Compacted.' }));
+    const result = await executeDshCommand(ctx, {} as never, '/compact');
+    expect(result).toEqual({ kind: 'success', text: 'Compacted.' });
+  });
+
+  it('maps an empty success text to an empty string', async () => {
+    const ctx = ctxWith(makeCommands({ kind: 'success' }));
+    const result = await executeDshCommand(ctx, {} as never, '/plan off');
+    expect(result).toEqual({ kind: 'success', text: '' });
+  });
+
+  it('maps an error result to an error CommandResult', async () => {
+    const ctx = ctxWith(makeCommands({ kind: 'error', text: 'unknown preset "nope"' }));
+    const result = await executeDshCommand(ctx, {} as never, '/permission nope');
+    expect(result).toEqual({ kind: 'error', text: 'unknown preset "nope"' });
+  });
+
+  it('returns undefined when the registry is absent or the command misses', async () => {
+    expect(await executeDshCommand(ctxWith(undefined), {} as never, '/nope')).toBeUndefined();
+    const ctx = ctxWith(makeCommands(undefined));
+    expect(await executeDshCommand(ctx, {} as never, '/nope')).toBeUndefined();
+  });
+
+  it('returns undefined when the handler throws', async () => {
+    const throwing = {
+      execute: async () => {
+        throw new Error('boom');
+      },
+    };
+    const ctx = ctxWith(throwing);
+    expect(await executeDshCommand(ctx, {} as never, '/goal')).toBeUndefined();
   });
 });
