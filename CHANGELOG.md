@@ -129,6 +129,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Integration-test teardown raced the next test's state reset (CI flake
+  under Node 22).** `afterEach` sent `SIGTERM` to the dsh child but did not
+  wait for it to exit, so the child's lingering outbox writes could make
+  the next test's `rmSync(MEMORY_DIR)` fail with `ENOTEMPTY`. Both
+  integration suites now `stopChild()` (SIGTERM, SIGKILL after a 5 s
+  grace, then wait for exit) in `beforeEach`/`afterEach`, and the reset
+  uses `rmSync` with `maxRetries`/`retryDelay` as a second guard.
+
 - **`pnpm install` failed under pnpm 11** (user report): pnpm 11 defaults
   `minimumReleaseAge` to 1440 minutes (24 h), rejecting any lockfile entry
   published within the last day — freshly released transitive deps (koffi,

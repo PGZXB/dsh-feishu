@@ -171,23 +171,42 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
   let stderr = '';
   let bridgeReady = false;
 
+  /** Kill the spawned dsh process and WAIT for it to exit (SIGTERM, then
+   *  SIGKILL after a 5 s grace) so its file writes cannot race the next
+   *  test's MEMORY_DIR reset (CI ENOTEMPTY under Node 22). */
+  async function stopChild(): Promise<void> {
+    const proc = child;
+    child = undefined;
+    if (proc === undefined || proc.exitCode !== null) return;
+    proc.kill('SIGTERM');
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        if (proc.exitCode === null) proc.kill('SIGKILL');
+        resolve();
+      }, 5_000);
+      proc.once('exit', () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+  }
+
   beforeEach(async () => {
     if (mock !== undefined) await mock.close();
-    if (child !== undefined && child.exitCode === null) child.kill('SIGTERM');
-    rmSync(MEMORY_DIR, { recursive: true, force: true });
+    await stopChild();
+    rmSync(MEMORY_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     mkdirSync(INT_CWD, { recursive: true });
     mkdirSync(INBOX_DIR, { recursive: true });
     mkdirSync(ACTIONS_DIR, { recursive: true });
     mkdirSync(OUTBOX_DIR, { recursive: true });
     mock = await startMockLlmServer();
-    child = undefined;
     bridgeReady = false;
     stdout = '';
     stderr = '';
   });
 
   afterEach(async () => {
-    if (child !== undefined && child.exitCode === null) child.kill('SIGTERM');
+    await stopChild();
     if (mock !== undefined) await mock.close();
   });
 
