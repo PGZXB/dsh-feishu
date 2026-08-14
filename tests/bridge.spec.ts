@@ -346,17 +346,66 @@ describe('Bridge', () => {
       },
     } as unknown as SessionEvent);
     await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
-    const last = h.transport.updatedCards.at(-1);
-    const row = last?.elements.find((el) => el.tag === 'column_set');
+    // Cards default collapsed: the sequence line shows, and the toggle reads
+    // '▸ Expand'. Expanding reveals the ✅ row.
+    const collapsed = h.transport.updatedCards.at(-1);
+    expect(
+      collapsed?.elements.some(
+        (el) => el.tag === 'markdown' && 'content' in el && el.content === 'bash',
+      ),
+    ).toBe(true);
+    await h.bridge.handleCardAction({
+      messageId: 'msg-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'toggle-rows' },
+    });
+    const expanded = h.transport.updatedCards.at(-1);
+    const row = expanded?.elements.find((el) => el.tag === 'column_set');
     const text = row?.tag === 'column_set' ? row.columns[0]?.elements[0] : undefined;
     expect(text?.tag === 'div' ? text.text.content : '').toContain('✅ Bash · ls');
     // The done card keeps the plain action row — no separate Tools button.
-    const doneAction = last?.elements.find((el) => el.tag === 'action');
+    const doneAction = expanded?.elements.find((el) => el.tag === 'action');
     const doneLabels =
       doneAction && 'actions' in doneAction
         ? doneAction.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
         : [];
     expect(doneLabels).toEqual(['📋 Copy', '🔁 Retry', '⚙️ Panel', '▾ Collapse']);
+  });
+
+  it('streams the collapsed sequence as rows arrive', async () => {
+    const h = makeHarness({ throttleMs: 0 });
+    await h.bridge.handleMessage(message());
+    // First tool call → collapsed line reads 'bash'.
+    await h.bridge.handleEvent('feishu-session-1', {
+      type: 'tool/call',
+      seq: 1,
+      time: 0,
+      data: { turn: 0, step: 0, callId: 'call-1', name: 'bash', arguments: '{"command":"ls"}' },
+    } as unknown as SessionEvent);
+    // Patch flushes on a macrotask (throttle 0) — give it a tick.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const first = h.transport.updatedCards.at(-1);
+    expect(
+      first?.elements.some(
+        (el) => el.tag === 'markdown' && 'content' in el && el.content === 'bash',
+      ),
+    ).toBe(true);
+    // Second call appends to the sequence line — still collapsed.
+    await h.bridge.handleEvent('feishu-session-1', {
+      type: 'tool/call',
+      seq: 2,
+      time: 0,
+      data: { turn: 0, step: 0, callId: 'call-2', name: 'read', arguments: '{"path":"a.ts"}' },
+    } as unknown as SessionEvent);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const second = h.transport.updatedCards.at(-1);
+    expect(
+      second?.elements.some(
+        (el) => el.tag === 'markdown' && 'content' in el && el.content === 'bash -> read',
+      ),
+    ).toBe(true);
+    await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
   });
 
   it('streams reasoning deltas into a think row (settled on turn end)', async () => {
@@ -369,10 +418,13 @@ describe('Bridge', () => {
       data: { turn: 0, step: 0, chunk: { type: 'reasoning-delta', index: 0, text: 'hmm…' } },
     } as unknown as SessionEvent);
     await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+    // Collapsed by default: the sequence line carries 'think'.
     const last = h.transport.updatedCards.at(-1);
-    const row = last?.elements.find((el) => el.tag === 'column_set');
-    const text = row?.tag === 'column_set' ? row.columns[0]?.elements[0] : undefined;
-    expect(text?.tag === 'div' ? text.text.content : '').toContain('Think');
+    expect(
+      last?.elements.some(
+        (el) => el.tag === 'markdown' && 'content' in el && el.content === 'think',
+      ),
+    ).toBe(true);
   });
 
   it('opens a row-details card from a row expand button', async () => {
@@ -415,7 +467,7 @@ describe('Bridge', () => {
     ).toBe(true);
   });
 
-  it('toggle-rows collapses a finished card to the minimal sequence', async () => {
+  it('toggle-rows expands a collapsed finished card and collapses it back', async () => {
     const h = makeHarness();
     await h.bridge.handleMessage(message());
     await h.bridge.handleEvent('feishu-session-1', {
@@ -426,22 +478,7 @@ describe('Bridge', () => {
     } as unknown as SessionEvent);
     await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
     const before = h.transport.updatedCards.length;
-    // The finished card is re-rendered in place with the collapsed sequence.
-    await h.bridge.handleCardAction({
-      messageId: 'msg-1',
-      chatId: 'oc_chat',
-      operatorOpenId: 'ou_user',
-      value: { kind: 'toggle-rows' },
-    });
-    const collapsed = h.transport.updatedCards.at(-1);
-    expect(h.transport.updatedCards.length).toBe(before + 1);
-    expect(
-      collapsed?.elements.some(
-        (el) => el.tag === 'markdown' && 'content' in el && el.content === 'bash',
-      ),
-    ).toBe(true);
-    expect(collapsed?.elements.some((el) => el.tag === 'column_set')).toBe(false);
-    // Toggling again expands back to the row view.
+    // Cards start collapsed; the finished card re-renders expanded in place.
     await h.bridge.handleCardAction({
       messageId: 'msg-1',
       chatId: 'oc_chat',
@@ -449,7 +486,22 @@ describe('Bridge', () => {
       value: { kind: 'toggle-rows' },
     });
     const expanded = h.transport.updatedCards.at(-1);
+    expect(h.transport.updatedCards.length).toBe(before + 1);
     expect(expanded?.elements.some((el) => el.tag === 'column_set')).toBe(true);
+    // Toggling again collapses back to the minimal sequence.
+    await h.bridge.handleCardAction({
+      messageId: 'msg-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'toggle-rows' },
+    });
+    const collapsed = h.transport.updatedCards.at(-1);
+    expect(
+      collapsed?.elements.some(
+        (el) => el.tag === 'markdown' && 'content' in el && el.content === 'bash',
+      ),
+    ).toBe(true);
+    expect(collapsed?.elements.some((el) => el.tag === 'column_set')).toBe(false);
   });
 
   it('marks the turn card error and still delivers the final text', async () => {

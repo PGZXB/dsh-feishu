@@ -28,7 +28,6 @@ import {
   buildRowDetailsCard,
   type CardSnapshot,
   type CardStatus,
-  MAX_TOOL_RECORD_CHARS,
   type ThinkRow,
   type ToolRow,
   type TurnRow,
@@ -203,8 +202,14 @@ export class Bridge {
   private readonly lastOutputs = new Map<string, string>();
   /** Last completed turn's rows per chat (for the ⋯ row expand buttons). */
   private readonly lastRows = new Map<string, readonly TurnRow[]>();
-  /** Per-chat collapsed state of the think/tool row sequence. */
+  /** Per-chat collapsed state of the think/tool row sequence. Cards start
+   *  collapsed (feedback); an explicit expand flips the state. */
   private readonly collapsedRows = new Map<string, boolean>();
+
+  /** Whether a chat's row sequence is collapsed (default: collapsed). */
+  private collapsed(chatId: string): boolean {
+    return this.collapsedRows.get(chatId) ?? true;
+  }
   /** Last card snapshot per chat (finished card, for the collapse toggle). */
   private readonly lastSnapshots = new Map<string, CardSnapshot>();
   /** Active repo-picker card message id per chat; a pick consumes it. */
@@ -454,7 +459,7 @@ export class Bridge {
           // The summary derives from the FULL arguments before truncation —
           // a long command must never render as its raw JSON envelope.
           summary: toolRowSummary(event.data.name, event.data.arguments, cwd),
-          args: event.data.arguments.slice(0, MAX_TOOL_RECORD_CHARS),
+          args: event.data.arguments,
           result: '',
         } satisfies ToolRow);
         this.patch(chatId, turn);
@@ -484,7 +489,7 @@ export class Bridge {
           turn.rows[target] = {
             ...row,
             status,
-            result: resultText.slice(0, MAX_TOOL_RECORD_CHARS),
+            result: resultText,
           };
         }
         this.patch(chatId, turn);
@@ -519,7 +524,7 @@ export class Bridge {
           content: turn.content,
           rows: turn.rows,
           cwd: this.options.sessionMap.cwdFor(chatId) ?? this.options.defaultCwd,
-          collapsed: this.collapsedRows.get(chatId) ?? false,
+          collapsed: this.collapsed(chatId),
           status,
         };
         this.patch(chatId, turn);
@@ -683,7 +688,7 @@ export class Bridge {
         // Flip the per-chat collapsed state, then re-render: a live turn
         // re-patches through the streaming manager; a finished card is
         // updated in place from the stored final snapshot.
-        const collapsed = !(this.collapsedRows.get(action.chatId) ?? false);
+        const collapsed = !this.collapsed(action.chatId);
         this.collapsedRows.set(action.chatId, collapsed);
         const turn = this.turns.get(action.chatId);
         if (turn !== undefined) {
@@ -862,7 +867,7 @@ export class Bridge {
       content: turn.content,
       rows: turn.rows,
       cwd: this.options.sessionMap.cwdFor(chatId) ?? this.options.defaultCwd,
-      collapsed: this.collapsedRows.get(chatId) ?? false,
+      collapsed: this.collapsed(chatId),
       status: turn.status,
     };
     this.options.cards.patch(chatId, snapshot);

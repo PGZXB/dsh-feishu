@@ -77,9 +77,6 @@ const STATUS_TEMPLATE: Record<CardStatus, string> = {
 /** Longest card body we ever send; the Feishu card cap is ~109KB. */
 export const MAX_CARD_CHARS = 60_000;
 
-/** Longest tool args/result text kept per row. */
-export const MAX_TOOL_RECORD_CHARS = 300;
-
 /** Longest reasoning text kept per think row (the live line is one-liner). */
 export const MAX_THINK_CHARS = 2000;
 
@@ -485,13 +482,13 @@ export function buildRowDetailsCard(row: TurnRow): CardJson {
     if (row.args !== '') {
       elements.push({
         tag: 'markdown',
-        content: `IN\n${fencedCode(truncateHead(formatArgs(row.args), 2000), 'json')}`,
+        content: `IN\n${fencedCode(formatArgs(row.args), 'json')}`,
       });
     }
     if (row.result !== '') {
       elements.push({
         tag: 'markdown',
-        content: `OUT\n${fencedCode(truncateHead(row.result, 2000))}`,
+        content: `OUT\n${fencedCode(row.result)}`,
       });
     }
     if (row.args === '' && row.result === '') {

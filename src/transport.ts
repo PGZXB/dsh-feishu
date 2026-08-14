@@ -178,7 +178,11 @@ export class LarkTransport implements FeishuTransport {
       'card.action.trigger': (data: RawCardActionEvent) => {
         const action = normalizeCardAction(data);
         if (action !== undefined) this.actionHandler?.(action);
-        return undefined;
+        // ACK with no UI update. Returning undefined produces a code-only
+        // response the Feishu client rejects as an invalid ACK (botmux
+        // lesson: the client can then re-render the card to a stale state —
+        // exactly the "card reverted to working after opening details" bug).
+        return {};
       },
     });
     await this.ws.start({ eventDispatcher: this.dispatcher });
