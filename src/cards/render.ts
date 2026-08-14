@@ -741,6 +741,9 @@ export function buildPermissionPickerCard(presets: readonly PermissionPresetView
       preset.description === undefined || preset.description === ''
         ? ''
         : stripAngleBrackets(preset.description);
+    // The ★ current badge rides on the TITLE line — a separate line reads as
+    // two rows (user report).
+    const titleLine = `**${title}**${preset.current ? ' ★ current' : ''}`;
     const columns: ColumnContainer[] = [
       {
         tag: 'column',
@@ -752,9 +755,7 @@ export function buildPermissionPickerCard(presets: readonly PermissionPresetView
             tag: 'div',
             text: {
               tag: 'lark_md',
-              content: `**${title}**${description === '' ? '' : `\n\n${description}`}${
-                preset.current ? '\n\n★ current' : ''
-              }`,
+              content: `${titleLine}${description === '' ? '' : `\n\n${description}`}`,
             },
           },
         ],

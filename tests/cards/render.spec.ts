@@ -727,6 +727,25 @@ describe('buildPermissionPickerCard', () => {
     expect(currentButtons).toHaveLength(0);
   });
 
+  it('keeps the ★ current badge on the SAME line as the preset title (regression)', () => {
+    // User report: 'workspace-write' and '★ current' rendered on two rows.
+    const card = buildPermissionPickerCard(presets);
+    const currentRow = card.elements.find(
+      (el): el is Extract<CardElement, { tag: 'column_set' }> =>
+        el.tag === 'column_set' &&
+        el.columns.some((c) =>
+          c.elements.some((e) => e.tag === 'div' && e.text.content.includes('★ current')),
+        ),
+    );
+    const content =
+      currentRow && 'columns' in currentRow
+        ? currentRow.columns[0]?.elements.find((e) => e.tag === 'div')?.text.content
+        : '';
+    // The badge is inline with the title, not on its own newline.
+    expect(content).toContain('**workspace-write** ★ current');
+    expect(content?.includes('\n★')).toBe(false);
+  });
+
   it('shows the empty state with no presets', () => {
     const card = buildPermissionPickerCard([]);
     expect(card.header?.title.content).toBe('🔐 Permission presets');
