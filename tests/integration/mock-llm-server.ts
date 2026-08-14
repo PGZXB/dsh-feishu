@@ -25,6 +25,11 @@ export interface MockScriptChunk {
   content?: string;
   /** `tool_calls` delta fragments. */
   toolCall?: { index: number; id: string; name: string; arguments: string };
+  /**
+   * Respond with HTTP 500 instead of streaming — the adapter surfaces it as
+   * an LLM error and the turn ends with `turn/end(error)` (red card).
+   */
+  error?: string;
 }
 
 /** A running mock server. */
@@ -82,9 +87,16 @@ export async function startMockLlmServer(): Promise<MockLlmServer> {
   let releaseHold: (() => void) | undefined;
 
   /** Stream one scripted response: reasoning, a tool call, then the answer. */
-  function writeScripted(res: ServerResponse): void {
+  /** The script for the NEXT completion request, or undefined (default). */
+  function nextScript(): readonly MockScriptChunk[] | undefined {
     const script = scripts?.[0];
     if (scripts !== undefined && scripts.length > 1) scripts = scripts.slice(1);
+    return script;
+  }
+
+  /** Stream one scripted response. The script is passed in — the request
+   *  handler already consumed it (one consumption per request). */
+  function writeScripted(res: ServerResponse, script: readonly MockScriptChunk[] | undefined): void {
     if (script === undefined || script.length === 0) {
       res.write(sseChunk({ content: 'Hello from mock LLM ' }));
       res.write(sseChunk({ content: '— integration ok' }, true));
@@ -125,6 +137,16 @@ export async function startMockLlmServer(): Promise<MockLlmServer> {
       completions += 1;
       // Drain the request body so the connection is reusable.
       req.resume();
+      // A scripted error responds 500 BEFORE any streaming headers — writing
+      // them first would make the 500 throw ("headers already sent") and hang
+      // the adapter on an open body.
+      const script = nextScript();
+      const failing = script?.find((part) => part.error !== undefined);
+      if (failing !== undefined) {
+        res.writeHead(500, { 'content-type': 'text/plain' });
+        res.end(failing.error ?? 'mock LLM error');
+        return;
+      }
       res.writeHead(200, {
         'content-type': 'text/event-stream',
         'cache-control': 'no-cache',
@@ -137,12 +159,12 @@ export async function startMockLlmServer(): Promise<MockLlmServer> {
         // cancels first, its abort closes the turn regardless.
         res.write(sseChunk({ content: 'starting…' }));
         releaseHold = () => {
-          writeScripted(res);
+          writeScripted(res, script);
           res.end('data: [DONE]\n\n');
         };
         return;
       }
-      writeScripted(res);
+      writeScripted(res, script);
       res.end('data: [DONE]\n\n');
       return;
     }

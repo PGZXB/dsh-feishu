@@ -42,7 +42,7 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
                                                               dsh session/event stream
 ```
 
-## Modules (iteration 1)
+## Modules
 
 | Module | Responsibility |
 |---|---|
@@ -51,20 +51,22 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 | `src/memory-transport.ts` | File-channel in-memory transport (`FEISHU_TRANSPORT=memory`): the integration-test / debugging seam — `inbox/` delivers messages, `outbox/` records every send. |
 | `src/message-dedup.ts` | Bounded in-memory message-id dedup (platform redelivery). |
 | `src/session-map.ts` | Durable chat ↔ session mapping (atomic JSON writes), reverse lookup for events. |
-| `src/cards/render.ts` | Pure rendering: session events → card JSON (v1 layout), markdown escaping, tail truncation, control-panel palette (grouped, paginated), session-list rows. |
+| `src/cards/render.ts` | Pure rendering: session events → card JSON (v1 layout), markdown escaping, tail truncation, the control-panel palette (grouped, paginated, category blocks), and the permission/model picker cards (dropdown with `initial_option`). |
 | `src/cards/session-list.ts` | The `/sessions` picker card: paginated rows with per-row Resume buttons (pure rendering). |
 | `src/cards/streaming.ts` | One card per turn: POST on open, throttled/coalesced `message.patch` updates, terminal finalize. |
-| `src/bridge.ts` | Orchestrator: message → session → `agent.followup`; `session/event` → card patches; turn end → finalize in place. Agent resolution ladder: live → resume mapped session → create → rebind fresh id on collision. Owns the surface command registry (15 commands), the card state machine (`ChatCardState` + one `syncCard` path), the working-state gate, and the session lifecycle (`/sessions /resume /clear`). |
+| `src/bridge.ts` | Orchestrator: message → session → `agent.followup`; `session/event` → card patches; turn end → finalize in place. Agent resolution ladder: live → resume mapped session → create → rebind fresh id on collision. Owns the surface command registry (17 registered, 16 in the palette — `/panel` is hidden), the card state machine (`ChatCardState` + one `syncCard` path), the working-state and working-directory gates, and the session lifecycle (`/sessions /resume /clear`). |
 | `src/index.ts` | Plugin entry: config, credential resolution, agent options (config or `agentDefaultModel`), wiring, `feishu-status` command. |
 
 ## Key behaviors
 
-- **Slash commands with button parity.** All 15 surface commands
-  (`/help /status /cancel /cd /repo /group /sessions /resume /clear /new`
-  plus the five dsh web wrappers `/plan /goal /compact /feedback
-  /permission`) share one handler between the slash line and the panel
-  palette button. `ctx.commands.execute` passthrough handles anything else;
-  `/export` is excluded (web-only browser download).
+- **Slash commands with button parity.** All surface commands
+  (`/help /status /cancel /cd /repo /group /sessions /resume /clear /new
+  /model` plus the five dsh web wrappers `/plan /goal /compact /feedback
+  /permission`, and `/panel` — slash-only, its palette button is hidden)
+  share one handler between the slash line and the panel palette button.
+  `ctx.commands.execute` passthrough handles anything else; `/export` is
+  excluded (web-only browser download). `/model` is surface-native (the
+  web `/model` is a client popup with no host command).
 - **Session lifecycle.** `/sessions` lists the persisted corpus through
   `ctx.sessionQuery.listSessions()` + batch `readTitleSnapshots()` (degraded
   bound-sessions fallback when the service is absent). `/resume <id>` and
@@ -95,9 +97,10 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
   persisted it creates fresh; if the mapped id collides with an on-disk log
   it rebinds a fresh id. History survives daemon restarts.
 - **One card per turn.** The card is posted when a message arrives and
-  patched as chunks/tools stream in. Patches are silent (no unread), so the
-  **final answer is delivered as a fresh message** (Feishu `message.patch`
-  cannot notify).
+  patched as chunks/tools stream in. The **final answer stays in the card**
+  (it finalizes green in place — no second bubble); failures add a ⚠️
+  notice so a broken turn never goes unnoticed. Patches are silent (no
+  unread), which is why the first card send is the notification.
 - **Text fallback.** If posting the streaming card fails, the turn still
   runs and the final answer arrives as text.
 - **Dedup.** A redelivered message id is ignored within the process lifetime

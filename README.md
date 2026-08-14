@@ -13,16 +13,18 @@ Feishu (Lark) as a native [DeepSeek Harness](https://github.com/deepseek-ai/deep
 A Feishu chat maps to a dsh session. The chat bot is the agent's avatar:
 message it to drive an agent that runs on the host where dsh is deployed, and
 watch the answer stream back as live Feishu cards. Slash commands operate
-either the surface itself (repo selection, resume, session listing) or pass
-through to dsh's own command registry.
+either the surface itself (working directory, sessions, models, presets) or
+pass through to dsh's own command registry.
 
-> **Status: iteration 1 — private-chat loop implemented.** Inbound messages
-> create a per-chat dsh session and stream back as one live card per turn,
-> with the final answer delivered as a fresh message. Needs real Feishu
-> credentials (`FEISHU_APP_ID` / `FEISHU_APP_SECRET`, see
-> [docs/feishu-setup.md](docs/feishu-setup.md)) for device acceptance; group
-> chat, slash commands, and interactive cards land in later iterations (see
-> [`PLAN.md`](PLAN.md)).
+> **Status: Iteration 1–2 complete.** Private and group chats, the streaming
+> card (tool rows, reasoning, markdown, native tables), the control panel
+> with the full command palette as buttons, session lifecycle
+> (`/sessions /resume /clear`), working-directory gating (DSH refuses work
+> until a repo is chosen), and the dsh web command surface in-chat
+> (`/plan /goal /compact /feedback /permission`, plus surface-native
+> `/model` and the pickers). Every feature ships unit + real-composition
+> integration tests (275 total). See [`PLAN.md`](PLAN.md) for what remains
+> (interactive approvals/questions, scheduling, multi-bot).
 
 ## Why DSH-native
 
@@ -44,9 +46,8 @@ bridging a terminal:
 - Node.js >= 22.13
 - A dsh installation (`npm install -g @deepseek-ai/dsh`) and pnpm (used by
   `dsh plugin`)
-- A Feishu custom app with a bot (credentials only needed once the transport
-  lands; see [docs/feishu-setup.md](docs/feishu-setup.md) — coming with
-  iteration 1)
+- A Feishu custom app with a bot (see
+  [docs/feishu-setup.md](docs/feishu-setup.md))
 
 ## Install into a dsh profile
 

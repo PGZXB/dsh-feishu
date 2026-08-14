@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Integration-test expansion (19 real-composition tests).** New coverage:
+  error turn → red card + ⚠️ notice and error→retry recovery; copy resends
+  the answer and retry starts a fresh turn; the group mention gate on the
+  real process (un-@ ignored, @-mention answered, via
+  `FEISHU_MOCK_BOT_OPEN_ID`); two chats running turns concurrently without
+  interference; the 5-native-table cap with fenced overflow (ErrCode 11310
+  regression); very long output truncated to the newest tail with a marker;
+  a slash-command surface batch (/help, /status, unknown fallback, typed
+  /model, real harness /goal); panel palette pagination. The mock LLM
+  server gains an `error` script chunk (HTTP 500, decided before the 200
+  headers) and consumes each script exactly once.
+- **Development-reflection docs.** `AGENTS.md` gains a "Lessons learned"
+  section (structural service seams that mirror getters-vs-methods,
+  web-only commands, state-aware buttons, the working-directory gate,
+  test-side state hygiene); `docs/pitfalls.md` gains entries for the same
+  plus the title-generation completion, message-id collisions, waitFor
+  chatId filtering, and mock header-ordering traps. README status, the
+  architecture command inventory, the development guide's integration
+  description, and PLAN.md's status line are refreshed to the current
+  surface (17 commands, card-carried final answer, working-directory gate).
+
+
 - **Working-directory gate (user requirement).** A chat with no explicitly
   pinned working directory (/repo pick or /cd) is unavailable: turns are
   refused with guidance, no session/card is created, and the message is not

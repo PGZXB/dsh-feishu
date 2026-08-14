@@ -111,3 +111,68 @@ The harness sandbox (and this checkout's environment) has specific rules:
   action), `card-handler.ts` (callback normalization), `project-scanner.ts`
   (recursive scan semantics). Future slash-command UI/UX should be checked
   against botmux first — it has already solved most Feishu card UX problems.
+
+## Web-only harness commands
+
+- Some dsh commands exist only on the web client, not in the host command
+  registry. `/export` (`dsh-session-log-export`) is a browser-download
+  observer ("Register the Web-only `/export` command that the browser
+  download plugin observes") — nothing downloads on a non-web surface.
+  `/model` (`ui-model-selection`) registers on `commandUi` as a
+  `popupSelect` client contribution with no host command. Check the harness
+  source for "Web-only" before promising a command; implement a
+  surface-native equivalent (`/model` reads `ctx.llm.listProviders` ×
+  `listModels` and `ctx.agentDefaultModel`).
+
+## Service seams: getters vs methods
+
+- A structural `ctx.get(name)` seam must mirror the REAL service shape.
+  `ctx.permissionPresets.names` is a **property getter** (write `names`,
+  not `names()`); `current(events)` folds the session's events and
+  `set(session, name)` writes the session's knobs — passing the Agent
+  instead of `agent.session.events` fails at runtime with
+  "events is not iterable". `ctx.planMode.get(agent)` / `set(agent,
+  active)` take the Agent. Read the installed `.d.ts` before writing the
+  seam; wrong shapes typecheck cleanly.
+
+## Buttons must be state-aware, not pass-throughs
+
+- A panel button whose handler runs the bare command is broken for commands
+  with a choice/toggle dimension: `/permission` with no args only REPORTS
+  the current preset, `/plan` with no args only ENTERS plan mode, `/model`
+  with no args only displays. Fix: `/permission` and `/model` open picker
+  cards (a `select_static` dropdown inside an `action` container, with
+  `initial_option` preselecting the current value — supported by the SDK;
+  omit it when the effective state is `custom`/unknown); bare `/plan`
+  toggles through `ctx.planMode` (read `get`, write `set(!active)`).
+- A palette button that opens the panel itself is the panel launching
+  itself — hide it (`SurfaceCommand.hiddenFromPanel`).
+
+## Working-directory gate
+
+- The surface refuses turns in a chat with no pinned working directory
+  (/repo or /cd); `defaultCwd` is a fallback, never an implicit choice.
+  New chat-state flows must respect it: `/resume` adopts the resumed
+  session's cwd (the /sessions Resume button carries it in its value; a
+  typed `/resume` looks it up from the session list), or the resumed chat
+  is stuck behind the gate.
+
+## Integration-test traps
+
+- The integration suite shares the real profile (`_dev/dsh-home`). A test
+  that writes state through the surface (`/model` → `saveSelection` writes
+  `settings.yaml`) must restore the original value, or later runs and the
+  real bot inherit the change.
+- Every new session fires a **title-generation completion** ("Create a
+  concise title for an AI coding…"). Never assert an exact LLM completion
+  count; assert card contents.
+- Message ids built from `Date.now()` collide when two messages are written
+  in the same millisecond (and the surface's dedup silently drops the
+  second). Append a random suffix. waitFor predicates that match ANY chat's
+  reply pass early on a prior chat's text — filter by `r.chatId`.
+- A mock that answers a scripted error must decide the status BEFORE
+  writing the 200 headers — `writeHead(500)` after `writeHead(200)` throws
+  "headers already sent" and hangs the adapter on an open body.
+- Each mock completion request must consume the script exactly once —
+  consuming in both the error check and the stream writer doubles
+  consumption and silently shifts every subsequent scripted response.

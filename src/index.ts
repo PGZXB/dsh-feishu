@@ -185,7 +185,15 @@ function defaultTransportFactory(
 ): (credentials: Credentials, logger: BridgeLogger) => FeishuTransport {
   if (process.env.FEISHU_TRANSPORT === 'memory') {
     const dir = process.env.FEISHU_MEMORY_DIR ?? join(dataDir, 'memory');
-    return (_credentials, _logger) => createMemoryTransport({ dir });
+    return (_credentials, _logger) =>
+      createMemoryTransport({
+        dir,
+        // Mention-gate integration tests inject the bot's open id; absent,
+        // group messages without an @-mention are ignored (the gate).
+        ...(process.env.FEISHU_MOCK_BOT_OPEN_ID !== undefined
+          ? { botOpenId: process.env.FEISHU_MOCK_BOT_OPEN_ID }
+          : {}),
+      });
   }
   return createLarkTransport;
 }

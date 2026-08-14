@@ -65,9 +65,13 @@ services:
 - **LLM API** — `DEEPSEEK_BASE_URL` points the real DeepSeek adapter at a
   local mock server (`tests/integration/mock-llm-server.ts`).
 
-The test asserts the full private-chat loop: message → session → agent turn →
-card posted and patched → final answer delivered as a fresh message. It
-self-skips unless the prerequisites are met:
+The suite asserts the full surface: message → session → agent turn → card
+posted and patched → **final answer carried by the card** (it finalizes
+green in place), plus the card actions, the session lifecycle, the web
+command wrappers, and the working-directory gate. A scripted mock LLM
+(`setScripts`, `holdNextResponse`, and an `error` chunk that answers HTTP
+500) drives tool calls, reasoning, error turns, and retries. It self-skips
+unless the prerequisites are met:
 
 - The dsh CLI is resolvable (`$DSH_BIN`, or `dsh` on `PATH`).
 - A prepared profile exists at `$FEISHU_INT_DSH_HOME/profiles/feishu-dev`
@@ -82,6 +86,11 @@ pnpm run build        # ensure lib/ is current (the profile links the checkout)
 pnpm run test         # unit + integration (integration self-skips as needed)
 DSH_BIN=/path/to/dsh pnpm run test -- tests/integration/real-composition.spec.ts
 ```
+
+Turn-running tests pin a working directory first (`/cd`, required by the
+working-directory gate) and the group tests inject the bot's open id via
+`FEISHU_MOCK_BOT_OPEN_ID`. New sessions fire an extra title-generation LLM
+completion — assert card contents, never exact completion counts.
 
 The `FEISHU_TRANSPORT=memory` seam is also handy for manual debugging:
 inject a fake message by writing a JSON file into

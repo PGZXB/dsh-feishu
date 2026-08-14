@@ -4,7 +4,7 @@
 >
 > 开发方式：**迭代式**——先完成核心功能并测试，再逐步叠加新功能。
 >
-> 状态：**Iteration 1 ✅**（私聊闭环 + 重启安全（resume 阶梯）+ 真实组合集成测试）；**Iteration 2 ✅**（群聊 @ 触发 + 命令体系 + 卡片按钮 + 完整按钮面板 + 会话生命周期 `/sessions /resume /clear` + DSH web 命令包装 `/plan /goal /compact /feedback /permission`；`/export` 因 Web-only 浏览器下载通道有意排除）；**Iteration 3（P1：交互审批/提问卡）待开始**。
+> 状态：**Iteration 1–2 ✅**（私聊/群聊闭环、重启安全、命令体系（17 个表面命令 + 完整按钮面板 + DSH web 命令包装 `/plan /goal /compact /feedback /permission`、surface-native `/model`）、会话生命周期 `/sessions /resume /clear`、UX 打磨（下拉选择卡、note 状态、按钮分行）、**工作目录门禁**（未显式选 repo 前拒绝工作）；`/export` 因 Web-only 浏览器下载通道有意排除）；275 测试全绿（含 19 个真实组合集成测试）。**Iteration 3（P1：交互审批/提问卡）待开始**。
 >
 > 已确认决策（2026-08）：npm 包名 `@dsh-feishu/dsh-feishu`；未知 slash 命令默认报错提示（附 `/help` 指引，配置项留后门）；飞书测试机器人由用户自行申请、稍后提供凭据。
 >

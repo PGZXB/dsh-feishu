@@ -97,20 +97,49 @@ function writeAction(action: unknown): void {
  *  an explicit directory is chosen). */
 async function pinWorkingDir(chatId: string): Promise<void> {
   sendMessage(chatId, `/cd ${INT_CWD}`);
+  // Wait for THIS chat's /cd confirmation — outbox records carry the
+  // chatId; matching any chat's text would pass immediately on a prior
+  // chat's pin and let a later message race ahead of its own /cd.
   await waitFor(
     'the /cd confirmation',
     () =>
-      readOutbox().some((r) => r.kind === 'text' && r.text?.includes('Working directory set to')),
+      readOutbox().some(
+        (r) =>
+          r.kind === 'text' &&
+          r.chatId === chatId &&
+          r.text?.includes('Working directory set to'),
+      ),
     30_000,
   );
 }
 
 /** Drop one inbound message into the message channel. */
-function sendMessage(chatId: string, text: string): void {
+/** Drop a GROUP message with the given mention open ids (mention-gate
+ *  tests). An un-@ group message is ignored under the default `always`
+ *  mode. */
+function sendGroupMessage(chatId: string, text: string, mentions: readonly string[]): void {
+  const messageId = `om-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   writeFileSync(
-    join(INBOX_DIR, `om-${Date.now()}-${Math.random().toString(36).slice(2)}.json`),
+    join(INBOX_DIR, `${messageId}.json`),
     JSON.stringify({
-      messageId: `om-${Date.now()}`,
+      messageId,
+      chatId,
+      chatType: 'group',
+      senderOpenId: 'ou_mock',
+      text,
+      mentions,
+      createdAt: Date.now(),
+    }),
+    'utf8',
+  );
+}
+
+function sendMessage(chatId: string, text: string): void {
+  const messageId = `om-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  writeFileSync(
+    join(INBOX_DIR, `${messageId}.json`),
+    JSON.stringify({
+      messageId,
       chatId,
       chatType: 'p2p',
       senderOpenId: 'ou_mock',
@@ -1250,4 +1279,587 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
       );
     }
   }, 180_000);
+
+  /** Error turn → red card + ⚠️ notice (the failure must never go
+   *  unnoticed), then retry recovers to a done card. */
+  it('error turn notifies and retry recovers', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      // Three failing scripts cover the initial request plus the default
+      // retry budget; the scripts are RESET to a success before the retry
+      // action below, so the recovery is deterministic either way.
+      server.setScripts([
+        [{ error: 'mock boom' }],
+        [{ error: 'mock boom' }],
+        [{ error: 'mock boom' }],
+      ]);
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_error_${Date.now()}`;
+      await pinWorkingDir(chatId);
+      sendMessage(chatId, 'cause an error');
+      // The card finalizes red and a ⚠️ notice arrives.
+      await waitFor(
+        'the red final card patch',
+        () => readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'red'),
+        90_000,
+      );
+      await waitFor(
+        'the failure notice text',
+        () => readOutbox().some((r) => r.kind === 'text' && r.text?.includes('Turn failed')),
+        30_000,
+      );
+      // Retry the same prompt → green + recovered answer.
+      server.setScripts([[{ content: 'Recovered answer.' }]]);
+      const streamingId = readOutbox()
+        .filter((r) => r.kind === 'card')
+        .at(-1)?.messageId;
+      writeAction({
+        messageId: streamingId ?? 'mem-1',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'retry' },
+      });
+      await waitFor(
+        'the recovered green card',
+        () =>
+          readOutbox().some(
+            (r) =>
+              r.kind === 'patch' &&
+              r.card?.header?.template === 'green' &&
+              JSON.stringify(r.card.elements).includes('Recovered answer.'),
+          ),
+        90_000,
+      );
+      expect(server.completionRequests()).toBeGreaterThanOrEqual(2);
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 180_000);
+
+  /** Copy resends the last output as text; retry runs a fresh turn. */
+  it('copy resends the answer and retry starts a fresh turn', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      server.setScripts([[{ content: 'Copy me.' }], [{ content: 'Retried answer.' }]]);
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_copy_${Date.now()}`;
+      await pinWorkingDir(chatId);
+      sendMessage(chatId, 'give me a copy');
+      await waitFor(
+        'the green final card patch',
+        () => readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'green'),
+        90_000,
+      );
+      const streamingId = readOutbox()
+        .filter((r) => r.kind === 'card')
+        .at(-1)?.messageId;
+      // Copy → the last output arrives as a text message.
+      writeAction({
+        messageId: streamingId ?? 'mem-1',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'copy' },
+      });
+      await waitFor(
+        'the copied text',
+        () => readOutbox().some((r) => r.kind === 'text' && r.text === 'Copy me.'),
+        30_000,
+      );
+      // Retry → a fresh working card streams the second answer.
+      const cardsBeforeRetry = readOutbox().filter((r) => r.kind === 'card').length;
+      writeAction({
+        messageId: streamingId ?? 'mem-1',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'retry' },
+      });
+      await waitFor(
+        'the retried card',
+        () => readOutbox().filter((r) => r.kind === 'card').length > cardsBeforeRetry,
+        90_000,
+      );
+      await waitFor(
+        'the retried green card with the new answer',
+        () =>
+          readOutbox().some(
+            (r) =>
+              r.kind === 'patch' &&
+              r.card?.header?.template === 'green' &&
+              JSON.stringify(r.card.elements).includes('Retried answer.'),
+          ),
+        90_000,
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 180_000);
+
+  /** The group mention gate on the real process: an un-@ message is
+   *  ignored, an @-mention runs the turn. */
+  it('group mention gate: un-@ ignored, @-mention answered', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      server.setScripts([[{ content: 'Group answer.' }]]);
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          FEISHU_MOCK_BOT_OPEN_ID: 'ou_bot',
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_group_${Date.now()}`;
+      // Pin the working directory through an @-mentioned /cd first.
+      sendGroupMessage(chatId, `/cd ${INT_CWD}`, ['ou_bot']);
+      await waitFor(
+        'the /cd confirmation in the group',
+        () =>
+          readOutbox().some(
+            (r) => r.kind === 'text' && r.text?.includes('Working directory set to'),
+          ),
+        30_000,
+      );
+      // An un-@ message is ignored entirely: no card, no LLM request.
+      const completionsBefore = server.completionRequests();
+      sendGroupMessage(chatId, 'hey bot', []);
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      // The un-@ message must not start a turn: no LLM request, no card.
+      expect(server.completionRequests()).toBe(completionsBefore);
+      expect(readOutbox().filter((r) => r.kind === 'card')).toHaveLength(0);
+      // An @-mentioned message runs the turn (at least one completion).
+      sendGroupMessage(chatId, 'hey @bot do work', ['ou_bot']);
+      await waitFor(
+        'the green final card patch for the group',
+        () => readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'green'),
+        90_000,
+      );
+      expect(server.completionRequests()).toBeGreaterThanOrEqual(completionsBefore + 1);
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 180_000);
+
+  /** Two chats run turns concurrently; both complete independently. */
+  it('two chats run turns concurrently without interference', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      server.setScripts([[{ content: 'Answer A.' }], [{ content: 'Answer B.' }]]);
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatA = `oc_multi_a_${Date.now()}`;
+      const chatB = `oc_multi_b_${Date.now()}`;
+      await pinWorkingDir(chatA);
+      await pinWorkingDir(chatB);
+      sendMessage(chatA, 'work A');
+      sendMessage(chatB, 'work B');
+      try {
+        await waitFor(
+          'both green cards',
+          () =>
+            readOutbox().filter(
+              (r) => r.kind === 'patch' && r.card?.header?.template === 'green',
+            ).length >= 2,
+          45_000,
+        );
+      } catch (waitError) {
+        const rec = readOutbox();
+        let inboxFiles: string[] = [];
+        try {
+          inboxFiles = readdirSync(INBOX_DIR);
+        } catch {
+          inboxFiles = [];
+        }
+        throw new Error(
+          `${String(waitError)}\nDBG cards=${rec.filter((r) => r.kind === 'card').length} patches=${rec.filter((r) => r.kind === 'patch').length} texts=${JSON.stringify(rec.filter((r) => r.kind === 'text').map((r) => r.text))} completions=${server.completionRequests()} inbox=${JSON.stringify(inboxFiles)}`,
+        );
+      }
+      // Each chat's answer appears on a card (cross-chat isolation). Each
+      // new session also fires a title-generation completion, so only the
+      // card contents are asserted precisely.
+      const patches = readOutbox().filter((r) => r.kind === 'patch');
+      const joined = JSON.stringify(patches.map((r) => r.card?.elements));
+      expect(joined).toContain('Answer A.');
+      expect(joined).toContain('Answer B.');
+      expect(server.completionRequests()).toBeGreaterThanOrEqual(2);
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 180_000);
+
+  /** Regression for ErrCode 11310: an answer with more than 5 GFM tables
+   *  must render at most 5 native table elements, overflow becomes fenced
+   *  code, and the turn still completes green (no card-cap crash). */
+  it('caps native tables at 5 and fences the overflow', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      const tables = Array.from(
+        { length: 7 },
+        (_, i) => `| h1 | h2 |\n|---|---|\n| a${i} | b${i} |`,
+      );
+      server.setScripts([[{ content: tables.join('\n\n') }]]);
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_tables_${Date.now()}`;
+      await pinWorkingDir(chatId);
+      sendMessage(chatId, 'give me many tables');
+      await waitFor(
+        'the green final card patch',
+        () => readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'green'),
+        90_000,
+      );
+      const finalCard = readOutbox()
+        .filter((r) => r.kind === 'patch')
+        .at(-1)?.card;
+      const tableCount = (finalCard?.elements ?? []).filter((el) => el.tag === 'table').length;
+      expect(tableCount).toBeLessThanOrEqual(5);
+      // The overflow renders as fenced code (no raw pipe text leaks).
+      const markdowns = (finalCard?.elements ?? []).filter(
+        (el): el is Extract<typeof el, { tag: 'markdown' }> => el.tag === 'markdown',
+      );
+      expect(markdowns.some((el) => el.content.includes('```'))).toBe(true);
+      // Raw pipe text may only live INSIDE a code fence (the overflow is
+      // fenced) — it must never leak as bare markdown.
+      const unfencedLeak = markdowns.some(
+        (el) => !el.content.includes('```') && el.content.includes('| a'),
+      );
+      expect(unfencedLeak).toBe(false);
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 180_000);
+
+  /** Very long output: the card keeps the newest tail with a truncation
+   *  marker (content integrity — never silently dropped). */
+  it('truncates very long output to the newest tail with a marker', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      const long = 'x'.repeat(70_000);
+      server.setScripts([[{ content: long }]]);
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_long_${Date.now()}`;
+      await pinWorkingDir(chatId);
+      sendMessage(chatId, 'long output please');
+      await waitFor(
+        'the green final card patch',
+        () => readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'green'),
+        90_000,
+      );
+      const finalCard = readOutbox()
+        .filter((r) => r.kind === 'patch')
+        .at(-1)?.card;
+      const markdowns = (finalCard?.elements ?? []).filter(
+        (el): el is Extract<typeof el, { tag: 'markdown' }> => el.tag === 'markdown',
+      );
+      const joined = markdowns.map((el) => el.content).join('\n');
+      expect(joined).toContain('truncated');
+      // The newest tail survives (the marker prepends; the tail stays last).
+      expect(joined.endsWith('xxx')).toBe(true);
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 180_000);
+
+  /** Slash-command surface batch: help, status, unknown-command fallback,
+   *  typed /model, and the real harness /goal. */
+  it('command surface: /help, /status, unknown fallback, typed /model, /goal', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_cmds_${Date.now()}`;
+      const expectText = (needle: string, label: string): Promise<void> =>
+        waitFor(
+          label,
+          () => readOutbox().some((r) => r.kind === 'text' && r.text?.includes(needle)),
+          60_000,
+        );
+
+      sendMessage(chatId, '/help');
+      await expectText('dsh-feishu commands', 'the /help text');
+      sendMessage(chatId, '/status');
+      await expectText(`chat: ${chatId}`, 'the /status text');
+      sendMessage(chatId, '/nope');
+      await expectText('Unknown command /nope', 'the unknown-command text');
+      // Typed /model sets the default directly (no picker needed).
+      sendMessage(chatId, '/model deepseek-official/deepseek-v4-flash');
+      await expectText(
+        'Default model set to deepseek-official · deepseek-v4-flash',
+        'the /model text',
+      );
+      // The real harness /goal: create then view.
+      sendMessage(chatId, '/goal fix the build');
+      await expectText('Goal created', 'the /goal create text');
+      sendMessage(chatId, '/goal');
+      await expectText('fix the build', 'the /goal view text');
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 180_000);
+
+  /** Panel page navigation: the palette paginates and the nav action flips
+   *  to page 2 (system group). */
+  it('panel palette paginates via the nav buttons', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_paginate_${Date.now()}`;
+      writeAction({
+        messageId: 'mem-1',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'panel' },
+      });
+      await waitFor(
+        'the panel card',
+        () =>
+          readOutbox()
+            .filter((r) => r.kind === 'card')
+            .some((r) => r.card?.header?.title.content === '⚙️ dsh-feishu panel'),
+        30_000,
+      );
+      const page1 = readOutbox()
+        .filter((r) => r.kind === 'card')
+        .at(-1)?.card;
+      expect(
+        page1?.elements.some(
+          (el) =>
+            el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 1/2'),
+        ),
+      ).toBe(true);
+      writeAction({
+        messageId: 'mem-2',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'panel-page', page: '1' },
+      });
+      await waitFor(
+        'the page-2 panel card',
+        () =>
+          readOutbox()
+            .filter((r) => r.kind === 'card')
+            .some(
+              (r) =>
+                r.card?.elements.some(
+                  (el) =>
+                    el.tag === 'note' &&
+                    'elements' in el &&
+                    el.elements[0]?.content.includes('page 2/2'),
+                ) === true,
+            ),
+        30_000,
+      );
+      const page2 = readOutbox()
+        .filter((r) => r.kind === 'card')
+        .at(-1)?.card;
+      const labels =
+        page2?.elements.flatMap((el) =>
+          el.tag === 'action'
+            ? el.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
+            : [],
+        ) ?? [];
+      expect(labels).toContain('🗺️ Plan mode');
+      expect(labels).toContain('🔐 Permission');
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 120_000);
 });
