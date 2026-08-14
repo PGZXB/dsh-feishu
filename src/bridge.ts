@@ -55,6 +55,23 @@ import { type ProjectInfo, scanMultipleProjects } from './projects.js';
 import { buildSessionExport, type SessionExportEvent } from './session-export.js';
 import type { SessionMap } from './session-map.js';
 
+/**
+ * Compaction lifecycle events (`compaction/start|summary|end`). The harness
+ * compaction seam merges these into the session event union at runtime, but
+ * the installed `dsh-session` types do not carry the plugin keys, so they
+ * are matched structurally.
+ */
+type CompactionLifecycleEvent = {
+  readonly type: 'compaction/start' | 'compaction/summary' | 'compaction/end';
+  readonly data: { readonly summary?: unknown; readonly error?: unknown };
+};
+
+/** Narrow a session event to the compaction lifecycle (plugin-merged keys). */
+function isCompactionLifecycleEvent(event: SessionEvent): boolean {
+  const type = (event as { type?: unknown }).type;
+  return type === 'compaction/start' || type === 'compaction/summary' || type === 'compaction/end';
+}
+
 /** Minimal logger surface the bridge needs. */
 export interface BridgeLogger {
   info(message: string): void;
@@ -1349,6 +1366,18 @@ export class Bridge {
   async handleEvent(sessionId: string, event: SessionEvent): Promise<void> {
     const chatId = this.options.sessionMap.chatFor(sessionId);
     if (chatId === undefined) return;
+    // Compaction lifecycle (a /compact transaction, not a turn) is handled
+    // BEFORE the working-state gate because it owns its card lifecycle: the
+    // card opens at compaction/start (immediate feedback for the button tap)
+    // and finalizes at compaction/end. Without this, the checkpoint
+    // `user/message` (plugin source 'compact') opened a card that nothing
+    // ever closed — the chat stayed "working" forever and every later
+    // command was refused with "a turn is running — stop it first."
+    // (user report).
+    if (isCompactionLifecycleEvent(event)) {
+      await this.handleCompactionEvent(chatId, event as unknown as CompactionLifecycleEvent);
+      return;
+    }
     let state = this.cardStates.get(chatId);
     if (state === undefined || state.status !== 'working') {
       // Agent-initiated turn (e.g. a fired schedule reminder): the agent
@@ -1363,7 +1392,12 @@ export class Bridge {
         typeof event.data.source.plugin === 'string'
       ) {
         const plugin = event.data.source.plugin;
-        const title = plugin === 'schedule' ? '⏰ Reminder' : `⏰ ${plugin} notification`;
+        const title =
+          plugin === 'schedule'
+            ? '⏰ Reminder'
+            : plugin === 'compact'
+              ? '🧹 Compacting…'
+              : `⏰ ${plugin} notification`;
         this.cardStates.set(chatId, {
           title,
           content: '',
@@ -1506,6 +1540,88 @@ export class Bridge {
             chatId,
             `${this.textMentionFor(chatId)}⚠️ Turn failed — see the card for details`,
           );
+        }
+        break;
+      }
+    }
+  }
+
+  /**
+   * Render one compaction-lifecycle event into the chat's card. `/compact`
+   * runs a durable transaction (compaction/start → compaction/summary →
+   * compaction/end) that is NOT a turn — no turn/end follows it, so the
+   * surface must open its own card at start and finalize it at end;
+   * otherwise the chat is left permanently "working" (user report).
+   * @param chatId - the owning chat.
+   * @param event - the compaction lifecycle event.
+   */
+  private async handleCompactionEvent(
+    chatId: string,
+    event: CompactionLifecycleEvent,
+  ): Promise<void> {
+    switch (event.type) {
+      case 'compaction/start': {
+        let state = this.cardStates.get(chatId);
+        if (state === undefined || state.status !== 'working') {
+          state = {
+            title: '🧹 Compacting…',
+            content: '',
+            rows: [],
+            openThinkId: undefined,
+            status: 'working',
+            collapsed: true,
+            stopRequested: false,
+          };
+          this.cardStates.set(chatId, state);
+          try {
+            await this.options.cards.open(chatId, '🧹 Compacting…');
+          } catch (error: unknown) {
+            this.options.logger.warn(`compaction card unavailable: ${String(error)}`);
+          }
+        }
+        break;
+      }
+      case 'compaction/summary': {
+        const state = this.cardStates.get(chatId);
+        if (state !== undefined && state.status === 'working') {
+          state.content = typeof event.data.summary === 'string' ? event.data.summary : '';
+          this.syncCard(chatId);
+        }
+        break;
+      }
+      case 'compaction/end': {
+        const state = this.cardStates.get(chatId);
+        if (state !== undefined && state.status === 'working') {
+          // The seam appends compaction/end on success AND failure (a failed
+          // close carries `error`) — either way the surface must finalize:
+          // a compaction transaction is not a turn, so no turn/end follows.
+          const failed = event.data.error !== null && typeof event.data.error === 'object';
+          const status: CardStatus = failed ? 'error' : 'done';
+          if (failed) {
+            const message =
+              (event.data.error as { message?: unknown } | null | undefined)?.message ?? undefined;
+            if (state.content.trim() === '') {
+              state.content =
+                message !== undefined && typeof message === 'string'
+                  ? `⚠️ ${message}`
+                  : '⚠️ Compaction failed.';
+            }
+          }
+          state.status = status;
+          state.stopRequested = false;
+          this.options.cards.patch(chatId, this.snapshot(chatId, state));
+          await this.options.cards.finalize(chatId, status);
+          await this.ackTurnEnd(chatId, status);
+          const finalText = state.content.trim();
+          if (finalText !== '') this.lastOutputs.set(chatId, finalText);
+          if (status === 'error') {
+            // A failed compaction must not go unnoticed (same rule as a
+            // failed turn).
+            await this.options.transport.sendText(
+              chatId,
+              `${this.textMentionFor(chatId)}⚠️ Compaction failed — see the card for details`,
+            );
+          }
         }
         break;
       }

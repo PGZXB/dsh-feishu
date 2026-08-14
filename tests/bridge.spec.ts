@@ -2003,6 +2003,7 @@ describe('panel command palette', () => {
     });
     expect(h.transport.sentTexts).toHaveLength(0);
   });
+
 });
 
 describe('dsh web command wrappers', () => {
@@ -3123,5 +3124,133 @@ describe('/schedule reminder listing', () => {
     const h = makeHarness();
     await h.bridge.handleMessage(message({ text: '/schedule' }));
     expect(h.transport.sentTexts.some((t) => t.text.includes('no session yet'))).toBe(true);
+  });
+});
+
+describe('compaction lifecycle (user report regression)', () => {
+  beforeEach(() => {
+    rmSync(SCRATCH, { recursive: true, force: true });
+    mkdirSync(SCRATCH, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(SCRATCH, { recursive: true, force: true });
+  });
+
+  function compactionStartEvent(): SessionEvent {
+    return {
+      type: 'compaction/start',
+      seq: 1,
+      time: 0,
+      data: { compactionId: 'comp-1' },
+    } as unknown as SessionEvent;
+  }
+
+  function compactionSummaryEvent(summary: string): SessionEvent {
+    return {
+      type: 'compaction/summary',
+      seq: 2,
+      time: 0,
+      data: { compactionId: 'comp-1', summary },
+    } as unknown as SessionEvent;
+  }
+
+  function compactionEndEvent(): SessionEvent {
+    return {
+      type: 'compaction/end',
+      seq: 3,
+      time: 0,
+      data: { compactionId: 'comp-1' },
+    } as unknown as SessionEvent;
+  }
+
+  function compactCheckpointMessage(): SessionEvent {
+    return {
+      type: 'user/message',
+      seq: 1,
+      time: 0,
+      data: {
+        id: 'checkpoint-1',
+        role: 'user',
+        content: [{ type: 'text', text: 'compact checkpoint' }],
+        source: { kind: 'plugin', plugin: 'compact' },
+      },
+    } as unknown as SessionEvent;
+  }
+
+  it('compaction/start opens a Compacting card immediately (button feedback)', async () => {
+    const h = makeHarness({ throttleMs: 0 });
+    h.sessionMap.set('oc_chat', 'feishu-session-1');
+    await h.bridge.handleEvent('feishu-session-1', compactionStartEvent());
+    const opened = h.transport.sentCards.at(-1);
+    expect(opened?.header?.title.content).toBe('🧹 Compacting…');
+  });
+
+  it('compaction/summary renders the summary into the compaction card', async () => {
+    const h = makeHarness({ throttleMs: 0 });
+    h.sessionMap.set('oc_chat', 'feishu-session-1');
+    await h.bridge.handleEvent('feishu-session-1', compactionStartEvent());
+    await h.bridge.handleEvent('feishu-session-1', compactionSummaryEvent('summarized history'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const updated = h.transport.updatedCards.at(-1);
+    expect(JSON.stringify(updated?.elements)).toContain('summarized history');
+  });
+
+  it('compaction/end finalizes the card and unlocks the chat (regression)', async () => {
+    const h = makeHarness({ throttleMs: 0 });
+    h.sessionMap.set('oc_chat', 'feishu-session-1');
+    await h.bridge.handleEvent('feishu-session-1', compactionStartEvent());
+    await h.bridge.handleEvent('feishu-session-1', compactionSummaryEvent('summarized history'));
+    await h.bridge.handleEvent('feishu-session-1', compactionEndEvent());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const finalized = h.transport.updatedCards.at(-1);
+    expect(finalized?.header?.template).toBe('green');
+    // The regression: the chat is NOT left permanently "working" — a
+    // mutating command is servable again instead of being refused with
+    // "a turn is running — stop it first." (user report).
+    await h.bridge.handleMessage(message({ messageId: 'om_clear', text: '/clear' }));
+    expect(h.transport.sentTexts.some((t) => t.text.includes('a turn is running'))).toBe(false);
+    expect(h.transport.sentTexts.some((t) => t.text.includes('New conversation started'))).toBe(
+      true,
+    );
+  });
+
+  it('a compaction checkpoint message without a start event opens a Compacting card (fallback)', async () => {
+    const h = makeHarness({ throttleMs: 0 });
+    h.sessionMap.set('oc_chat', 'feishu-session-1');
+    await h.bridge.handleEvent('feishu-session-1', compactCheckpointMessage());
+    expect(h.transport.sentCards.at(-1)?.header?.title.content).toBe('🧹 Compacting…');
+  });
+
+  it('compaction/end without an open compaction card is a no-op', async () => {
+    const h = makeHarness({ throttleMs: 0 });
+    h.sessionMap.set('oc_chat', 'feishu-session-1');
+    await h.bridge.handleEvent('feishu-session-1', compactionEndEvent());
+    expect(h.transport.sentCards).toHaveLength(0);
+  });
+
+  it('a failed compaction (end with error) finalizes as error and still unlocks the chat', async () => {
+    const h = makeHarness({ throttleMs: 0 });
+    h.sessionMap.set('oc_chat', 'feishu-session-1');
+    await h.bridge.handleEvent('feishu-session-1', compactionStartEvent());
+    await h.bridge.handleEvent('feishu-session-1', {
+      type: 'compaction/end',
+      seq: 3,
+      time: 0,
+      data: {
+        compactionId: 'comp-1',
+        error: { name: 'E', code: 'summary', message: 'no summary' },
+      },
+    } as unknown as SessionEvent);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const finalized = h.transport.updatedCards.at(-1);
+    expect(finalized?.header?.template).toBe('red');
+    expect(h.transport.sentTexts.some((t) => t.text.includes('Compaction failed'))).toBe(true);
+    // The chat is unlocked even when compaction failed (regression).
+    await h.bridge.handleMessage(message({ messageId: 'om_clear', text: '/clear' }));
+    expect(h.transport.sentTexts.some((t) => t.text.includes('a turn is running'))).toBe(false);
+    expect(h.transport.sentTexts.some((t) => t.text.includes('New conversation started'))).toBe(
+      true,
+    );
   });
 });
