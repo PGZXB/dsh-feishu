@@ -22,6 +22,8 @@ export interface StreamingCardOptions {
   readonly throttleMs?: number;
   /** Injectable clock for tests. */
   readonly now?: () => number;
+  /** Logger for patch failures (defaults to a silent no-op). */
+  readonly logger?: { warn(message: string): void };
 }
 
 /** One chat's active card state (bridge owns the turn content). */
@@ -44,6 +46,7 @@ export class StreamingCardManager {
    *  collapse toggle on a finished card). */
   private readonly lastMessageIds = new Map<string, string>();
   private readonly throttleMs: number;
+  private readonly logger: { warn(message: string): void };
 
   /**
    * @param transport - the Feishu transport used to send and patch cards.
@@ -54,6 +57,7 @@ export class StreamingCardManager {
     options: StreamingCardOptions = {},
   ) {
     this.throttleMs = options.throttleMs ?? 150;
+    this.logger = options.logger ?? { warn: () => {} };
   }
 
   /**
@@ -142,7 +146,10 @@ export class StreamingCardManager {
     return this.active.has(chatId);
   }
 
-  /** Flush pending patches until quiescent, coalescing in-flight updates. */
+  /** Flush pending patches until quiescent, coalescing in-flight updates.
+   *  A failed patch (e.g. a Feishu 400 like the table-over-limit error that
+   *  surfaces as '目标回调服务未在线') must not kill the stream: log it and
+   *  continue with the newest pending snapshot. */
   private async flush(card: ActiveCard): Promise<void> {
     if (card.flushing) return;
     card.flushing = true;
@@ -150,7 +157,11 @@ export class StreamingCardManager {
       while (card.pending !== null) {
         const snapshot = card.pending;
         card.pending = null;
-        await this.transport.updateCard(card.messageId, buildCard(snapshot) as CardJson);
+        try {
+          await this.transport.updateCard(card.messageId, buildCard(snapshot) as CardJson);
+        } catch (error: unknown) {
+          this.logger.warn(`streaming card patch failed (continuing): ${String(error)}`);
+        }
       }
     } finally {
       card.flushing = false;

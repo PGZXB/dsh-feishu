@@ -186,7 +186,10 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
   sessionMap.load();
   const transportFactory = deps.createTransport ?? defaultTransportFactory(dataDir);
   const transport = transportFactory(credentials, logger);
-  const cards = new StreamingCardManager(transport, { throttleMs: config.cardThrottleMs ?? 150 });
+  const cards = new StreamingCardManager(transport, {
+    throttleMs: config.cardThrottleMs ?? 150,
+    logger,
+  });
   // Agents need an explicit provider/model; config overrides win, otherwise
   // the deployment default selection applies (the headless-runner pattern).
   const resolvedAgentOptions = resolveAgentOptions(ctx, config);

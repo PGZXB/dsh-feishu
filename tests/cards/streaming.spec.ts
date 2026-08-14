@@ -46,7 +46,14 @@ class RecordingTransport implements FeishuTransport {
     this.sentMessageIds.push(messageId);
     return { messageId };
   }
+  /** Remaining times updateCard rejects (simulating a Feishu 400). */
+  updateFailures = 0;
+
   async updateCard(_messageId: string, card: CardJson): Promise<void> {
+    if (this.updateFailures > 0) {
+      this.updateFailures -= 1;
+      throw new Error('card table number over limit');
+    }
     this.updated.push(card);
   }
 }
@@ -106,6 +113,29 @@ describe('StreamingCardManager', () => {
       'one',
       'two',
     ]);
+  });
+
+  it('a failed patch is logged and the stream continues with the newest snapshot', async () => {
+    // Regression: a Feishu 400 (e.g. 'card table number over limit', which
+    // surfaces as '目标回调服务未在线') must not kill the streaming card.
+    const transport = new RecordingTransport();
+    transport.updateFailures = 1; // the first patch fails
+    const warnings: string[] = [];
+    const manager = new StreamingCardManager(transport, {
+      throttleMs: 100,
+      logger: { warn: (message) => warnings.push(message) },
+    });
+    await manager.open('oc_chat', 'hello');
+    manager.patch('oc_chat', snapshot({ content: 'first (fails)' }));
+    await vi.advanceTimersByTimeAsync(100);
+    // The failure is logged, the manager stays live, and the next patch lands.
+    expect(warnings.some((w) => w.includes('patch failed'))).toBe(true);
+    manager.patch('oc_chat', snapshot({ content: 'second (lands)' }));
+    await vi.advanceTimersByTimeAsync(100);
+    expect(transport.updated.map((c) => (c.elements[0] as { content?: string }).content)).toEqual([
+      'second (lands)',
+    ]);
+    expect(manager.isActive('oc_chat')).toBe(true);
   });
 
   it('finalize flushes the terminal snapshot and retires the card', async () => {

@@ -8,7 +8,9 @@
  * markdown-it and re-emits the content as card elements: headings become
  * bold lines, fences stay fenced, `hr` becomes an `hr` element, and GFM
  * tables become native Feishu `table` elements (v1 layout supports them —
- * root-level only, matching our card shape). Semantics mirror botmux's
+ * root-level only, matching our card shape). Feishu caps native tables at
+ * five per card (ErrCode 11310); any table beyond that renders as a fenced
+ * code block so content is never dropped. Semantics mirror botmux's
  * `buildMarkdownElements` (markdown-it based, blank-line-normalized so
  * fences adjacent to prose still render).
  *
@@ -106,6 +108,12 @@ function buildTableFromTokens(tokens: readonly Token[]): CardElement | undefined
   };
 }
 
+/** Render a table's source lines as a fenced code block (the over-cap
+ *  fallback — keeps the content, in a monospace block). */
+function fencedTableSource(lines: readonly string[], map: readonly [number, number]): string {
+  return '```\n' + sliceLines(lines, map).trim() + '\n```';
+}
+
 /** Index of the token that closes the block opened at `openIndex`. */
 function findMatchingClose(tokens: readonly Token[], openIndex: number): number {
   let depth = 0;
@@ -131,12 +139,18 @@ function sliceLines(lines: readonly string[], map: readonly [number, number]): s
  * @param input - raw markdown (model output).
  * @returns card elements; empty array for empty input.
  */
+/** Feishu's hard cap on native `table` elements per card (ErrCode 11310:
+ *  'card table number over limit'). Beyond this, tables degrade to fenced
+ *  code blocks so content is preserved and the patch does not fail. */
+export const MAX_CARD_TABLES = 5;
+
 export function markdownToElements(input: string): CardElement[] {
   if (input === '') return [];
   const tokens = md.parse(input, {});
   const lines = input.split('\n');
   const elements: CardElement[] = [];
   const buf: string[] = [];
+  let tableCount = 0;
 
   const flushBuf = (): void => {
     const text = buf
@@ -185,7 +199,17 @@ export function markdownToElements(input: string): CardElement[] {
       flushBuf();
       const close = findMatchingClose(tokens, i);
       const table = buildTableFromTokens(tokens.slice(i, close + 1));
-      if (table !== undefined) elements.push(table);
+      if (table !== undefined) {
+        if (tableCount < MAX_CARD_TABLES) {
+          tableCount += 1;
+          elements.push(table);
+        } else if (token.map !== null) {
+          // Over the Feishu cap: preserve the content as a code block
+          // (never drop it, and never fail the whole card patch).
+          buf.push(fencedTableSource(lines, token.map));
+          flushBuf();
+        }
+      }
       i = close + 1;
       continue;
     }

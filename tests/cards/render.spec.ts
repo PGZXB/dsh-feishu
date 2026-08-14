@@ -349,6 +349,27 @@ describe('markdownToElements', () => {
     expect(markdowns.every((el) => !el.content.includes('|'))).toBe(true);
   });
 
+  it('caps native tables at the Feishu limit and keeps overflow as code blocks', () => {
+    // Regression: >5 tables in one card made message.patch fail with
+    // ErrCode 11310 ('card table number over limit'), surfacing as
+    // '目标回调服务未在线'. The sixth table must degrade to a code block
+    // (content preserved), not fail the patch.
+    const sixTables = Array.from({ length: 6 }, (_, i) => `| h${i} |\n|---|\n| v${i} |`).join(
+      '\n\n',
+    );
+    const elements = markdownToElements(sixTables);
+    const tables = elements.filter(
+      (el): el is Extract<CardElement, { tag: 'table' }> => el.tag === 'table',
+    );
+    expect(tables).toHaveLength(5);
+    const markdowns = elements.filter(
+      (el): el is Extract<CardElement, { tag: 'markdown' }> => el.tag === 'markdown',
+    );
+    const joined = markdowns.map((el) => el.content).join('\n');
+    expect(joined).toContain('```');
+    expect(joined).toContain('h5'); // the sixth table's header survives
+  });
+
   it('returns an empty array for empty input', () => {
     expect(markdownToElements('')).toEqual([]);
   });
