@@ -6,14 +6,17 @@ English | [中文](README.zh.md)
 [![Node](https://img.shields.io/badge/node-%3E%3D22.13-339933.svg)](package.json)
 [![CI](https://img.shields.io/github/actions/workflow/status/PGZXB/dsh-feishu/ci.yml?branch=main)](.github/workflows/ci.yml)
 
-The Feishu UI for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) — a dsh-native plugin, installable via `dsh plugin add`; live streaming cards, in-card questions & approvals, one-QR setup.
+> **DeepSeek Harness officially ships a browser UI; the Feishu UI is
+> provided by this plugin** — dsh-native, installable via `dsh plugin add`;
+> live streaming cards, in-card questions & approvals, one-QR setup.
 
-dsh is an open-source agent harness. It ships a browser UI and a terminal
-surface; this plugin provides the **Feishu UI** — a Feishu chat maps to a
-dsh session, and the bot's replies stream back as live cards. It is a bundle
-like the web UI, driving the same in-process services: `/permission`,
-`/plan`, `/model` run against the same `ctx.permissionPresets` /
-`ctx.planMode` / `ctx.agentDefaultModel` the web UI uses.
+DeepSeek Harness (dsh) is an open-source agent harness. A Feishu chat maps
+to a dsh session — the chat bot is the agent's avatar, and every reply
+streams back as a live card. Like the web UI, this plugin is a bundle
+riding on `@deepseek-ai/dsh-base`, driving the same in-process services:
+`/permission`, `/plan`, `/model` run against the same
+`ctx.permissionPresets` / `ctx.planMode` / `ctx.agentDefaultModel` the web
+UI uses.
 
 ## Quickstart
 
@@ -38,9 +41,6 @@ Feishu app end to end. Already have an app (or skip the wizard)? Set
 config instead — see [docs/feishu-setup.md](docs/feishu-setup.md).
 
 Requires Node.js ≥ 22.13, dsh, and pnpm.
-
-> 393 tests — 346 unit plus 47 real-process integration tests. CI runs the
-> integration suite with `FEISHU_INT_REQUIRED=1`, so it can never be skipped.
 
 ## Features
 

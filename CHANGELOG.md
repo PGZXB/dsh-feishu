@@ -87,13 +87,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ctx.planMode` / `ctx.agentDefaultModel` services as the web UI), a
   4-step quickstart (install → one-QR setup wizard, which writes the
   credentials itself — no manual env vars needed for new apps; env vars
-  documented for existing apps), a compact feature list, and a one-line
-  test note (346 unit + 47 real-process integration, CI never skips).
-  Badges: license and Node (static), CI (renders once the repository is
-  public). `package.json` gains a description and keywords. Screenshots
-  are deferred — `docs/screenshot-checklist.md` + `docs/assets/` stage the
+  documented for existing apps), a compact feature list. Badges: license
+  and Node (static), CI (renders once the repository is public).
+  `package.json` gains a description and keywords. Screenshots are
+  deferred — `docs/screenshot-checklist.md` + `docs/assets/` stage the
   eleven planned captures for a gallery added once real shots exist; no
-  test-rendered mockups, no broken image links.
+  test-rendered mockups, no broken image links. Hero follows the
+  dsh-cc-tui pattern — a positioning blockquote ("DeepSeek Harness
+  officially ships a browser UI; the Feishu UI is provided by this
+  plugin") using the full product name, with no terminal-surface claim
+  (the official project ships no TUI).
 
 ### Removed
 
