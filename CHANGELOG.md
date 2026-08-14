@@ -279,3 +279,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   distinct from done — a stopped turn never reads Done (DSH web
   message.stopped). Panel reflects the stopped state. Unit regression
   test; the aborted→stopped mapping is unit-proven. 175 tests total.
+- The standalone '⏹ Stopping…' text bubble under the streaming card is
+  removed (user report: unnecessary — the card is the feedback surface).
+  Stop now marks the card's stopRequested state: the card shows
+  '**⏹ Stopping…**' while the abort converges, then settles to the
+  orange '**⏹ Stopped**' terminal state on turn/end(aborted). Also fixed
+  a latent bug: turn/end now stages the terminal snapshot before
+  finalize (finalize only renders when a pending snapshot exists, so a
+  flushed working card kept its stale render). 175 tests total.
