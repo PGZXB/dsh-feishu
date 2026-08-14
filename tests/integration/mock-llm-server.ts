@@ -41,6 +41,15 @@ export interface MockLlmServer {
    * tool-calling turn needs two entries (tool call, then final answer).
    */
   setScripts(scripts: readonly (readonly MockScriptChunk[])[]): void;
+  /**
+   * Hold the response to the next completion request open until
+   * `release()` is called, keeping the agent `running` — the window an
+   * integration test needs to exercise running-state interactions (stop
+   * mid-turn, panel-while-running).
+   */
+  holdNextResponse(): void;
+  /** Release a held response; no-op when none is held. */
+  release(): void;
 }
 
 function sseChunk(delta: Record<string, unknown>, finish = false): string {
@@ -68,6 +77,8 @@ function sseToolCallDelta(index: number, id: string, name: string, argumentsDelt
 export async function startMockLlmServer(): Promise<MockLlmServer> {
   let completions = 0;
   let scripts: readonly (readonly MockScriptChunk[])[] | undefined;
+  let hold = false;
+  let releaseHold: (() => void) | undefined;
 
   /** Stream one scripted response: reasoning, a tool call, then the answer. */
   function writeScripted(res: ServerResponse): void {
@@ -118,6 +129,16 @@ export async function startMockLlmServer(): Promise<MockLlmServer> {
         'cache-control': 'no-cache',
         connection: 'keep-alive',
       });
+      if (hold) {
+        hold = false;
+        // Keep the agent running: the response body stays open until the
+        // test releases it.
+        releaseHold = () => {
+          writeScripted(res);
+          res.end('data: [DONE]\n\n');
+        };
+        return;
+      }
       writeScripted(res);
       res.end('data: [DONE]\n\n');
       return;
@@ -147,6 +168,13 @@ export async function startMockLlmServer(): Promise<MockLlmServer> {
     completionRequests: () => completions,
     setScripts: (next) => {
       scripts = next;
+    },
+    holdNextResponse: () => {
+      hold = true;
+    },
+    release: () => {
+      releaseHold?.();
+      releaseHold = undefined;
     },
   };
 }

@@ -90,6 +90,22 @@ function writeAction(action: unknown): void {
   );
 }
 
+/** Drop one inbound message into the message channel. */
+function sendMessage(chatId: string, text: string): void {
+  writeFileSync(
+    join(INBOX_DIR, `om-${Date.now()}-${Math.random().toString(36).slice(2)}.json`),
+    JSON.stringify({
+      messageId: `om-${Date.now()}`,
+      chatId,
+      chatType: 'p2p',
+      senderOpenId: 'ou_mock',
+      text,
+      createdAt: Date.now(),
+    }),
+    'utf8',
+  );
+}
+
 describe.skipIf(!dshBin || !profileReady || !built)('real-composition integration', () => {
   let mock: MockLlmServer | undefined;
   let child: ReturnType<typeof spawn> | undefined;
@@ -316,13 +332,12 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
       });
       await waitFor(
         'the idle-stop explanation text',
-        () =>
-          readOutbox().some(
-            (r) => r.kind === 'text' && r.text?.includes('No active turn'),
-          ),
+        () => readOutbox().some((r) => r.kind === 'text' && r.text?.includes('No active turn')),
         30_000,
       );
-      expect(readOutbox().some((r) => r.kind === 'text' && r.text?.includes('Stopping'))).toBe(false);
+      expect(readOutbox().some((r) => r.kind === 'text' && r.text?.includes('Stopping'))).toBe(
+        false,
+      );
 
       // Collapse again → back to the sequence line.
       writeAction({
@@ -342,6 +357,152 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
             ) === true
           );
         },
+        30_000,
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 180_000);
+
+  /**
+   * The card-action interaction matrix against the REAL agent loop. Each
+   * case boots a fresh dsh child with a scripted (or held) mock LLM and
+   * drives card actions through the memory transport, asserting the exact
+   * outbox reaction — the abnormal-operation coverage the user asked for.
+   */
+  it('stop while running cancels; stop after finish explains; panel reflects state', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      // Hold the LLM response so the agent stays running while we act.
+      server.holdNextResponse();
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_matrix_${Date.now()}`;
+      sendMessage(chatId, 'run the matrix check');
+
+      // Wait for the running turn's card to appear (the agent is held
+      // running by the mock).
+      await waitFor(
+        'the working streaming card',
+        () => readOutbox().some((r) => r.kind === 'card'),
+        30_000,
+      );
+
+      // Panel while running carries ⏹ Stop current.
+      writeAction({
+        messageId: 'mem-1',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'panel' },
+      });
+      await waitFor(
+        'the running panel with Stop',
+        () => {
+          const panel = readOutbox()
+            .filter((r) => r.kind === 'card')
+            .at(-1)?.card;
+          const action = panel?.elements.find((el) => el.tag === 'action');
+          return (
+            action !== undefined &&
+            'actions' in action &&
+            action.actions.some((a) => 'text' in a && a.text.content === '⏹ Stop current')
+          );
+        },
+        30_000,
+      );
+
+      // Stop while running → cancel + '⏹ Stopping…' text.
+      writeAction({
+        messageId: 'mem-1',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'stop' },
+      });
+      await waitFor(
+        'the Stopping acknowledgement',
+        () => readOutbox().some((r) => r.kind === 'text' && r.text?.includes('Stopping')),
+        30_000,
+      );
+
+      // Release the held response so the aborted turn settles; then wait for
+      // the agent to go idle (a new message would be needed to see it, so
+      // just give the loop a beat), and a Stop must explain — not hang.
+      server.release();
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      const textsBeforeIdleStop = readOutbox().filter((r) => r.kind === 'text').length;
+      writeAction({
+        messageId: 'mem-1',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'stop' },
+      });
+      await waitFor(
+        'the idle-stop explanation',
+        () =>
+          readOutbox()
+            .filter((r) => r.kind === 'text')
+            .slice(textsBeforeIdleStop)
+            .some((r) => r.text?.includes('No active turn')),
+        30_000,
+      );
+      // The idle stop must NOT emit a second 'Stopping…' — only the
+      // explanation, and nothing after it.
+      expect(
+        readOutbox()
+          .filter((r) => r.kind === 'text')
+          .slice(textsBeforeIdleStop)
+          .some((r) => r.text?.includes('Stopping')),
+      ).toBe(false);
+
+      // Copy/retry on a chat with no completed answer → explanation.
+      writeAction({
+        messageId: 'mem-1',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'copy' },
+      });
+      await waitFor(
+        'the empty-copy explanation',
+        () => readOutbox().some((r) => r.kind === 'text' && r.text?.includes('Nothing to copy')),
+        30_000,
+      );
+      // Retry on a chat with no prior prompt → explanation. This chat HAS a
+      // prior message, so use a fresh chat id (no session, no last prompt).
+      const emptyChat = `oc_empty_${Date.now()}`;
+      writeAction({
+        messageId: 'mem-2',
+        chatId: emptyChat,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'retry' },
+      });
+      await waitFor(
+        'the empty-retry explanation',
+        () => readOutbox().some((r) => r.kind === 'text' && r.text?.includes('Nothing to retry')),
         30_000,
       );
     } catch (error) {
