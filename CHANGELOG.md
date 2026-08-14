@@ -92,9 +92,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   answer finalizes in place on the card — no second bubble; tap Allow once
   to continue; one QR scan creates + configures + publishes the app), a
   5-minute quickstart, a feature table, and Contributing/security links.
-  Screenshot slots are placeholders awaiting real user-captured Feishu
-  client screenshots (see `_dev/readme-briefing.md`); no test-rendered
-  mockups and no broken image links.
+  The gallery is semantically complete as text (every interaction is
+  described in words) with screenshot slots as placeholders awaiting real
+  user-captured Feishu client screenshots (see `_dev/readme-briefing.md`);
+  no test-rendered mockups and no broken image links. Badges: license and
+  Node (static, always render), CI (renders once the repository is public).
+  `package.json` gains a description and keywords for npm discoverability.
 
 ### Removed
 

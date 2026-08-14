@@ -2,6 +2,10 @@
 
 English | [中文](README.zh.md)
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D22.13-339933.svg)](package.json)
+[![CI](https://img.shields.io/github/actions/workflow/status/PGZXB/dsh-feishu/ci.yml?branch=main)](.github/workflows/ci.yml)
+
 The Feishu UI for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) — a dsh-native plugin, installable via `dsh plugin add`; live streaming cards, in-card questions & approvals, one-QR setup.
 
 dsh is an open-source agent harness built on an everything-is-a-plugin
@@ -66,27 +70,52 @@ picked on Feishu is the preset the web UI would read.
 
 ## See it work
 
-The answer **finalizes in place on the card — there is no second message
-bubble**. The card you watch stream in is the card that ends up green.
+Every interaction is a card, and the card you watch stream in is the card
+that ends up green — the answer **finalizes in place, with no second message
+bubble**.
+
+**A turn, in one card.** Message the bot and a card opens immediately, with
+a ⏹ Stop button while the agent is running. Tool calls and reasoning stream
+in as expandable rows; when the turn settles the card turns green with the
+full answer inside. Copy and Retry sit on the card.
 
 <!-- docs/assets/streaming-mid.png — user screenshot: the card streaming mid-turn -->
 <!-- docs/assets/streaming-done.png — user screenshot: the same card finalized green in place -->
 
-**Approvals and questions happen inside the chat.** When the agent needs a
-permission escalation or an answer, a card appears — tap **Allow once** and
-the tool call continues, no console, no hopping to another page.
+**Approvals, in the chat.** When a tool asks for a permission escalation,
+an orange card posts the tool name and the reason with **✅ Allow once** and
+**❌ Reject**. Tap Allow once and the tool call continues right there —
+nothing to do anywhere else. The card settles into a static confirmation.
 
 <!-- docs/assets/approval.png — user screenshot: approval card with Allow once / Reject -->
 <!-- docs/assets/approval-decided.png — user screenshot: the static decided card -->
+
+**Questions, in the chat.** When the agent needs an answer, a question card
+posts the options as buttons: one tap answers, multi-select toggles with a
+Submit button, and free-text questions accept a reply in the chat.
+
 <!-- docs/assets/question.png — user screenshot: a question card with option buttons -->
 <!-- docs/assets/question-answered.png — user screenshot: the static answer confirmation -->
 
-Everything else is a card too: the control panel, the session list, the
-session-log export.
+**Control panel.** One card carries the full command palette as buttons —
+Stop / Retry / Copy plus every slash command, grouped and paginated.
 
 <!-- docs/assets/panel.png — user screenshot: the control panel card -->
+
+**Sessions.** `/sessions` lists every saved session (title, id, working
+directory, age) with Resume buttons; a tap moves the session into the
+current chat. Sessions survive daemon restarts.
+
 <!-- docs/assets/sessions.png — user screenshot: the /sessions list with Resume buttons -->
+
+**Export.** `/export` uploads the chat's session log as a downloadable file
+message.
+
 <!-- docs/assets/export.png — user screenshot: the exported session log file message -->
+
+**Groups.** @-mention the bot in a group chat; when a turn fails or an
+approval or question is needed, the bot @s the requester.
+
 <!-- docs/assets/group.png — user screenshot: a group chat with an @-mention answer -->
 
 <!-- docs/assets/demo.gif — user-recorded demo (real bot, real Feishu client). -->
@@ -110,7 +139,8 @@ dsh --profile feishu
 Requirements: Node.js ≥ 22.13, a dsh installation and pnpm. Credentials can
 also be supplied via the `FEISHU_APP_ID` / `FEISHU_APP_SECRET` environment
 variables or the profile config. Full setup detail:
-[docs/feishu-setup.md](docs/feishu-setup.md).
+[docs/feishu-setup.md](docs/feishu-setup.md). A copy-pasteable profile with
+every option documented: [examples/feishu-profile](examples/feishu-profile).
 
 ## Features
 

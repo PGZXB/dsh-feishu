@@ -1,7 +1,7 @@
 {
   "name": "@dsh-feishu/dsh-feishu",
   "version": "0.0.0",
-  "description": "Feishu (Lark) as a native DeepSeek Harness (dsh) surface: a Feishu group maps to a dsh session, the group bot is the agent's avatar, with streaming cards and slash commands.",
+  "description": "The Feishu UI for DeepSeek Harness (dsh) — a dsh-native plugin: live streaming cards, in-card questions & approvals, one-QR setup.",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -82,11 +82,15 @@
   "license": "MIT",
   "keywords": [
     "dsh",
-    "dsh-plugin",
+    "deepseek-harness",
+    "deepseek",
+    "agent",
     "feishu",
     "lark",
-    "bot",
-    "deepseek-harness"
+    "surface",
+    "bundle",
+    "cards",
+    "plugin"
   ],
   "publishConfig": {
     "access": "public"
