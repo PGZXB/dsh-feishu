@@ -191,3 +191,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     to a stale state (the 'card reverted to Stop after opening details'
     bug).
   - 142 tests total.
+- UX feedback round 5 — no truncation, card state machine, spec + automation:
+  - Collapsed sequence shows the full `think -> bash -> …` chain — the
+    12-entry cap and ellipsis are removed (no truncation without user
+    confirmation, per directive).
+  - Card state machine fixed (botmux rule): toggle-rows defers its card
+    patch out of the callback; row-details re-asserts the streaming card
+    so Lark's callback-completion restore cannot collapse or stale it.
+    Explicit unit tests cover expand → details → still expanded → collapse.
+  - docs/ux-specification.md: per-part UX specification derived from DSH
+    web and botmux, incl. the no-truncation rule, the card-action ACK
+    contract (never return `undefined` — the invalid-ACK bug), and an
+    acceptance checklist.
+  - Automation: memory transport `actions/` channel + scripted mock LLM
+    (reasoning + tool-call SSE) + a real-composition integration test that
+    drives the full UX state machine against a real spawned dsh process —
+    no Feishu app, no manual screenshots.
+  - 145 tests total.
