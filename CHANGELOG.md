@@ -259,3 +259,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and error → retry → working → done recovery. The single syncCard render
   path is the invariant under test. 170 tests total (unit + 4 real-
   composition integration).
+- GFM tables render as native Feishu `table` elements (botmux
+  `buildTableFromTokens` port): the converter no longer falls back to raw
+  pipe source lines. Root-level `table` is supported by the v1 card
+  layout; lark_md cells keep inline code and bold. Regression tests at
+  both layers (unit with the reported table shape; real-composition with
+  a scripted table response). AGENTS.md makes "every user-reported fix
+  adds a regression test" explicit. 172 tests total.
