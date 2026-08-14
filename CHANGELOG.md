@@ -225,3 +225,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     second message, stop-then-recover) + integration assertion that a
     stop on a finished real turn yields the explanation and never
     "Stopping…". 155 unit + 2 real-composition integration tests.
+- Integration coverage for the card-action interaction matrix (user
+  directive: abnormal operations belong in integration tests, not just
+  unit tests with a fake agent):
+  - mock LLM server supports holdNextResponse()/release() to keep the
+    real agent running while the test drives card actions.
+  - real-composition test asserts against the real dsh process: running
+    panel shows Stop; running stop cancels + '⏹ Stopping…'; idle stop
+    explains and never emits a second 'Stopping…'; empty copy / empty
+    retry explain.
+  - 156 tests total (unit + 3 real-composition integration).
