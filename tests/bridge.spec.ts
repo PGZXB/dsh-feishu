@@ -13,7 +13,13 @@ import type { Agent } from '@deepseek-ai/dsh-agent';
 import type { UserMessage } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Bridge, type SessionListRow, turnTitle } from '../src/bridge.js';
+import {
+  Bridge,
+  type PermissionPresetService,
+  type PlanModeService,
+  type SessionListRow,
+  turnTitle,
+} from '../src/bridge.js';
 import { StreamingCardManager } from '../src/cards/streaming.js';
 import type { CommandResult } from '../src/commands.js';
 import type {
@@ -133,6 +139,7 @@ class FakeAgentStore {
     return {
       followup,
       cancel,
+      session: { events: [] },
       get status() {
         return statuses.get(sessionId) ?? 'running';
       },
@@ -159,6 +166,8 @@ function makeHarness(
     unknownCommand?: 'error' | 'passthrough';
     repoRoots?: readonly string[];
     listSessions?: () => Promise<readonly SessionListRow[] | undefined>;
+    permissionPresets?: PermissionPresetService;
+    planMode?: PlanModeService;
   } = {},
 ): Harness {
   const transport = new RecordingTransport();
@@ -194,6 +203,10 @@ function makeHarness(
     ...(options.unknownCommand !== undefined ? { unknownCommand: options.unknownCommand } : {}),
     ...(options.repoRoots !== undefined ? { repoRoots: options.repoRoots } : {}),
     ...(options.listSessions !== undefined ? { listSessions: options.listSessions } : {}),
+    ...(options.permissionPresets !== undefined
+      ? { permissionPresets: options.permissionPresets }
+      : {}),
+    ...(options.planMode !== undefined ? { planMode: options.planMode } : {}),
   });
   const emit = (sessionId: string, event: SessionEvent): void => {
     for (const listener of [...listeners]) listener(sessionId, event);
@@ -1979,5 +1992,210 @@ describe('state machine matrix extension (command / resume-session actions)', ()
     expect(h.transport.sentTexts.some((t) => t.text.includes('a turn is running'))).toBe(true);
     expect(h.agentStore.resumed).not.toContain('feishu-session-9');
     expect(h.sessionMap.get('oc_chat')).toBe('feishu-session-1');
+  });
+});
+
+/** Fake `ctx.permissionPresets` service for the picker tests. */
+class FakePermissionService implements PermissionPresetService {
+  currentPreset = 'workspace-write';
+  readonly applied: string[] = [];
+  readonly names: readonly string[] = ['read-only', 'workspace-write', 'danger-full-access'];
+  optionOf(name: string): { value: string; name?: string; description?: string } {
+    const descriptions: Record<string, string> = {
+      'read-only': 'Sandbox read-only, approval ask.',
+      'workspace-write': 'Sandbox workspace-write, approval ask.',
+      'danger-full-access': 'Sandbox danger-full-access, approval never.',
+    };
+    const description = descriptions[name];
+    return description === undefined ? { value: name, name } : { value: name, name, description };
+  }
+  current(_events: readonly unknown[]): string {
+    return this.currentPreset;
+  }
+  set(_session: unknown, name: string): void {
+    this.applied.push(name);
+    this.currentPreset = name;
+  }
+}
+
+/** Fake `ctx.planMode` controller for the toggle tests. */
+class FakePlanModeService implements PlanModeService {
+  active = false;
+  readonly calls: boolean[] = [];
+  get(): { active: boolean; pending?: boolean } {
+    return { active: this.active };
+  }
+  set(_agent: Agent, active: boolean): 'committed' | 'queued' | 'cancelled' | 'noop' {
+    this.calls.push(active);
+    if (active === this.active) return 'noop';
+    this.active = active;
+    return 'committed';
+  }
+}
+
+describe('stateful web wrappers (/permission picker, /plan toggle)', () => {
+  it('/permission with no args opens the preset picker card', async () => {
+    const service = new FakePermissionService();
+    const h = makeHarness({ permissionPresets: service });
+    await h.bridge.handleMessage(message({ text: '/permission' }));
+    const card = h.transport.sentCards.at(-1);
+    expect(card?.header?.title.content).toBe('🔐 Permission presets');
+    // The current preset row is marked; the others carry Select buttons.
+    const rows = (card?.elements ?? []).filter((el) => el.tag === 'column_set');
+    expect(rows).toHaveLength(3);
+    const selectPayloads = rows.flatMap((el) =>
+      'columns' in el
+        ? el.columns.flatMap((column) =>
+            column.elements
+              .filter((element) => element.tag === 'button')
+              .map((button) => button.value),
+          )
+        : [],
+    );
+    expect(selectPayloads).toContainEqual({
+      kind: 'permission-pick',
+      preset: 'read-only',
+    });
+    expect(selectPayloads).toContainEqual({
+      kind: 'permission-pick',
+      preset: 'danger-full-access',
+    });
+    // workspace-write is current → no Select button, marked ★.
+    expect(selectPayloads.some((v) => v.preset === 'workspace-write')).toBe(false);
+  });
+
+  it('a permission pick applies the preset through the service and replies', async () => {
+    const service = new FakePermissionService();
+    const h = makeHarness({ permissionPresets: service });
+    await h.bridge.handleMessage(message({ text: '/permission' }));
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'permission-pick', preset: 'read-only' },
+    });
+    expect(service.applied).toEqual(['read-only']);
+    expect(h.transport.sentTexts.some((t) => t.text.includes('switched to read-only'))).toBe(true);
+  });
+
+  it('rejects a stale permission pick from a superseded picker card', async () => {
+    const service = new FakePermissionService();
+    const h = makeHarness({ permissionPresets: service });
+    await h.bridge.handleMessage(message({ text: '/permission' }));
+    await h.bridge.handleCardAction({
+      messageId: 'msg-0',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'permission-pick', preset: 'read-only' },
+    });
+    expect(service.applied).toHaveLength(0);
+  });
+
+  it('a permission pick while a turn runs is refused', async () => {
+    const service = new FakePermissionService();
+    const h = makeHarness({ permissionPresets: service });
+    await h.bridge.handleMessage(message({ text: '/permission' }));
+    // The picker id is the card sent by /permission (captured before the
+    // turn opens its own streaming card).
+    const pickerId = lastCardId(h);
+    // Start a turn, then press the picker button.
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: 'start a turn' }));
+    await h.bridge.handleCardAction({
+      messageId: pickerId,
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'permission-pick', preset: 'read-only' },
+    });
+    expect(h.transport.sentTexts.some((t) => t.text.includes('a turn is running'))).toBe(true);
+    expect(service.applied).toHaveLength(0);
+  });
+
+  it('/permission degrades to the harness report when the service is absent', async () => {
+    const h = makeHarness({
+      executeCommand: async (_agent, line) =>
+        line === '/permission'
+          ? {
+              kind: 'success',
+              text: 'current preset workspace-write (available: read-only, workspace-write, danger-full-access)',
+            }
+          : undefined,
+    });
+    await h.bridge.handleMessage(message({ text: '/permission' }));
+    expect(h.transport.sentTexts.some((t) => t.text.includes('current preset'))).toBe(true);
+  });
+
+  it('/permission <preset> passes through to the harness command', async () => {
+    const h = makeHarness({
+      executeCommand: async (_agent, line) =>
+        line === '/permission read-only'
+          ? { kind: 'success', text: 'preset read-only' }
+          : undefined,
+    });
+    await h.bridge.handleMessage(message({ text: '/permission read-only' }));
+    expect(h.transport.sentTexts.some((t) => t.text === 'preset read-only')).toBe(true);
+  });
+
+  it('/plan toggles: enters when inactive, leaves when active', async () => {
+    const planMode = new FakePlanModeService();
+    const h = makeHarness({ planMode });
+    await h.bridge.handleMessage(message({ text: '/plan' }));
+    expect(h.transport.sentTexts.some((t) => t.text.includes('Plan mode on'))).toBe(true);
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/plan' }));
+    expect(h.transport.sentTexts.some((t) => t.text.includes('Plan mode off'))).toBe(true);
+    expect(planMode.calls).toEqual([true, false]);
+  });
+
+  it('/plan button toggles like the slash line', async () => {
+    const planMode = new FakePlanModeService();
+    const h = makeHarness({ planMode });
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'command', name: 'plan' },
+    });
+    expect(h.transport.sentTexts.some((t) => t.text.includes('Plan mode on'))).toBe(true);
+  });
+
+  it('/plan reports queued wording when the controller queues the flip', async () => {
+    const planMode: PlanModeService = {
+      get: () => ({ active: true }),
+      set: () => 'queued',
+    };
+    const h = makeHarness({ planMode });
+    await h.bridge.handleMessage(message({ text: '/plan' }));
+    expect(
+      h.transport.sentTexts.some((t) =>
+        t.text.includes('Leaving plan mode (applies from the next step)'),
+      ),
+    ).toBe(true);
+  });
+
+  it('/plan off and /plan <message> pass through to the harness command', async () => {
+    const h = makeHarness({
+      executeCommand: async (_agent, line) =>
+        line === '/plan off'
+          ? { kind: 'success', text: 'Plan mode off.' }
+          : line === '/plan implement the thing'
+            ? { kind: 'success', text: 'Entering plan mode.' }
+            : undefined,
+    });
+    await h.bridge.handleMessage(message({ text: '/plan off' }));
+    expect(h.transport.sentTexts.some((t) => t.text === 'Plan mode off.')).toBe(true);
+    await h.bridge.handleMessage(
+      message({ messageId: 'om_msg2', text: '/plan implement the thing' }),
+    );
+    expect(h.transport.sentTexts.some((t) => t.text === 'Entering plan mode.')).toBe(true);
+  });
+
+  it('bare /plan falls back to the harness command when the service is absent', async () => {
+    const h = makeHarness({
+      executeCommand: async (_agent, line) =>
+        line === '/plan'
+          ? { kind: 'success', text: 'Plan mode on. Use /plan off to leave.' }
+          : undefined,
+    });
+    await h.bridge.handleMessage(message({ text: '/plan' }));
+    expect(h.transport.sentTexts.some((t) => t.text.includes('Plan mode on'))).toBe(true);
   });
 });

@@ -903,10 +903,11 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
     }
   }, 120_000);
 
-  /** The web-command wrapper end-to-end: /permission executes the REAL
-   *  harness command through the dsh registry, minting a session on a fresh
-   *  chat. */
-  it('web-command wrapper executes the real harness /permission', async () => {
+  /** The web-command wrapper end-to-end: bare /permission opens the preset
+   *  picker card (from the real ctx.permissionPresets service), and a pick
+   *  applies the preset — a button press actually switches permissions
+   *  (user report: the bare harness command only reports). */
+  it('web-command wrapper: /permission opens the picker and a pick applies', async () => {
     const bin = dshBin;
     const server = mock;
     if (bin === undefined) throw new Error('dsh CLI unavailable');
@@ -936,10 +937,13 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
 
       const chatId = `oc_wrapper_${Date.now()}`;
       sendMessage(chatId, '/permission');
-      // The harness /permission handler reports the current preset.
+      // Bare /permission opens the preset picker card.
       await waitFor(
-        'the permission preset text',
-        () => readOutbox().some((r) => r.kind === 'text' && r.text?.includes('current preset')),
+        'the permission picker card',
+        () =>
+          readOutbox()
+            .filter((r) => r.kind === 'card')
+            .some((r) => r.card?.header?.title.content === '🔐 Permission presets'),
         60_000,
       );
       // The wrapper minted a session + agent for the fresh chat.
@@ -947,6 +951,78 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
         readFileSync(join(DSH_HOME, 'feishu', 'session-map.json'), 'utf8') as string,
       ) as { entries: Record<string, string> };
       expect(map.entries[chatId]).toBeDefined();
+      // Pick the read-only preset through the picker's button (message id
+      // from the picker's own outbox record).
+      const pickerRecord = [...readOutbox()]
+        .reverse()
+        .find(
+          (r) => r.kind === 'card' && r.card?.header?.title.content === '🔐 Permission presets',
+        );
+      expect(pickerRecord?.messageId).toBeDefined();
+      writeAction({
+        messageId: pickerRecord?.messageId ?? '',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'permission-pick', preset: 'read-only' },
+      });
+      await waitFor(
+        'the preset switch text',
+        () =>
+          readOutbox().some((r) => r.kind === 'text' && r.text?.includes('switched to read-only')),
+        30_000,
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 120_000);
+
+  /** /plan toggles on the real harness controller: a bare /plan enters,
+   *  and a second bare /plan leaves — a button press can exit plan mode
+   *  (user report: bare /plan only ever entered). */
+  it('web-command wrapper: bare /plan toggles plan mode on and off', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_plan_${Date.now()}`;
+      sendMessage(chatId, '/plan');
+      await waitFor(
+        'the plan-mode-on text',
+        () => readOutbox().some((r) => r.kind === 'text' && r.text?.includes('Plan mode on')),
+        60_000,
+      );
+      // Second bare /plan leaves plan mode.
+      sendMessage(chatId, '/plan');
+      await waitFor(
+        'the plan-mode-off text',
+        () => readOutbox().some((r) => r.kind === 'text' && r.text?.includes('Plan mode off')),
+        60_000,
+      );
     } catch (error) {
       throw new Error(
         `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,

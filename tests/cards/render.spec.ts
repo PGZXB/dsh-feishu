@@ -8,6 +8,7 @@ import {
   assistantText,
   buildCard,
   buildPanelCard,
+  buildPermissionPickerCard,
   buildRepoPickedCard,
   buildRepoPickerCard,
   buildRowDetailsCard,
@@ -663,5 +664,77 @@ describe('buildPanelCard palette', () => {
         (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('Commands'),
       ),
     ).toBe(false);
+  });
+});
+
+describe('buildPermissionPickerCard', () => {
+  const presets = [
+    {
+      name: 'read-only',
+      label: 'Read only',
+      description: 'Sandbox read-only, approval ask.',
+      current: false,
+    },
+    {
+      name: 'workspace-write',
+      label: 'workspace-write',
+      description: 'Sandbox workspace-write, approval ask.',
+      current: true,
+    },
+    {
+      name: 'danger-full-access',
+      label: 'danger-full-access',
+      description: 'Sandbox danger-full-access, approval never.',
+      current: false,
+    },
+  ];
+
+  it('renders one row per preset with Select buttons except the current', () => {
+    const card = buildPermissionPickerCard(presets);
+    const rows = card.elements.filter((el) => el.tag === 'column_set');
+    expect(rows).toHaveLength(3);
+    const selectValues = rows.flatMap((el) =>
+      'columns' in el
+        ? el.columns.flatMap((column) =>
+            column.elements
+              .filter((element) => element.tag === 'button')
+              .map((button) => button.value),
+          )
+        : [],
+    );
+    expect(selectValues).toEqual([
+      { kind: 'permission-pick', preset: 'read-only' },
+      { kind: 'permission-pick', preset: 'danger-full-access' },
+    ]);
+  });
+
+  it('marks the current preset and hides its Select button', () => {
+    const card = buildPermissionPickerCard(presets);
+    const currentRow = card.elements.find(
+      (el): el is Extract<CardElement, { tag: 'column_set' }> =>
+        el.tag === 'column_set' &&
+        el.columns.some((c) =>
+          c.elements.some((e) => e.tag === 'div' && e.text.content.includes('★ current')),
+        ),
+    );
+    expect(currentRow).toBeDefined();
+    const currentButtons =
+      currentRow && 'columns' in currentRow
+        ? currentRow.columns.flatMap((column) =>
+            column.elements.filter((element) => element.tag === 'button'),
+          )
+        : [];
+    expect(currentButtons).toHaveLength(0);
+  });
+
+  it('shows the empty state with no presets', () => {
+    const card = buildPermissionPickerCard([]);
+    expect(card.header?.title.content).toBe('🔐 Permission presets');
+    expect(
+      card.elements.some(
+        (el) =>
+          el.tag === 'markdown' && 'content' in el && el.content.includes('No presets configured'),
+      ),
+    ).toBe(true);
   });
 });

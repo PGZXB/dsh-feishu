@@ -29,6 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Working-state gate.** While a turn runs, only read-only commands run
   (`/help /status /sessions /cancel /group`); every mutating command is
   refused with an explanation (state-machine matrix rule, one place).
+- **Stateful web wrappers.** A bare `/plan` (or its button) now **toggles**
+  plan mode through `ctx.planMode` — pressing again leaves plan mode (user
+  report: it only ever entered). `/permission` (or its button) opens a
+  **preset picker card** from the real `ctx.permissionPresets` service —
+  one Select button per preset, current marked — and a pick applies through
+  `service.set` (user report: the button could not choose a preset). Typed
+  forms (`/plan off`, `/plan <msg>`, `/permission <preset>`) still pass
+  through; both degrade loudly to the harness behavior without the service.
 - `executeDshCommand` now maps harness `success`/`error` kinds to surface
   `CommandResult` (error kinds surface as ⚠️) instead of swallowing errors.
 

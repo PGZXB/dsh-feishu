@@ -23,12 +23,14 @@ import {
   assistantText,
   buildCard,
   buildPanelCard,
+  buildPermissionPickerCard,
   buildRepoPickedCard,
   buildRepoPickerCard,
   buildRowDetailsCard,
   type CardSnapshot,
   type CardStatus,
   type PanelCommand,
+  type PermissionPresetView,
   type ThinkRow,
   type ToolRow,
   type TurnRow,
@@ -80,6 +82,29 @@ export interface SessionListRow {
   readonly persisted: boolean;
 }
 
+/** Structural subset of `ctx.permissionPresets` (`@deepseek-ai/dsh-permission-presets`,
+ *  mounted by dsh-base). Kept local so the plugin compiles without a
+ *  dependency on the package. The real service folds a session's events for
+ *  `current` and writes the session's durable knobs in `set`. */
+export interface PermissionPresetService {
+  /** Switchable preset names, declaration order (a property getter). */
+  readonly names: readonly string[];
+  /** Client presentation for one preset (label falls back to the key). */
+  optionOf(name: string): { value: string; name?: string; description?: string };
+  /** The preset currently effective for a session's events. */
+  current(events: readonly unknown[]): string;
+  /** Record a changed preset and apply its sandbox/approval bundle. */
+  set(session: unknown, name: string): void;
+}
+
+/** Structural subset of `ctx.planMode` (`@deepseek-ai/dsh-plan-mode`). */
+export interface PlanModeService {
+  /** Logged plan state plus a pending selection awaiting the next pre-step. */
+  get(agent: Agent): { active: boolean; pending?: boolean };
+  /** Select whether plan mode should be active. */
+  set(agent: Agent, active: boolean): 'committed' | 'queued' | 'cancelled' | 'noop';
+}
+
 /** Options for {@link Bridge}. */
 export interface BridgeOptions {
   readonly transport: FeishuTransport;
@@ -120,6 +145,19 @@ export interface BridgeOptions {
    * bound-sessions-only listing.
    */
   readonly listSessions?: () => Promise<readonly SessionListRow[] | undefined>;
+  /**
+   * Permission-preset service (`ctx.permissionPresets`, mounted by
+   * dsh-base): `/permission` renders a preset picker from it and applies
+   * picks through it. Absent, `/permission` degrades to the harness
+   * report text.
+   */
+  readonly permissionPresets?: PermissionPresetService;
+  /**
+   * Plan-mode controller (`ctx.planMode`, mounted by dsh-base): a bare
+   * `/plan` (or its button) toggles plan mode through it instead of only
+   * entering. Absent, the bare form falls back to the harness behavior.
+   */
+  readonly planMode?: PlanModeService;
   /**
    * Policy for an unknown slash line: `error` replies with an unknown-command
    * notice (default); `passthrough` delivers the line to the model as a
@@ -239,17 +277,17 @@ async function listProjects(roots: readonly string[]): Promise<ProjectInfo[]> {
  *  thin handlers that ensure an agent, then execute the dsh registry command
  *  with the same arguments — the Feishu surface covers the web command set
  *  in-chat, buttons included. `/export` is intentionally absent: it is a
- *  Web-only command whose handler a browser download plugin observes. */
+ *  Web-only command whose handler a browser download plugin observes.
+ *
+ * `/plan` and `/permission` are handled bespoke (state-aware): a bare
+ * `/plan` toggles plan mode instead of only entering it, and `/permission`
+ * opens a preset picker card instead of only reporting the current preset —
+ * a button press must be able to actually choose/switch (user report). */
 const HARNESS_COMMANDS: ReadonlyArray<{
   readonly name: string;
   readonly description: string;
   readonly buttonLabel: string;
 }> = [
-  {
-    name: 'plan',
-    description: 'Enter or leave plan mode (dsh web)',
-    buttonLabel: '🗺️ Plan mode',
-  },
   {
     name: 'goal',
     description: 'Set or view the goal for a long-running task (dsh web)',
@@ -265,12 +303,26 @@ const HARNESS_COMMANDS: ReadonlyArray<{
     description: 'Send feedback (dsh web)',
     buttonLabel: '💬 Feedback',
   },
-  {
-    name: 'permission',
-    description: 'Switch the permission preset — sandbox mode + approval policy (dsh web)',
-    buttonLabel: '🔐 Permission',
-  },
 ];
+
+/** Mirror the harness /plan command's outcome wording for a toggle. */
+function planModeResultText(
+  target: boolean,
+  outcome: 'committed' | 'queued' | 'cancelled' | 'noop',
+): string {
+  switch (outcome) {
+    case 'committed':
+      return target ? 'Plan mode on. Use /plan off to leave.' : 'Plan mode off.';
+    case 'queued':
+      return target
+        ? 'Entering plan mode (applies from the next step). Use /plan off to leave.'
+        : 'Leaving plan mode (applies from the next step).';
+    case 'cancelled':
+      return 'Plan mode entry cancelled.';
+    case 'noop':
+      return target ? 'Plan mode is already active.' : 'Plan mode is already inactive.';
+  }
+}
 
 export class Bridge {
   private readonly dedup = new MessageDeduplicator();
@@ -282,6 +334,8 @@ export class Bridge {
   private readonly pickerMessageIds = new Map<string, string>();
   /** Active /sessions picker card message id per chat (stale-callback guard). */
   private readonly sessionPickerMessageIds = new Map<string, string>();
+  /** Active /permission picker card message id per chat (stale-callback guard). */
+  private readonly permissionPickerMessageIds = new Map<string, string>();
 
   /** The live agent for a chat, or `undefined` (no session or not attached). */
   private liveAgent(chatId: string): Agent | undefined {
@@ -570,6 +624,36 @@ export class Bridge {
       buildPanelCard(statusLine, running, this.panelCommands(), page),
     );
     this.syncCard(chatId);
+  }
+
+  /**
+   * Post the /permission preset picker card: one Select button per switchable
+   * preset (from the mounted `permissionPresets` service), current marked.
+   * @param chatId - the chat.
+   */
+  private async openPermissionPicker(chatId: string): Promise<void> {
+    const service = this.options.permissionPresets;
+    if (service === undefined) return;
+    const agent = await this.ensureAgent(chatId);
+    const current = service.current(agent.session.events);
+    const presets: PermissionPresetView[] = service.names.map((name) => {
+      const option = service.optionOf(name);
+      return {
+        name,
+        label: option.name ?? name,
+        description: option.description,
+        current: name === current,
+      };
+    });
+    try {
+      const sent = await this.options.transport.sendCard(
+        chatId,
+        buildPermissionPickerCard(presets),
+      );
+      this.permissionPickerMessageIds.set(chatId, sent.messageId);
+    } catch (error: unknown) {
+      this.options.logger.warn(`permission picker send failed: ${String(error)}`);
+    }
   }
 
   /**
@@ -1094,6 +1178,47 @@ export class Bridge {
         }
         break;
       }
+      case 'permission-pick': {
+        const preset = action.value.preset;
+        if (preset === undefined || preset === '') break;
+        // Only the active permission picker may select (stale-card guard).
+        if (action.messageId !== this.permissionPickerMessageIds.get(action.chatId)) {
+          this.options.logger.info(`ignoring stale permission pick from card ${action.messageId}`);
+          break;
+        }
+        if (this.refuseWhileWorking(action.chatId)) {
+          await this.replyCommandResult(action.chatId, {
+            kind: 'error',
+            text: 'a turn is running — stop it first.',
+          });
+          break;
+        }
+        const service = this.options.permissionPresets;
+        const agent = this.liveAgent(action.chatId);
+        if (service === undefined || agent === undefined) {
+          await this.options.transport.sendText(
+            action.chatId,
+            'Permission pick unavailable — the bot may have restarted. Send /permission again.',
+          );
+          break;
+        }
+        try {
+          service.set(agent.session, preset);
+        } catch (error: unknown) {
+          this.options.logger.warn(`permission pick failed: ${String(error)}`);
+          await this.replyCommandResult(action.chatId, {
+            kind: 'error',
+            text: `could not switch to preset ${preset}: ${String(error)}`,
+          });
+          break;
+        }
+        const option = service.optionOf(preset);
+        await this.options.transport.sendText(
+          action.chatId,
+          `Permission preset switched to ${option.name ?? preset}.`,
+        );
+        break;
+      }
       default: {
         this.options.logger.warn(`unknown card action kind: ${kind ?? '(missing)'}`);
       }
@@ -1320,6 +1445,79 @@ export class Bridge {
         },
       });
     }
+    // /permission: typed presets pass through to the harness command; a bare
+    // /permission (or the panel button) opens the preset picker card so the
+    // user can actually choose — the bare harness command only reports.
+    this.commands.register({
+      name: 'permission',
+      description: 'Switch the permission preset — sandbox mode + approval policy (dsh web)',
+      category: 'system',
+      buttonLabel: '🔐 Permission',
+      handler: async (invocation) => {
+        const raw = invocation.rawInput.trim();
+        if (raw !== '') return this.runHarnessCommand(invocation, 'permission');
+        if (this.refuseWhileWorking(invocation.chatId)) {
+          return { kind: 'error', text: 'a turn is running — stop it first.' };
+        }
+        if (this.options.permissionPresets === undefined) {
+          // Degraded: no picker data source — fall back to the harness report.
+          this.options.logger.warn(
+            '[feishu] permissionPresets service unavailable; /permission degraded to report',
+          );
+          return this.runHarnessCommand(invocation, 'permission');
+        }
+        await this.openPermissionPicker(invocation.chatId);
+        return { kind: 'success', text: '' };
+      },
+    });
+    // /plan: `off` and message forms pass through; a bare /plan (or the
+    // panel button) TOGGLES plan mode through ctx.planMode — pressing it
+    // again leaves plan mode (user report: bare /plan only ever entered).
+    this.commands.register({
+      name: 'plan',
+      description: 'Enter or leave plan mode (dsh web)',
+      category: 'system',
+      buttonLabel: '🗺️ Plan mode',
+      handler: async (invocation) => {
+        const raw = invocation.rawInput.trim();
+        if (raw !== '') return this.runHarnessCommand(invocation, 'plan');
+        if (this.refuseWhileWorking(invocation.chatId)) {
+          return { kind: 'error', text: 'a turn is running — stop it first.' };
+        }
+        const planMode = this.options.planMode;
+        if (planMode === undefined) {
+          // Degraded: no controller — fall back to the harness behavior.
+          this.options.logger.warn(
+            '[feishu] planMode service unavailable; bare /plan degraded to harness behavior',
+          );
+          return this.runHarnessCommand(invocation, 'plan');
+        }
+        const agent = await this.ensureAgent(invocation.chatId);
+        const state = planMode.get(agent);
+        const target = !(state.pending ?? state.active);
+        const outcome = planMode.set(agent, target);
+        return { kind: 'success', text: planModeResultText(target, outcome) };
+      },
+    });
+  }
+
+  /** Execute one harness command through the dsh registry (shared by the
+   *  web-command wrappers): ensure an agent, run the line, map the result. */
+  private async runHarnessCommand(
+    invocation: { readonly chatId: string; readonly rawInput: string },
+    name: string,
+  ): Promise<CommandResult> {
+    const options = this.options;
+    if (options.executeCommand === undefined) {
+      return {
+        kind: 'error',
+        text: `/${name} is unavailable — the dsh command registry is not mounted.`,
+      };
+    }
+    const agent = await this.ensureAgent(invocation.chatId);
+    const result = await options.executeCommand(agent, `/${name}${invocation.rawInput}`);
+    if (result !== undefined) return result;
+    return { kind: 'error', text: `/${name} is unavailable on this deployment.` };
   }
 
   /**

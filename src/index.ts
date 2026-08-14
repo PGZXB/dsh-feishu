@@ -25,7 +25,14 @@ import type {} from '@deepseek-ai/dsh-commands';
 import { credentialRef } from '@deepseek-ai/dsh-credentials';
 import type { SessionId } from '@deepseek-ai/dsh-session';
 import z from '@deepseek-ai/schemastery';
-import { type AgentStore, Bridge, type BridgeLogger, type SessionListRow } from './bridge.js';
+import {
+  type AgentStore,
+  Bridge,
+  type BridgeLogger,
+  type PermissionPresetService,
+  type PlanModeService,
+  type SessionListRow,
+} from './bridge.js';
 import { StreamingCardManager } from './cards/streaming.js';
 import type { CommandResult } from './commands.js';
 import { consoleExporter } from './console-exporter.js';
@@ -297,6 +304,14 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
     ...(config.repoRoots !== undefined ? { repoRoots: config.repoRoots } : {}),
     executeCommand: (agent, line) => executeDshCommand(ctx, agent, line),
     listSessions: () => listSessions(ctx),
+    // Feature-detect the two stateful web-command services (both mounted by
+    // dsh-base); absent, the /permission and /plan wrappers degrade.
+    ...(ctx.get('permissionPresets') !== undefined
+      ? { permissionPresets: ctx.get('permissionPresets') as PermissionPresetService }
+      : {}),
+    ...(ctx.get('planMode') !== undefined
+      ? { planMode: ctx.get('planMode') as PlanModeService }
+      : {}),
   });
   ctx.effect(() => () => {
     bridge.dispose();

@@ -275,7 +275,7 @@ palette idea). `category` groups the panel palette.
 | `/resume [<id>]` | session | resume a saved session; no id opens the `/sessions` picker |
 | `/clear` | session | start a fresh conversation — **non-destructive**: the previous session stays saved and resumable (content-integrity rule) |
 | `/new` | session | alias of `/clear` (web/cc-tui "new chat" parity) |
-| `/plan` `/goal` `/compact` `/feedback` `/permission` | system | **dsh web wrappers**: ensure a session/agent, then execute the harness command through `ctx.commands.execute` (dsh-base mounts all five); error kinds surface as ⚠️ |
+| `/plan` `/goal` `/compact` `/feedback` `/permission` | system | **dsh web wrappers**: ensure a session/agent, then execute the harness command through `ctx.commands.execute` (dsh-base mounts all five); error kinds surface as ⚠️. Two are state-aware (below): a bare `/plan` toggles plan mode, and `/permission` opens a preset picker. |
 
 `/export` is **intentionally absent**: `dsh-session-log-export` registers a
 Web-only command whose handler a *browser* download plugin observes
@@ -284,7 +284,31 @@ observes"); on a Feishu surface nothing would download. A native Feishu
 log-export (file message) is a later-iteration feature. Unknown slash lines
 keep the passthrough/fallback path.
 
-### 8.2 Working-state gate (state-machine rule)
+### 8.2 Stateful web wrappers (/plan toggle, /permission picker)
+
+The bare harness forms of `/plan` and `/permission` cannot *choose* or
+*toggle*: `/plan` with no args only enters plan mode, `/permission` with no
+args only reports the current preset. A button press must be able to switch
+(user report) — so the two wrappers are state-aware:
+
+- **`/permission` (no args, or the panel button)** opens a **preset picker
+  card** built from the real `ctx.permissionPresets` service (mounted by
+  dsh-base): one row per switchable preset (`names` + `optionOf` labels and
+  descriptions), the current preset marked ★ with no button, each other row
+  a `Select` button (`{kind:'permission-pick', preset}`). A pick applies
+  through `service.set(agent.session, preset)` and replies "switched to …".
+  Stale picks from a superseded picker card are rejected; picks while a turn
+  runs are refused (working-state gate). Typed `/permission <preset>`
+  passes through to the harness command. Without the service the wrapper
+  degrades to the harness report text (loud log).
+- **`/plan` (no args, or the panel button)** **toggles** plan mode through
+  `ctx.planMode`: reads `get(agent)` and `set(agent, !active)`, mirroring
+  the harness outcome wording ("Plan mode on…" / "Plan mode off.",
+  queued/cancelled variants). Pressing again leaves plan mode. `/plan off`
+  and `/plan <message>` pass through unchanged. Without the controller the
+  bare form falls back to the harness behavior (loud log).
+
+### 8.3 Working-state gate (state-machine rule)
 
 While a turn is running (`cardStates[chatId].status === 'working'`), only
 read-only commands may run: `/help`, `/status`, `/sessions` (read state),
@@ -294,7 +318,7 @@ read-only commands may run: `/help`, `/status`, `/sessions` (read state),
 the panel `command` action (one rule, two entry points), so a mid-turn
 session rebind/remint can never corrupt the live card.
 
-### 8.3 Session lifecycle commands
+### 8.4 Session lifecycle commands
 
 - `/sessions` + `/resume` data: `ctx.sessionQuery` (mounted by dsh-base's
   `session-query-sqlite`), `listSessions()` newest-first + batch
@@ -313,7 +337,7 @@ session rebind/remint can never corrupt the live card.
   card, no copy/retry targets). The old session stays persisted → still
   listed by `/sessions` and resumable.
 
-### 8.4 Panel palette
+### 8.5 Panel palette
 
 `buildPanelCard(statusLine, running, commands, page)`: the core row
 (Stop while running / Retry / Copy) stays first; below it the full command
@@ -324,7 +348,7 @@ buttons per page and ◀️/▶️ nav hidden at the bounds. Each button stamps
 The panel is stateless: every open/pager posts a fresh card built from the
 current authoritative state (no stale-guard needed).
 
-### 8.5 State-machine matrix for the new actions
+### 8.6 State-machine matrix for the new actions
 
 | Action \ Status | none | working | done | stopped | error |
 |---|---|---|---|---|---|

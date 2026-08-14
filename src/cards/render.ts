@@ -13,7 +13,7 @@
  */
 
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
-import type { CardElement, CardJson } from '../feishu/types.js';
+import type { CardElement, CardJson, ColumnContainer } from '../feishu/types.js';
 import type { ProjectInfo } from '../projects.js';
 import { markdownToElements } from './markdown.js';
 import { toolRowTitle } from './tool-summary.js';
@@ -99,7 +99,8 @@ export type SurfaceAction =
   | { readonly kind: 'command'; readonly name: string }
   | { readonly kind: 'resume-session'; readonly sessionId: string }
   | { readonly kind: 'panel-page'; readonly page: string }
-  | { readonly kind: 'sessions-page'; readonly page: string };
+  | { readonly kind: 'sessions-page'; readonly page: string }
+  | { readonly kind: 'permission-pick'; readonly preset: string };
 
 /**
  * Projects per picker card page (the button-based fallback, used only when
@@ -690,6 +691,100 @@ export function buildPanelCard(
       title: { tag: 'plain_text', content: '⚙️ dsh-feishu panel' },
       template: 'wathet',
     },
+    elements,
+  };
+}
+
+/** One permission-preset option as the picker renders it. */
+export interface PermissionPresetView {
+  /** The preset key (e.g. `workspace-write`). */
+  readonly name: string;
+  /** Human label (falls back to the key). */
+  readonly label: string;
+  /** One user-facing sentence, or `undefined`. */
+  readonly description: string | undefined;
+  /** Whether this preset is the session's current one. */
+  readonly current: boolean;
+}
+
+/**
+ * Build the `/permission` preset picker card: one row per switchable preset
+ * (label + description) with a Select button; the current preset is marked
+ * ★ and offers no button. Mirrors the sessions picker's proven v1
+ * `column_set` row layout.
+ * @param presets - the switchable presets, declaration order.
+ * @returns Feishu interactive card JSON (v1 layout).
+ */
+export function buildPermissionPickerCard(presets: readonly PermissionPresetView[]): CardJson {
+  const elements: CardElement[] = [
+    {
+      tag: 'markdown',
+      content:
+        '**Choose a permission preset** — sandbox mode + approval policy for this chat’s session.',
+    },
+    { tag: 'hr' },
+  ];
+  if (presets.length === 0) {
+    elements.push({ tag: 'markdown', content: 'No presets configured on this deployment.' });
+    return {
+      config: { wide_screen_mode: true },
+      header: {
+        title: { tag: 'plain_text', content: '🔐 Permission presets' },
+        template: 'wathet',
+      },
+      elements,
+    };
+  }
+  for (const preset of presets) {
+    const title = stripAngleBrackets(preset.label);
+    const description =
+      preset.description === undefined || preset.description === ''
+        ? ''
+        : stripAngleBrackets(preset.description);
+    const columns: ColumnContainer[] = [
+      {
+        tag: 'column',
+        width: 'weighted',
+        weight: 1,
+        vertical_align: 'center',
+        elements: [
+          {
+            tag: 'div',
+            text: {
+              tag: 'lark_md',
+              content: `**${title}**${description === '' ? '' : `\n\n${description}`}${
+                preset.current ? '\n\n★ current' : ''
+              }`,
+            },
+          },
+        ],
+      },
+    ];
+    if (!preset.current) {
+      columns.push({
+        tag: 'column',
+        width: 'auto',
+        vertical_align: 'center',
+        elements: [
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: 'Select' },
+            type: 'default',
+            value: actionValue({ kind: 'permission-pick', preset: preset.name }),
+          },
+        ],
+      });
+    }
+    elements.push({
+      tag: 'column_set',
+      flex_mode: 'flow',
+      horizontal_spacing: 'default',
+      columns,
+    });
+  }
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: '🔐 Permission presets' }, template: 'wathet' },
     elements,
   };
 }
