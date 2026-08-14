@@ -7,7 +7,7 @@ on:
 
 jobs:
   gates:
-    name: lint / typecheck / test / build
+    name: lint / typecheck / build / test (unit + integration)
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -33,8 +33,23 @@ jobs:
       - name: Typecheck
         run: pnpm run typecheck
 
-      - name: Test
-        run: pnpm run test
-
+      # The integration suite boots a real dsh process from the checkout's
+      # built lib/, so Build must land before Test.
       - name: Build
         run: pnpm run build
+
+      # Feishu is mocked via FEISHU_TRANSPORT=memory and the LLM via a local
+      # mock server — no real credentials are needed. The profile links the
+      # checkout; see docs/development.md → "Integration test".
+      - name: Prepare integration-test profile
+        env:
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home
+        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
+
+      # FEISHU_INT_REQUIRED turns a missing prerequisite (dsh CLI, profile,
+      # build) into a hard failure instead of the local graceful skip.
+      - name: Test (unit + integration)
+        env:
+          DSH_BIN: ${{ github.workspace }}/node_modules/.bin/dsh
+          FEISHU_INT_REQUIRED: '1'
+        run: pnpm run test
