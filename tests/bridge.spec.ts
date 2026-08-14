@@ -1866,26 +1866,11 @@ describe('panel command palette', () => {
           ? el.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
           : [],
       ) ?? [];
+    expect(labels2).toContain('🗺️ Plan mode');
     expect(labels2).toContain('🤖 Model');
     expect(labels2).toContain('📤 Export');
     expect(labels2).toContain('🎯 Goal');
     expect(labels2).toContain('🔐 Permission');
-    // The 17th button pushes the system group past one page: plan lands on
-    // page 3.
-    await h.bridge.handleCardAction({
-      messageId: 'mem-1',
-      chatId: 'oc_chat',
-      operatorOpenId: 'ou_user',
-      value: { kind: 'panel-page', page: '2' },
-    });
-    const panel3 = h.transport.sentCards.at(-1);
-    const labels3 =
-      panel3?.elements.flatMap((el) =>
-        el.tag === 'action'
-          ? el.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
-          : [],
-      ) ?? [];
-    expect(labels3).toContain('🗺️ Plan mode');
     // /panel is reachable as a slash line but its palette button is hidden —
     // a palette button that opens the panel would be the panel launching
     // itself (user report).
@@ -1911,7 +1896,7 @@ describe('panel command palette', () => {
     expect(
       panel?.elements.some(
         (el) =>
-          el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 1/3'),
+          el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 1/2'),
       ),
     ).toBe(true);
     const navLabels = (card: CardJson | undefined): string[] =>
@@ -1937,25 +1922,10 @@ describe('panel command palette', () => {
     expect(
       panel2?.elements.some(
         (el) =>
-          el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 2/3'),
+          el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 2/2'),
       ),
     ).toBe(true);
-    expect(navLabels(panel2)).toEqual(['◀️ Prev', 'Next ▶️']);
-    // Last page: only Prev.
-    await h.bridge.handleCardAction({
-      messageId: 'mem-1',
-      chatId: 'oc_chat',
-      operatorOpenId: 'ou_user',
-      value: { kind: 'panel-page', page: '2' },
-    });
-    const panel3 = h.transport.sentCards.at(-1);
-    expect(
-      panel3?.elements.some(
-        (el) =>
-          el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 3/3'),
-      ),
-    ).toBe(true);
-    expect(navLabels(panel3)).toEqual(['◀️ Prev']);
+    expect(navLabels(panel2)).toEqual(['◀️ Prev']);
   });
 
   it('a command button executes the same handler as the slash line', async () => {
@@ -2723,6 +2693,12 @@ describe('interactive questions (Iteration 3)', () => {
       value: { kind: 'question', id: 'q1', answer: 'Rust' },
     });
     await expect(pending).resolves.toEqual({ answers: [{ id: 'q1', selected: ['Rust'] }] });
+    // The question card becomes a static confirmation (user report: it must
+    // be disabled after answering).
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const answered = h.transport.updatedCards.at(-1);
+    expect(JSON.stringify(answered?.elements)).toContain('Answer: Rust');
+    expect(answered?.elements.some((el) => el.tag === 'action')).toBe(false);
   });
 
   it('collects multi-select answers via toggles and submit', async () => {

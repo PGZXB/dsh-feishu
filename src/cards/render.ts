@@ -582,33 +582,38 @@ export function panelPages(
   commands: readonly PanelCommand[],
   pageSize = PANEL_PAGE_SIZE,
 ): readonly (readonly PanelPageEntry[])[] {
-  const entries: PanelPageEntry[] = [];
+  // Group commands into whole category blocks (header + its buttons). A
+  // category is NEVER split across pages — the page boundary falls between
+  // blocks, and a block larger than the page size simply takes its own page
+  // (user report: '⚙️ System' must not be torn apart).
+  const blocks: PanelPageEntry[][] = [];
+  let block: PanelPageEntry[] = [];
   let lastCategory: string | undefined;
   for (const command of commands) {
     if (command.category !== lastCategory) {
-      entries.push({ type: 'header', label: command.category });
+      if (block.length > 0) blocks.push(block);
+      block = [{ type: 'header', label: command.category }];
       lastCategory = command.category;
     }
-    entries.push({ type: 'button', name: command.name, label: command.buttonLabel });
+    block.push({ type: 'button', name: command.name, label: command.buttonLabel });
   }
+  if (block.length > 0) blocks.push(block);
+  // Pack whole blocks into pages; only start a new page when the NEXT block
+  // would overflow the page size.
   const pages: PanelPageEntry[][] = [];
-  let current: PanelPageEntry[] = [];
+  let page: PanelPageEntry[] = [];
   let buttons = 0;
-  for (const entry of entries) {
-    if (entry.type === 'button' && buttons >= pageSize && current.length > 0) {
-      // A header stranded on the previous page (its first button starts the
-      // next page) rides along so the new page labels its commands.
-      const last = current[current.length - 1];
-      const stranded = last?.type === 'header' ? current.pop() : undefined;
-      pages.push(current);
-      current = [];
+  for (const next of blocks) {
+    const nextButtons = next.filter((entry) => entry.type === 'button').length;
+    if (buttons > 0 && buttons + nextButtons > pageSize) {
+      pages.push(page);
+      page = [];
       buttons = 0;
-      if (stranded !== undefined) current.push(stranded);
     }
-    if (entry.type === 'button') buttons += 1;
-    current.push(entry);
+    page.push(...next);
+    buttons += nextButtons;
   }
-  if (current.length > 0) pages.push(current);
+  if (page.length > 0) pages.push(page);
   return pages;
 }
 

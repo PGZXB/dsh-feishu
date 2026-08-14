@@ -28,6 +28,7 @@ import {
   buildModelPickerCard,
   buildPanelCard,
   buildPermissionPickerCard,
+  buildQuestionAnsweredCard,
   buildQuestionCard,
   buildRepoPickedCard,
   buildRepoPickerCard,
@@ -957,13 +958,27 @@ export class Bridge {
         continue;
       }
       const messageId = sent.messageId;
+      // Once answered, the card becomes a static confirmation (no buttons —
+      // further taps do nothing, user report). Deferred out of the card
+      // callback ACK.
+      const finalizeCard = (answerText: string): void => {
+        setTimeout(() => {
+          void this.options.transport
+            .updateCard(messageId, buildQuestionAnsweredCard(question.question, answerText))
+            .catch((error: unknown) => {
+              this.options.logger.warn(`question card settle update failed: ${String(error)}`);
+            });
+        }, 0);
+      };
       if (view.options.length === 0) {
         // Free-text: await the next message in this chat.
         this.awaitingQuestionAnswers.set(chatId, { requestId });
         this.interactions.register(requestId, chatId, messageId, (outcome) => {
           const pending = this.awaitingQuestionAnswers.get(chatId);
           if (pending?.requestId === requestId) this.awaitingQuestionAnswers.delete(chatId);
-          const text = outcome === 'cancelled' ? '' : outcome;
+          const cancelled = outcome === 'cancelled';
+          const text = cancelled ? '' : outcome;
+          finalizeCard(cancelled ? 'cancelled' : outcome);
           settleOne({ id: question.id, selected: [], ...(text === '' ? {} : { custom: text }) });
         });
         continue;
@@ -973,12 +988,15 @@ export class Bridge {
         this.interactions.register(requestId, chatId, messageId, () => {
           const state = this.questionState.get(requestId);
           this.questionState.delete(requestId);
-          settleOne({ id: question.id, selected: state?.selection ?? [] });
+          const selected = state?.selection ?? [];
+          finalizeCard(selected.length === 0 ? 'cancelled' : selected.join(', '));
+          settleOne({ id: question.id, selected });
         });
         continue;
       }
       // Single-select: the chosen option label is the outcome.
       this.interactions.register(requestId, chatId, messageId, (outcome) => {
+        finalizeCard(outcome);
         settleOne({ id: question.id, selected: [outcome] });
       });
     }
@@ -1999,7 +2017,11 @@ export class Bridge {
           };
         } catch (error: unknown) {
           this.options.logger.warn(`session export failed: ${String(error)}`);
-          return { kind: 'error', text: `session export failed: ${String(error)}` };
+          const detail = String(error);
+          const scopeHint = detail.includes('im:resource')
+            ? ' — the Feishu app needs the im:resource:upload permission scope (developer console → Permissions).'
+            : '';
+          return { kind: 'error', text: `session export failed: ${detail}${scopeHint}` };
         }
       },
     });

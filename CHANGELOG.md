@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+### Fixed
+
+- **Question cards disable after answering** (user report): the card is
+  replaced in place by a static `Answer: …` confirmation (no buttons —
+  further taps do nothing), like the approval card's decided state.
+- **`/export` surfaces the missing upload scope**: the Feishu upload fails
+  with HTTP 400 when the app lacks `im:resource:upload` — the error now
+  appends the exact scope hint (developer console → Permissions), and
+  `docs/feishu-setup.md` documents the requirement.
+- **Panel pagination never splits a category** (user report): `panelPages`
+  packs whole category blocks — a category larger than the page size keeps
+  its own page, and the boundary falls between categories. The system group
+  (9 buttons) stays together on page 2 (the palette is 2 pages again).
+
 
 - **`/export` sends the session log as a file message.** The Feishu
   equivalent of the web's browser-download `/export` (whose command is a

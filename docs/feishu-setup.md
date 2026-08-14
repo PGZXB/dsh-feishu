@@ -80,3 +80,11 @@ live card.
 Only outbound access is needed: Feishu Open Platform HTTPS + WSS
 (`open.feishu.cn` / `open.larksuite.com`), the DeepSeek API, and npm (for
 installs). No inbound ports, no public IP.
+
+## Permissions
+
+- Sending file messages (`/export`) requires the **`im:resource:upload`**
+  (or `im:resource`) scope in the developer console (app →
+  Permissions). Without it the upload fails with HTTP 400 / "Access denied …
+  im:resource:upload" — the surface surfaces this hint in the `/export`
+  error text.

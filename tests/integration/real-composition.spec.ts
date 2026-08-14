@@ -1833,7 +1833,7 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
       expect(
         page1?.elements.some(
           (el) =>
-            el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 1/3'),
+            el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 1/2'),
         ),
       ).toBe(true);
       writeAction({
@@ -1853,7 +1853,7 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
                   (el) =>
                     el.tag === 'note' &&
                     'elements' in el &&
-                    el.elements[0]?.content.includes('page 2/3'),
+                    el.elements[0]?.content.includes('page 2/2'),
                 ) === true,
             ),
         30_000,
@@ -1867,42 +1867,10 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
             ? el.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
             : [],
         ) ?? [];
+      expect(labels).toContain('🗺️ Plan mode');
       expect(labels).toContain('🤖 Model');
       expect(labels).toContain('📤 Export');
       expect(labels).toContain('🔐 Permission');
-      // The 17th button pushes plan mode to page 3.
-      writeAction({
-        messageId: 'mem-3',
-        chatId,
-        operatorOpenId: 'ou_mock',
-        value: { kind: 'panel-page', page: '2' },
-      });
-      await waitFor(
-        'the page-3 panel card',
-        () =>
-          readOutbox()
-            .filter((r) => r.kind === 'card')
-            .some(
-              (r) =>
-                r.card?.elements.some(
-                  (el) =>
-                    el.tag === 'note' &&
-                    'elements' in el &&
-                    el.elements[0]?.content.includes('page 3/3'),
-                ) === true,
-            ),
-        30_000,
-      );
-      const page3 = readOutbox()
-        .filter((r) => r.kind === 'card')
-        .at(-1)?.card;
-      const labels3 =
-        page3?.elements.flatMap((el) =>
-          el.tag === 'action'
-            ? el.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
-            : [],
-        ) ?? [];
-      expect(labels3).toContain('🗺️ Plan mode');
     } catch (error) {
       throw new Error(
         `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,

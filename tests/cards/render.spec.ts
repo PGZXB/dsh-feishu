@@ -593,27 +593,29 @@ describe('panelPages', () => {
     ]);
   });
 
-  it('paginates by button count, not entry count', () => {
+  it('packs whole category blocks and never splits one across pages', () => {
     const pages = panelPages(paletteCommands);
     const buttonCounts = pages.map((page) => page.filter((e) => e.type === 'button').length);
-    expect(buttonCounts).toEqual([PANEL_PAGE_SIZE, paletteCommands.length - PANEL_PAGE_SIZE]);
+    // session(7) + chat(1) fit page 1; the whole system block stays on
+    // page 2 (categories are never torn across pages).
+    expect(buttonCounts).toEqual([PANEL_PAGE_SIZE, 7]);
   });
 
-  it('rides a stranded category header onto the next page', () => {
+  it('a category larger than the page size keeps its own page (no split)', () => {
     const pages = panelPages(
       [
         { name: 'a', buttonLabel: 'A', category: 'session' },
         { name: 'b', buttonLabel: 'B', category: 'system' },
         { name: 'c', buttonLabel: 'C', category: 'system' },
+        { name: 'd', buttonLabel: 'D', category: 'system' },
       ],
-      1,
+      2,
     );
-    // The system header would strand on page 1 (its first button starts page
-    // 2); it rides along so page 2 labels its commands.
+    // session(1) fits; system(3) would overflow page 1 → whole block moves
+    // to page 2 with its header (never 'system' split across pages).
     expect(pages.map((p) => p.map((e) => (e.type === 'header' ? e.label : e.name)))).toEqual([
       ['session', 'a'],
-      ['system', 'b'],
-      ['c'],
+      ['system', 'b', 'c', 'd'],
     ]);
   });
 });
