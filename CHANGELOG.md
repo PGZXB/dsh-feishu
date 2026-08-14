@@ -252,3 +252,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Regression tests at both layers: unit (panel after done keeps the
     green card, no Stop) and real-composition integration (same scenario
     against the real dsh process). 158 tests total.
+- Full card state machine matrix (user directive: exhaustively test the
+  machine, not spot-check): every (state, action) cell of
+  none/working/done/error × stop/copy/retry/panel/toggle-rows/row-details,
+  plus cross-turn integrity (done → new message → working → second done)
+  and error → retry → working → done recovery. The single syncCard render
+  path is the invariant under test. 170 tests total (unit + 4 real-
+  composition integration).
