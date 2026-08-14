@@ -22,6 +22,7 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session';
 import {
   assistantText,
   buildCard,
+  buildModelPickerCard,
   buildPanelCard,
   buildPermissionPickerCard,
   buildRepoPickedCard,
@@ -29,6 +30,7 @@ import {
   buildRowDetailsCard,
   type CardSnapshot,
   type CardStatus,
+  type ModelOptionView,
   type PanelCommand,
   type PermissionPresetView,
   type ThinkRow,
@@ -121,6 +123,21 @@ export interface AgentDefaultModelService {
   saveSelection(next: ModelSelectionView): Promise<void>;
 }
 
+/** One model entry the /model picker lists (structural subset of
+ *  `LlmModelInfo`). */
+export interface LlmModelView {
+  readonly provider: string;
+  readonly id: string;
+  readonly name: string;
+}
+
+/** Structural subset of `ctx.llm` (`@deepseek-ai/dsh-llm`, mounted by
+ *  dsh-base): provider routes and their advisory model catalogs. */
+export interface LlmService {
+  listProviders(): readonly { readonly id: string; readonly name: string }[];
+  listModels(provider: string): Promise<readonly LlmModelView[]>;
+}
+
 /** Options for {@link Bridge}. */
 export interface BridgeOptions {
   readonly transport: FeishuTransport;
@@ -181,6 +198,12 @@ export interface BridgeOptions {
    * available, else fails loud.
    */
   readonly agentDefaultModel?: AgentDefaultModelService;
+  /**
+   * LLM runtime (`ctx.llm`, mounted by dsh-base): the /model picker card
+   * lists models through `listProviders` × `listModels`. Absent, a bare
+   * `/model` falls back to the text display.
+   */
+  readonly llm?: LlmService;
   /**
    * Policy for an unknown slash line: `error` replies with an unknown-command
    * notice (default); `passthrough` delivers the line to the model as a
@@ -382,6 +405,8 @@ export class Bridge {
   private readonly sessionPickerMessageIds = new Map<string, string>();
   /** Active /permission picker card message id per chat (stale-callback guard). */
   private readonly permissionPickerMessageIds = new Map<string, string>();
+  /** Active /model picker card message id per chat (stale-callback guard). */
+  private readonly modelPickerMessageIds = new Map<string, string>();
 
   /** The live agent for a chat, or `undefined` (no session or not attached). */
   private liveAgent(chatId: string): Agent | undefined {
@@ -518,6 +543,7 @@ export class Bridge {
     'cancel',
     'group',
     'model',
+    'panel',
   ]);
 
   /** Reset a chat's card state: no live card, no copy/retry targets. Used by
@@ -639,6 +665,7 @@ export class Bridge {
   private panelCommands(): PanelCommand[] {
     const categoryOrder = ['session', 'chat', 'system'];
     return [...this.commands.list()]
+      .filter((command) => command.hiddenFromPanel !== true)
       .sort((a, b) => categoryOrder.indexOf(a.category) - categoryOrder.indexOf(b.category))
       .map((command) => ({
         name: command.name,
@@ -710,6 +737,67 @@ export class Bridge {
       this.permissionPickerMessageIds.set(chatId, sent.messageId);
     } catch (error: unknown) {
       this.options.logger.warn(`permission picker send failed: ${String(error)}`);
+    }
+  }
+
+  /** The chat's current model as a `provider/model` selection arg. */
+  private currentModelSelection(chatId: string): string | undefined {
+    const live = this.liveAgent(chatId);
+    if (live?.options?.provider !== undefined && live?.options?.model !== undefined) {
+      return `${live.options.provider}/${live.options.model}`;
+    }
+    const selection = this.options.agentDefaultModel?.currentSelection();
+    if (selection === undefined) return undefined;
+    return `${selection.provider}/${selection.model}`;
+  }
+
+  /**
+   * Load the model catalog for the /model picker: every registered provider
+   * × its advisory model list (a failing provider catalog is skipped, loud
+   * in the log). `undefined` when the llm service is absent.
+   */
+  private async loadModelOptions(): Promise<readonly ModelOptionView[] | undefined> {
+    const llm = this.options.llm;
+    if (llm === undefined) return undefined;
+    const options: ModelOptionView[] = [];
+    for (const provider of llm.listProviders()) {
+      try {
+        const models = await llm.listModels(provider.id);
+        for (const model of models) {
+          options.push({
+            value: `${provider.id}/${model.id}`,
+            label: `${provider.id} · ${model.name}`,
+            current: false,
+          });
+        }
+      } catch (error: unknown) {
+        this.options.logger.warn(`model catalog for ${provider.id} failed: ${String(error)}`);
+      }
+    }
+    return options;
+  }
+
+  /**
+   * Post the /model picker card: a dropdown of the available models with the
+   * current one preselected.
+   * @param chatId - the chat.
+   */
+  private async openModelPicker(chatId: string): Promise<void> {
+    const options = await this.loadModelOptions();
+    if (options === undefined) return;
+    const current = this.currentModelSelection(chatId);
+    const withCurrent = options.map((option) => ({
+      ...option,
+      current: option.value === current,
+    }));
+    try {
+      const sent = await this.options.transport.sendCard(
+        chatId,
+        buildModelPickerCard(withCurrent, current),
+      );
+      this.modelPickerMessageIds.set(chatId, sent.messageId);
+    } catch (error: unknown) {
+      this.options.logger.warn(`model picker send failed: ${String(error)}`);
     }
   }
 
@@ -1278,6 +1366,64 @@ export class Bridge {
         );
         break;
       }
+      case 'model-pick': {
+        // Dropdown selections arrive in `option` (`provider/model`); the
+        // button fallback stamps it in `value.selection`.
+        const selection = action.option ?? action.value.selection;
+        if (selection === undefined || selection === '') break;
+        // Only the active model picker may select (stale-card guard).
+        if (action.messageId !== this.modelPickerMessageIds.get(action.chatId)) {
+          this.options.logger.info(`ignoring stale model pick from card ${action.messageId}`);
+          break;
+        }
+        if (this.refuseWhileWorking(action.chatId)) {
+          await this.replyCommandResult(action.chatId, {
+            kind: 'error',
+            text: 'a turn is running — stop it first.',
+          });
+          break;
+        }
+        const service = this.options.agentDefaultModel;
+        if (service === undefined) {
+          await this.options.transport.sendText(
+            action.chatId,
+            'Model pick unavailable — the agentDefaultModel service is not mounted.',
+          );
+          break;
+        }
+        const parsed = parseModelArg(selection);
+        if (!parsed.ok) {
+          await this.options.transport.sendText(action.chatId, `⚠️ ${parsed.error}`);
+          break;
+        }
+        await service.saveSelection(parsed.selection);
+        await this.options.transport.sendText(
+          action.chatId,
+          `Default model set to ${parsed.selection.provider} · ${parsed.selection.model} (applies to new sessions).`,
+        );
+        break;
+      }
+      case 'model-page': {
+        if (action.messageId !== this.modelPickerMessageIds.get(action.chatId)) {
+          this.options.logger.info(`ignoring stale model page from card ${action.messageId}`);
+          break;
+        }
+        const page = Number(action.value.page);
+        if (!Number.isInteger(page) || page < 0) break;
+        const options = await this.loadModelOptions();
+        if (options === undefined) break;
+        const current = this.currentModelSelection(action.chatId);
+        try {
+          const sent = await this.options.transport.sendCard(
+            action.chatId,
+            buildModelPickerCard(options, current, page),
+          );
+          this.modelPickerMessageIds.set(action.chatId, sent.messageId);
+        } catch (error: unknown) {
+          this.options.logger.warn(`model picker page refresh failed: ${String(error)}`);
+        }
+        break;
+      }
       default: {
         this.options.logger.warn(`unknown card action kind: ${kind ?? '(missing)'}`);
       }
@@ -1301,6 +1447,16 @@ export class Bridge {
           kind: 'success',
           text: `dsh-feishu commands:\n${lines}\n\nOther slash lines are forwarded to dsh when they exist in its registry.`,
         };
+      },
+    });
+    this.commands.register({
+      name: 'panel',
+      description: 'Open the control panel card (all commands as buttons)',
+      category: 'system',
+      hiddenFromPanel: true,
+      handler: async (invocation) => {
+        await this.openPanel(invocation.chatId);
+        return { kind: 'success', text: '' };
       },
     });
     this.commands.register({
@@ -1420,12 +1576,21 @@ export class Bridge {
     });
     this.commands.register({
       name: 'model',
-      description: 'Show this chat’s model; set the default with /model <provider>/<model>',
+      description:
+        'Choose a model (opens the picker); or /model <provider>/<model> to set the default',
       category: 'system',
       buttonLabel: '🤖 Model',
       handler: async (invocation) => {
         const raw = invocation.rawInput.trim();
         if (raw === '') {
+          if (this.options.llm !== undefined) {
+            // A bare /model (or the panel button) opens the picker so the
+            // user can actually CHOOSE a model — the button must not just
+            // pass through (user report).
+            await this.openModelPicker(invocation.chatId);
+            return { kind: 'success', text: '' };
+          }
+          // No catalog: fall back to the text display.
           // The live agent's own options win (what this session actually
           // runs); otherwise the deployment default.
           const live = this.liveAgent(invocation.chatId);

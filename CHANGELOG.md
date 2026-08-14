@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`/model` now opens a model picker card** (user report: the button only
+  passed through). The catalog comes from `ctx.llm` (`listProviders` ×
+  `listModels`; the deepseek adapter ships a static default catalog, so no
+  network), rendered as a `select_static` dropdown with the current model
+  preselected (`initial_option`, paginated buttons beyond the option cap)
+  and a `★ current` note. A pick sets the default for new sessions through
+  `ctx.agentDefaultModel.saveSelection`; typed `/model <provider>/<model>`
+  still sets directly. Without `ctx.llm` a bare `/model` degrades to the
+  text display.
+- **`/panel` command** (user report: the panel was unreachable before the
+  first message). `/panel` opens the control panel card from any chat and
+  is allowed while a turn runs. Its palette button is hidden — a palette
+  button that opens the panel would be the panel launching itself
+  (`SurfaceCommand.hiddenFromPanel`).
+
+
 - **Panel palette grouping fix.** Category headers now render as their own
   blocks — `🧩 Session` header, then the session buttons, then `💬 Chat`,
   then the chat buttons — instead of all headers stacking before all

@@ -286,7 +286,8 @@ palette idea). `category` groups the panel palette.
 | `/repo [<path>]` | session | project picker card (dropdown ≤ 50, buttons + pages above) |
 | `/group [<name>]` | chat | create a group with the bot and sender |
 | `/sessions` | session | session list card (title/id/cwd/age/live/saved), paginated, per-row Resume buttons |
-| `/model` | system | show this chat's model (`provider · model`); `/model <provider>/<model>` sets the default for new sessions (surface-native — the web `/model` is a client popup with no host command) |
+| `/model` | system | **model picker card** (catalog from `ctx.llm` `listProviders` × `listModels`, current preselected); a pick sets the default for new sessions. `/model <provider>/<model>` sets it directly. Surface-native — the web `/model` is a client popup with no host command |
+| `/panel` | system | open the control panel card from any chat (slash line only — its palette button is hidden, since a palette button that opens the panel would be the panel launching itself) |
 | `/resume [<id>]` | session | resume a saved session; no id opens the `/sessions` picker |
 | `/clear` | session | start a fresh conversation — **non-destructive**: the previous session stays saved and resumable (content-integrity rule) |
 | `/new` | session | alias of `/clear` (web/cc-tui "new chat" parity) |
@@ -308,6 +309,15 @@ The bare harness forms of `/plan` and `/permission` cannot *choose* or
 args only reports the current preset. A button press must be able to switch
 (user report) — so the two wrappers are state-aware:
 
+- **`/model` (no args, or the panel button)** opens a **model picker card**:
+  the catalog comes from `ctx.llm` (`listProviders` × `listModels` — the
+  deepseek adapter ships a static default catalog, so no network), a
+  `select_static` dropdown with the current model preselected via
+  `initial_option` (paginated buttons beyond the option cap), and a note
+  spelling out `★ current`. A pick sets the default for new sessions
+  through `ctx.agentDefaultModel.saveSelection`. Stale picks rejected;
+  picks refused while a turn runs. Without `ctx.llm` a bare `/model`
+  degrades to the text display (loud log).
 - **`/permission` (no args, or the panel button)** opens a **preset picker
   card** built from the real `ctx.permissionPresets` service (mounted by
   dsh-base): a `select_static` **dropdown** (repo-picker pattern — inside an
@@ -332,8 +342,9 @@ args only reports the current preset. A button press must be able to switch
 
 While a turn is running (`cardStates[chatId].status === 'working'`), only
 read-only commands may run: `/help`, `/status`, `/sessions` (read state),
-`/cancel` (the stop itself), `/group` (separate chat), `/model` (reads, or
-sets the default for future sessions — never touches the running turn). Every other command —
+`/cancel` (the stop itself), `/group` (separate chat), `/model` (picker —
+picks are refused mid-turn, but opening it is fine), `/panel` (the panel
+carries Stop). Every other command —
 `/cd /repo /clear /new /resume` and the five web wrappers — is refused with
 "a turn is running — stop it first." The gate lives in `handleCommand` and
 the panel `command` action (one rule, two entry points), so a mid-turn

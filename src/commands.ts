@@ -34,6 +34,12 @@ export interface SurfaceCommand {
   readonly category: 'session' | 'chat' | 'system';
   /** Button label on the control panel; defaults to the command name. */
   readonly buttonLabel?: string;
+  /**
+   * Exclude this command's button from the panel palette (the command stays
+   * reachable via its slash line and /help). `/panel` uses it — a palette
+   * button that opens the panel would be the panel launching itself.
+   */
+  readonly hiddenFromPanel?: boolean;
   readonly handler: (invocation: CommandInvocation) => CommandResult | Promise<CommandResult>;
 }
 

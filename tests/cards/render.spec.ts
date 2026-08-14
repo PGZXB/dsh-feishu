@@ -7,6 +7,7 @@ import { markdownToElements } from '../../src/cards/markdown.js';
 import {
   assistantText,
   buildCard,
+  buildModelPickerCard,
   buildPanelCard,
   buildPermissionPickerCard,
   buildRepoPickedCard,
@@ -748,5 +749,82 @@ describe('buildPermissionPickerCard', () => {
           el.tag === 'markdown' && 'content' in el && el.content.includes('No presets configured'),
       ),
     ).toBe(true);
+  });
+});
+
+describe('buildModelPickerCard', () => {
+  const options = [
+    {
+      value: 'deepseek-official/deepseek-v4-flash',
+      label: 'deepseek-official · DeepSeek V4 Flash',
+      current: true,
+    },
+    {
+      value: 'deepseek-official/deepseek-r1',
+      label: 'deepseek-official · DeepSeek R1',
+      current: false,
+    },
+  ];
+
+  it('renders a select_static dropdown with provider/model options', () => {
+    const card = buildModelPickerCard(options, 'deepseek-official/deepseek-v4-flash');
+    const action = card.elements.find((el) => el.tag === 'action');
+    const select = selectOf(action);
+    expect(select).toBeDefined();
+    expect(select?.options.map((o) => o.value)).toEqual([
+      'deepseek-official/deepseek-v4-flash',
+      'deepseek-official/deepseek-r1',
+    ]);
+    expect(select?.value).toEqual({ kind: 'model-pick' });
+    // The current selection is preselected.
+    expect(select?.initial_option).toBe('deepseek-official/deepseek-v4-flash');
+  });
+
+  it('spells out the current model in a note; omits initial_option when absent', () => {
+    const noCurrent = buildModelPickerCard(
+      options.map((o) => ({ ...o, current: false })),
+      undefined,
+    );
+    const select = selectOf(noCurrent.elements.find((el) => el.tag === 'action'));
+    expect(select?.initial_option).toBeUndefined();
+    const note = noCurrent.elements.find((el) => el.tag === 'note');
+    expect(note && 'elements' in note ? note.elements[0]?.content : '').toContain(
+      'No model selected yet',
+    );
+    const withCurrent = buildModelPickerCard(options, 'deepseek-official/deepseek-v4-flash');
+    const note2 = withCurrent.elements.find((el) => el.tag === 'note');
+    expect(note2 && 'elements' in note2 ? note2.elements[0]?.content : '').toContain(
+      '★ current: deepseek-official · DeepSeek V4 Flash',
+    );
+  });
+
+  it('shows the empty state when the catalog is empty', () => {
+    const card = buildModelPickerCard([], undefined);
+    expect(card.header?.title.content).toBe('🤖 Model');
+    expect(
+      card.elements.some(
+        (el) =>
+          el.tag === 'markdown' && 'content' in el && el.content.includes('No models available'),
+      ),
+    ).toBe(true);
+  });
+
+  it('falls back to paginated Select buttons beyond the dropdown cap', () => {
+    const many = Array.from({ length: 60 }, (_, i) => ({
+      value: `provider-${i}/model-${i}`,
+      label: `provider-${i} · Model ${i}`,
+      current: false,
+    }));
+    const card = buildModelPickerCard(many, undefined, 0);
+    const actions = card.elements.filter((el) => el.tag === 'action');
+    const pageButtons = actions.flatMap((el) =>
+      'actions' in el ? el.actions.filter((a) => a.tag === 'button') : [],
+    );
+    const pickValues = pageButtons.filter((a) => a.value.kind === 'model-pick').map((a) => a.value);
+    expect(pickValues).toHaveLength(8);
+    expect(pickValues[0]).toEqual({ kind: 'model-pick', selection: 'provider-0/model-0' });
+    // Nav buttons present with page bounds.
+    const nav = pageButtons.filter((a) => a.value.kind === 'model-page').map((a) => a.text.content);
+    expect(nav).toEqual(['Next ›']);
   });
 });

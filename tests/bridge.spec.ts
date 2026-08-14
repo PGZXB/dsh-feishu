@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type AgentDefaultModelService,
   Bridge,
+  type LlmService,
   type ModelSelectionView,
   type PermissionPresetService,
   type PlanModeService,
@@ -181,6 +182,7 @@ function makeHarness(
     permissionPresets?: PermissionPresetService;
     planMode?: PlanModeService;
     agentDefaultModel?: AgentDefaultModelService;
+    llm?: LlmService;
   } = {},
 ): Harness {
   const transport = new RecordingTransport();
@@ -223,6 +225,7 @@ function makeHarness(
     ...(options.agentDefaultModel !== undefined
       ? { agentDefaultModel: options.agentDefaultModel }
       : {}),
+    ...(options.llm !== undefined ? { llm: options.llm } : {}),
   });
   const emit = (sessionId: string, event: SessionEvent): void => {
     for (const listener of [...listeners]) listener(sessionId, event);
@@ -1855,8 +1858,20 @@ describe('panel command palette', () => {
           : [],
       ) ?? [];
     expect(labels2).toContain('🗺️ Plan mode');
+    expect(labels2).toContain('🤖 Model');
     expect(labels2).toContain('🎯 Goal');
     expect(labels2).toContain('🔐 Permission');
+    // /panel is reachable as a slash line but its palette button is hidden —
+    // a palette button that opens the panel would be the panel launching
+    // itself (user report).
+    const allLabels = (card: CardJson | undefined): string[] =>
+      card?.elements.flatMap((el) =>
+        el.tag === 'action'
+          ? el.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
+          : [],
+      ) ?? [];
+    expect(allLabels(panel)).not.toContain('⚙️ Panel');
+    expect(allLabels(panel2)).not.toContain('⚙️ Panel');
   });
 
   it('paginates the palette with nav buttons at page bounds', async () => {
@@ -2299,5 +2314,129 @@ describe('/model command', () => {
     expect(
       h.transport.sentTexts.some((t) => t.text === 'model: deepseek-official · deepseek-v4-flash'),
     ).toBe(true);
+  });
+});
+
+/** Fake `ctx.llm` service for the /model picker tests. */
+class FakeLlmService implements LlmService {
+  listProviders(): readonly { readonly id: string; readonly name: string }[] {
+    return [{ id: 'deepseek-official', name: 'DeepSeek' }];
+  }
+  async listModels(provider: string): Promise<{ provider: string; id: string; name: string }[]> {
+    return [
+      { provider, id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' },
+      { provider, id: 'deepseek-r1', name: 'DeepSeek R1' },
+    ];
+  }
+}
+
+describe('/model picker', () => {
+  it('a bare /model opens the picker card with the model catalog', async () => {
+    const llm = new FakeLlmService();
+    const defaults = new FakeAgentDefaultModelService();
+    const h = makeHarness({ llm, agentDefaultModel: defaults });
+    await h.bridge.handleMessage(message({ text: '/model' }));
+    const card = h.transport.sentCards.at(-1);
+    expect(card?.header?.title.content).toBe('🤖 Model');
+    const action = card?.elements.find((el) => el.tag === 'action');
+    const select =
+      action && 'actions' in action
+        ? action.actions.find((a) => a.tag === 'select_static')
+        : undefined;
+    expect(select && 'options' in select ? select.options.map((o) => o.value) : []).toEqual([
+      'deepseek-official/deepseek-v4-flash',
+      'deepseek-official/deepseek-r1',
+    ]);
+    // The current default is preselected.
+    expect(select && 'initial_option' in select ? select.initial_option : undefined).toBe(
+      'deepseek-official/deepseek-v4-flash',
+    );
+  });
+
+  it('a model pick applies the selection through the default service', async () => {
+    const llm = new FakeLlmService();
+    const defaults = new FakeAgentDefaultModelService();
+    const h = makeHarness({ llm, agentDefaultModel: defaults });
+    await h.bridge.handleMessage(message({ text: '/model' }));
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'model-pick' },
+      option: 'deepseek-official/deepseek-r1',
+    });
+    expect(defaults.saved).toEqual([{ provider: 'deepseek-official', model: 'deepseek-r1' }]);
+    expect(
+      h.transport.sentTexts.some((t) =>
+        t.text.includes('Default model set to deepseek-official · deepseek-r1'),
+      ),
+    ).toBe(true);
+  });
+
+  it('rejects a stale model pick from a superseded picker card', async () => {
+    const llm = new FakeLlmService();
+    const defaults = new FakeAgentDefaultModelService();
+    const h = makeHarness({ llm, agentDefaultModel: defaults });
+    await h.bridge.handleMessage(message({ text: '/model' }));
+    await h.bridge.handleCardAction({
+      messageId: 'msg-0',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'model-pick' },
+      option: 'deepseek-official/deepseek-r1',
+    });
+    expect(defaults.saved).toHaveLength(0);
+  });
+
+  it('a model pick while a turn runs is refused', async () => {
+    const llm = new FakeLlmService();
+    const defaults = new FakeAgentDefaultModelService();
+    const h = makeHarness({ llm, agentDefaultModel: defaults });
+    await h.bridge.handleMessage(message({ text: '/model' }));
+    const pickerId = lastCardId(h);
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: 'start a turn' }));
+    await h.bridge.handleCardAction({
+      messageId: pickerId,
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'model-pick' },
+      option: 'deepseek-official/deepseek-r1',
+    });
+    expect(h.transport.sentTexts.some((t) => t.text.includes('a turn is running'))).toBe(true);
+    expect(defaults.saved).toHaveLength(0);
+  });
+});
+
+describe('/panel command', () => {
+  it('opens the control panel card from a fresh chat (no prior message)', async () => {
+    const h = makeHarness();
+    await h.bridge.handleMessage(message({ text: '/panel' }));
+    const panel = h.transport.sentCards.at(-1);
+    expect(panel?.header?.title.content).toBe('⚙️ dsh-feishu panel');
+    // The fresh-chat panel is idle (no Stop) and shows the context line.
+    const core = panel?.elements.find((el) => el.tag === 'action');
+    const coreLabels =
+      core && 'actions' in core
+        ? core.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
+        : [];
+    expect(coreLabels).toEqual(['🔁 Retry last', '📋 Copy last']);
+    expect(
+      panel?.elements.some(
+        (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('No session yet'),
+      ),
+    ).toBe(true);
+  });
+
+  it('is allowed while a turn is running (the panel carries Stop)', async () => {
+    const h = makeHarness();
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/panel' }));
+    const panel = h.transport.sentCards.at(-1);
+    const core = panel?.elements.find((el) => el.tag === 'action');
+    const coreLabels =
+      core && 'actions' in core
+        ? core.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
+        : [];
+    expect(coreLabels).toEqual(['⏹ Stop current', '🔁 Retry last', '📋 Copy last']);
   });
 });

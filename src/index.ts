@@ -30,6 +30,7 @@ import {
   type AgentStore,
   Bridge,
   type BridgeLogger,
+  type LlmService,
   type PermissionPresetService,
   type PlanModeService,
   type SessionListRow,
@@ -316,6 +317,7 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
     ...(ctx.get('agentDefaultModel') !== undefined
       ? { agentDefaultModel: ctx.get('agentDefaultModel') as AgentDefaultModelService }
       : {}),
+    ...(ctx.get('llm') !== undefined ? { llm: ctx.get('llm') as LlmService } : {}),
   });
   ctx.effect(() => () => {
     bridge.dispose();

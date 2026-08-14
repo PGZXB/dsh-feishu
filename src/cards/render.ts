@@ -104,7 +104,10 @@ export type SurfaceAction =
   | { readonly kind: 'sessions-page'; readonly page: string }
   // `preset` is optional: the dropdown stamps the marker only (the choice
   // arrives in the callback's `option`); the legacy button carried it.
-  | { readonly kind: 'permission-pick'; readonly preset?: string };
+  | { readonly kind: 'permission-pick'; readonly preset?: string }
+  // `selection` is optional for the same dropdown-marker reason.
+  | { readonly kind: 'model-pick'; readonly selection?: string }
+  | { readonly kind: 'model-page'; readonly page: string };
 
 /**
  * Projects per picker card page (the button-based fallback, used only when
@@ -817,6 +820,121 @@ export function buildPermissionPickerCard(presets: readonly PermissionPresetView
   return {
     config: { wide_screen_mode: true },
     header: { title: { tag: 'plain_text', content: '🔐 Permission presets' }, template: 'wathet' },
+    elements,
+  };
+}
+
+/** One model option as the /model picker renders it. */
+export interface ModelOptionView {
+  /** The selection arg: `provider/model`. */
+  readonly value: string;
+  /** Display label: `provider · name`. */
+  readonly label: string;
+  /** Whether this option is the session's current model. */
+  readonly current: boolean;
+}
+
+/** Model buttons per page in the >50-option fallback. */
+export const MODEL_PAGE_SIZE = 8;
+
+/**
+ * Build the /model picker card: a dropdown of the available models
+ * (selection = `provider/model`), preselecting the current one, with a
+ * quiet note spelling out the current model. Beyond the select option cap
+ * it falls back to paginated Select buttons (repo-picker pattern).
+ * @param options - the model catalog (provider/model entries).
+ * @param currentSelection - the current `provider/model`, or `undefined`.
+ * @param page - zero-based page index (button fallback only).
+ * @returns Feishu interactive card JSON (v1 layout).
+ */
+export function buildModelPickerCard(
+  options: readonly ModelOptionView[],
+  currentSelection: string | undefined,
+  page = 0,
+): CardJson {
+  const elements: CardElement[] = [
+    {
+      tag: 'markdown',
+      content:
+        '**Choose a model** — sets the default for new sessions (the current session keeps its model).',
+    },
+    { tag: 'hr' },
+  ];
+  const current = options.find((option) => option.current);
+  if (options.length === 0) {
+    elements.push({
+      tag: 'markdown',
+      content: 'No models available on this deployment — use /model <provider>/<model> to set one.',
+    });
+  } else if (options.length <= REPO_SELECT_MAX_OPTIONS) {
+    const canPreselect =
+      currentSelection !== undefined && options.some((option) => option.value === currentSelection);
+    elements.push({
+      tag: 'action',
+      actions: [
+        {
+          tag: 'select_static',
+          placeholder: { tag: 'plain_text', content: 'Choose a model…' },
+          ...(canPreselect ? { initial_option: currentSelection } : {}),
+          options: options.map((option) => ({
+            text: { tag: 'plain_text', content: option.label },
+            value: option.value,
+          })),
+          value: actionValue({ kind: 'model-pick' }),
+        },
+      ],
+    });
+  } else {
+    const total = Math.ceil(options.length / MODEL_PAGE_SIZE);
+    const index = Math.min(Math.max(page, 0), total - 1);
+    const start = index * MODEL_PAGE_SIZE;
+    const pageOptions = options.slice(start, start + MODEL_PAGE_SIZE);
+    const buttons = pageOptions.map((option) => ({
+      tag: 'button' as const,
+      text: { tag: 'plain_text' as const, content: option.label },
+      value: actionValue({ kind: 'model-pick', selection: option.value }),
+    }));
+    if (buttons.length > 0) elements.push({ tag: 'action', actions: buttons });
+    if (total > 1) {
+      const nav: Array<{
+        readonly tag: 'button';
+        readonly text: { readonly tag: 'plain_text'; readonly content: string };
+        readonly value: Record<string, string>;
+      }> = [];
+      if (index > 0) {
+        nav.push({
+          tag: 'button',
+          text: { tag: 'plain_text', content: '‹ Prev' },
+          value: actionValue({ kind: 'model-page', page: String(index - 1) }),
+        });
+      }
+      if (index < total - 1) {
+        nav.push({
+          tag: 'button',
+          text: { tag: 'plain_text', content: 'Next ›' },
+          value: actionValue({ kind: 'model-page', page: String(index + 1) }),
+        });
+      }
+      elements.push({ tag: 'action', actions: nav });
+    }
+  }
+  elements.push({
+    tag: 'note',
+    elements: [
+      {
+        tag: 'plain_text',
+        content:
+          current === undefined
+            ? currentSelection === undefined
+              ? 'No model selected yet.'
+              : `★ current: ${currentSelection}`
+            : `★ current: ${current.label}`,
+      },
+    ],
+  });
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: '🤖 Model' }, template: 'wathet' },
     elements,
   };
 }

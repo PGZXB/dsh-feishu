@@ -1077,14 +1077,84 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
 
       const chatId = `oc_model_${Date.now()}`;
       sendMessage(chatId, '/model');
+      // Bare /model opens the picker card with the real deepseek catalog.
       await waitFor(
-        'the model text',
+        'the model picker card',
+        () =>
+          readOutbox()
+            .filter((r) => r.kind === 'card')
+            .some((r) => r.card?.header?.title.content === '🤖 Model'),
+        60_000,
+      );
+      const pickerRecord = [...readOutbox()]
+        .reverse()
+        .find((r) => r.kind === 'card' && r.card?.header?.title.content === '🤖 Model');
+      const pickerAction = pickerRecord?.card?.elements.find((el) => el.tag === 'action');
+      const pickerSelect =
+        pickerAction && 'actions' in pickerAction
+          ? pickerAction.actions.find((a) => a.tag === 'select_static')
+          : undefined;
+      expect(
+        pickerSelect && 'options' in pickerSelect ? pickerSelect.options.map((o) => o.value) : [],
+      ).toContain('deepseek-official/deepseek-v4-flash');
+      // The preselected current is whatever the persisted default is — it
+      // must be a catalog member (the picker never preselects an unknown).
+      const initialOption =
+        pickerSelect && 'initial_option' in pickerSelect ? pickerSelect.initial_option : undefined;
+      const optionValues =
+        pickerSelect && 'options' in pickerSelect ? pickerSelect.options.map((o) => o.value) : [];
+      expect(optionValues).toContain('deepseek-official/deepseek-v4-flash');
+      expect(optionValues).toContain(initialOption ?? 'no-initial');
+
+      // Pick another model through the dropdown option → default saved.
+      writeAction({
+        messageId: pickerRecord?.messageId ?? '',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'model-pick' },
+        option: 'deepseek-official/deepseek-v4-pro',
+      });
+      await waitFor(
+        'the model-switch text',
         () =>
           readOutbox().some(
             (r) =>
-              r.kind === 'text' && r.text?.includes('model: deepseek-official · deepseek-v4-flash'),
+              r.kind === 'text' &&
+              r.text?.includes('Default model set to deepseek-official · deepseek-v4-pro'),
           ),
-        60_000,
+        30_000,
+      );
+
+      // Restore the deployment default (the test writes the shared profile's
+      // settings; leave it at the dsh-base default so later runs and the
+      // real bot are unaffected).
+      writeAction({
+        messageId: pickerRecord?.messageId ?? '',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'model-pick' },
+        option: 'deepseek-official/deepseek-v4-flash',
+      });
+      await waitFor(
+        'the model-restore text',
+        () =>
+          readOutbox().some(
+            (r) =>
+              r.kind === 'text' &&
+              r.text?.includes('Default model set to deepseek-official · deepseek-v4-flash'),
+          ),
+        30_000,
+      );
+
+      // /panel opens the control panel card from this (fresh) chat.
+      sendMessage(chatId, '/panel');
+      await waitFor(
+        'the panel card via /panel',
+        () =>
+          readOutbox()
+            .filter((r) => r.kind === 'card')
+            .some((r) => r.card?.header?.title.content === '⚙️ dsh-feishu panel'),
+        30_000,
       );
     } catch (error) {
       throw new Error(
