@@ -509,41 +509,45 @@ export function buildRowDetailsCard(row: TurnRow): CardJson {
 /**
  * Build the control-panel card: a standing operation surface the user can
  * click without typing a slash command (stop / retry / copy / panel).
+ * The Stop button only appears while a turn is actually running — a
+ * finished turn has nothing to stop, so offering it is misleading.
  * @param statusLine - a short current-state line for the panel body.
+ * @param running - whether a turn is actively running (show Stop).
  * @returns Feishu interactive card JSON (v1 layout).
  */
-export function buildPanelCard(statusLine: string): CardJson {
-  const elements: CardElement[] = [
-    { tag: 'markdown', content: statusLine },
-    { tag: 'hr' },
+export function buildPanelCard(statusLine: string, running: boolean): CardJson {
+  const actions: {
+    readonly tag: 'button';
+    readonly text: { readonly tag: 'plain_text'; readonly content: string };
+    readonly type?: 'primary' | 'danger' | 'default';
+    readonly value: Record<string, string>;
+  }[] = [];
+  if (running) {
+    actions.push({
+      tag: 'button',
+      text: { tag: 'plain_text', content: '⏹ Stop current' },
+      type: 'danger',
+      value: actionValue({ kind: 'stop' }),
+    });
+  }
+  actions.push(
     {
-      tag: 'action',
-      actions: [
-        {
-          tag: 'button',
-          text: { tag: 'plain_text', content: '⏹ Stop current' },
-          type: 'danger',
-          value: actionValue({ kind: 'stop' }),
-        },
-        {
-          tag: 'button',
-          text: { tag: 'plain_text', content: '🔁 Retry last' },
-          value: actionValue({ kind: 'retry' }),
-        },
-        {
-          tag: 'button',
-          text: { tag: 'plain_text', content: '📋 Copy last' },
-          value: actionValue({ kind: 'copy' }),
-        },
-      ],
+      tag: 'button',
+      text: { tag: 'plain_text', content: '🔁 Retry last' },
+      value: actionValue({ kind: 'retry' }),
     },
-  ];
+    {
+      tag: 'button',
+      text: { tag: 'plain_text', content: '📋 Copy last' },
+      value: actionValue({ kind: 'copy' }),
+    },
+  );
   return {
     config: { wide_screen_mode: true },
     header: {
       title: { tag: 'plain_text', content: '⚙️ dsh-feishu panel' },
       template: 'wathet',
     },
-    elements,
+    elements: [{ tag: 'markdown', content: statusLine }, { tag: 'hr' }, { tag: 'action', actions }],
   };
 }

@@ -17,6 +17,7 @@ import { Bridge, turnTitle } from '../src/bridge.js';
 import { StreamingCardManager } from '../src/cards/streaming.js';
 import type {
   CardAction,
+  CardElement,
   CardJson,
   ChatStats,
   FeishuMessage,
@@ -108,8 +109,17 @@ class FakeAgentStore {
   }
 
   readonly cancels: string[] = [];
+  /** Live agent status (default running; tests flip to idle as needed). */
+  private readonly statuses = new Map<string, 'idle' | 'running'>();
+
+  /** Set the lifecycle status of a created agent (defaults to running). */
+  setStatus(sessionId: string, status: 'idle' | 'running'): void {
+    this.statuses.set(sessionId, status);
+  }
 
   private makeAgent(sessionId: string): Agent {
+    const statuses = this.statuses;
+    statuses.set(sessionId, 'running');
     const followup = vi.fn((message: UserMessage) => {
       const list = this.followups.get(sessionId) ?? [];
       list.push(message);
@@ -118,7 +128,13 @@ class FakeAgentStore {
     const cancel = vi.fn(() => {
       this.cancels.push(sessionId);
     });
-    return { followup, cancel } as unknown as Agent;
+    return {
+      followup,
+      cancel,
+      get status() {
+        return statuses.get(sessionId) ?? 'running';
+      },
+    } as unknown as Agent;
   }
 }
 
@@ -606,6 +622,170 @@ describe('Bridge', () => {
     expect(h.transport.sentCards).toHaveLength(2);
     const panel = h.transport.sentCards.at(-1);
     expect(panel?.header?.title.content).toBe('⚙️ dsh-feishu panel');
+  });
+  describe('card action interaction matrix (stop/copy/retry/panel)', () => {
+    it('stop on a finished (idle) turn explains instead of hanging', async () => {
+      const h = makeHarness();
+      await h.bridge.handleMessage(message());
+      await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+      // The agent is idle after the turn (the user-reported hang: "Stopping…
+      // then nothing").
+      h.agentStore.setStatus('feishu-session-1', 'idle');
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'stop' },
+      });
+      expect(h.agentStore.cancels).toEqual([]);
+      expect(h.transport.sentTexts.some((t) => t.text.includes('No active turn'))).toBe(true);
+      expect(h.transport.sentTexts.some((t) => t.text.includes('Stopping'))).toBe(false);
+    });
+
+    it('copy with no completed answer explains instead of silently ignoring', async () => {
+      const h = makeHarness();
+      // No turn was ever completed → nothing to copy.
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'copy' },
+      });
+      expect(h.transport.sentTexts).toEqual([
+        { chatId: 'oc_chat', text: 'Nothing to copy — no completed answer yet.' },
+      ]);
+    });
+
+    it('retry with no prior prompt explains instead of silently ignoring', async () => {
+      const h = makeHarness();
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'retry' },
+      });
+      expect(h.transport.sentTexts).toEqual([
+        { chatId: 'oc_chat', text: 'Nothing to retry — send a message first.' },
+      ]);
+    });
+
+    it('panel while running shows the Stop button; idle hides it', async () => {
+      const h = makeHarness();
+      await h.bridge.handleMessage(message());
+      // Running: the panel carries ⏹ Stop current.
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'panel' },
+      });
+      const runningPanel = h.transport.sentCards.at(-1);
+      const runningLabels =
+        runningPanel?.elements.find((el) => el.tag === 'action') &&
+        'actions' in runningPanel!.elements.find((el) => el.tag === 'action')!
+          ? runningPanel.elements
+              .filter((el) => el.tag === 'action')
+              .at(-1)!
+              .actions.filter((a) => a.tag === 'button')
+              .map((a) => a.text.content)
+          : [];
+      expect(runningLabels).toEqual(['⏹ Stop current', '🔁 Retry last', '📋 Copy last']);
+      // Turn ends → agent idle → panel has no Stop button.
+      await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+      h.agentStore.setStatus('feishu-session-1', 'idle');
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'panel' },
+      });
+      const idlePanel = h.transport.sentCards.at(-1);
+      const idleLabels =
+        idlePanel?.elements
+          .filter((el) => el.tag === 'action')
+          .at(-1)!
+          .actions.filter((a) => a.tag === 'button')
+          .map((a) => a.text.content) ?? [];
+      expect(idleLabels).toEqual(['🔁 Retry last', '📋 Copy last']);
+    });
+
+    it('unknown card action kind is logged and ignored without crashing', async () => {
+      const h = makeHarness();
+      await h.bridge.handleMessage(message());
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'no-such-action' },
+      });
+      // No crash, no messages sent, agent untouched.
+      expect(h.agentStore.cancels).toEqual([]);
+      expect(h.transport.sentTexts).toEqual([]);
+      expect(h.transport.sentCards).toHaveLength(1); // the streaming card only
+    });
+
+    it('panel with no session explains that the bot may have restarted', async () => {
+      const h = makeHarness();
+      // No message delivered → no session mapping.
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'panel' },
+      });
+      const panel = h.transport.sentCards.at(-1);
+      const markdowns = panel?.elements.filter(
+        (el): el is Extract<CardElement, { tag: 'markdown' }> => el.tag === 'markdown',
+      );
+      expect(markdowns?.[0]?.content).toContain('Idle');
+      // Idle → no Stop button.
+      const action = panel?.elements.find((el) => el.tag === 'action');
+      const labels =
+        action && 'actions' in action
+          ? action.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
+          : [];
+      expect(labels).toEqual(['🔁 Retry last', '📋 Copy last']);
+    });
+    it('a second message during a running turn opens a fresh card (lifecycle)', async () => {
+      const h = makeHarness({ throttleMs: 0 });
+      await h.bridge.handleMessage(message());
+      await h.bridge.handleEvent('feishu-session-1', chunkEvent('partial'));
+      // Second message → new turn card; the old one is finalized as done.
+      await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: 'second' }));
+      const cards = h.transport.sentCards;
+      expect(cards).toHaveLength(2);
+      expect(cards[1]?.header?.title.content).toBe('second');
+      expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(2);
+    });
+
+    it('stop mid-turn then a new message recovers cleanly', async () => {
+      const h = makeHarness();
+      await h.bridge.handleMessage(message());
+      h.agentStore.setStatus('feishu-session-1', 'running');
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'stop' },
+      });
+      expect(h.agentStore.cancels).toEqual(['feishu-session-1']);
+      // A fresh message still delivers (the chat remains usable after stop).
+      await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: 'again' }));
+      expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(2);
+    });
+    it('stop while running still cancels and acknowledges', async () => {
+      const h = makeHarness();
+      await h.bridge.handleMessage(message());
+      h.agentStore.setStatus('feishu-session-1', 'running');
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'stop' },
+      });
+      expect(h.agentStore.cancels).toEqual(['feishu-session-1']);
+      expect(h.transport.sentTexts.some((t) => t.text.includes('Stopping'))).toBe(true);
+    });
   });
   describe('group mention gate', () => {
     it('always: responds when the bot is mentioned', async () => {

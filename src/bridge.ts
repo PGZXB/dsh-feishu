@@ -210,6 +210,12 @@ export class Bridge {
   private collapsed(chatId: string): boolean {
     return this.collapsedRows.get(chatId) ?? true;
   }
+
+  /** The live agent for a chat, or `undefined` (no session or not attached). */
+  private liveAgent(chatId: string): Agent | undefined {
+    const sessionId = this.options.sessionMap.get(chatId);
+    return sessionId === undefined ? undefined : this.options.agentStore.get(sessionId);
+  }
   /** Last card snapshot per chat (finished card, for the collapse toggle). */
   private readonly lastSnapshots = new Map<string, CardSnapshot>();
   /** Active repo-picker card message id per chat; a pick consumes it. */
@@ -558,19 +564,11 @@ export class Bridge {
     );
     switch (kind) {
       case 'stop': {
-        const sessionId = this.options.sessionMap.get(action.chatId);
-        const agent = sessionId === undefined ? undefined : this.options.agentStore.get(sessionId);
-        if (agent !== undefined) {
-          // The same cancel the DSH web Stop button issues (session.cancel →
-          // agent.cancel({kind:'user'}, {keepInbox:true})): abort the active
-          // turn/driver. keepInbox preserves queued work for the next turn.
-          agent.cancel({ kind: 'user' }, { keepInbox: true });
-          this.options.logger.info(`stop requested for chat ${action.chatId}`);
-          // Visible acknowledgment — a silent stop reads as "not working".
-          await this.options.transport.sendText(action.chatId, '⏹ Stopping…');
-        } else {
-          // No live agent (e.g. the plugin restarted and the card is stale):
-          // surface that instead of silently ignoring the tap.
+        const agent = this.liveAgent(action.chatId);
+        if (agent === undefined) {
+          // No session mapping or no attached agent (e.g. the plugin
+          // restarted and the card is stale): surface that instead of
+          // silently ignoring the tap.
           this.options.logger.info(
             `stop for chat ${action.chatId}: no live agent (stale card or restarted)`,
           );
@@ -578,43 +576,73 @@ export class Bridge {
             action.chatId,
             'No active session to stop — the bot may have restarted. Send a message to start fresh.',
           );
+          break;
         }
+        if (agent.status !== 'running') {
+          // The DSH web Stop cancels a running turn; an idle agent has
+          // nothing to cancel (agent.cancel is a no-op then — sending
+          // "Stopping…" with no follow-up read as a hang, user report).
+          this.options.logger.info(`stop for chat ${action.chatId}: agent idle, nothing to stop`);
+          await this.options.transport.sendText(
+            action.chatId,
+            'No active turn to stop — the last turn already finished.',
+          );
+          break;
+        }
+        // The same cancel the DSH web Stop button issues (session.cancel →
+        // agent.cancel({kind:'user'}, {keepInbox:true})): abort the active
+        // turn/driver. keepInbox preserves queued work for the next turn.
+        agent.cancel({ kind: 'user' }, { keepInbox: true });
+        this.options.logger.info(`stop requested for chat ${action.chatId}`);
+        // Visible acknowledgment — a silent stop reads as "not working".
+        await this.options.transport.sendText(action.chatId, '⏹ Stopping…');
         break;
       }
       case 'copy': {
         const output = this.lastOutputs.get(action.chatId);
         if (output !== undefined && output !== '') {
           await this.options.transport.sendText(action.chatId, output);
+        } else {
+          // A silent no-op reads as broken (user report pattern).
+          await this.options.transport.sendText(
+            action.chatId,
+            'Nothing to copy — no completed answer yet.',
+          );
         }
         break;
       }
       case 'retry': {
         const prompt = this.lastPrompts.get(action.chatId);
-        if (prompt !== undefined && prompt !== '') {
-          const sessionId = this.options.sessionMap.ensure(action.chatId);
-          const cwd = this.options.sessionMap.cwdFor(action.chatId) ?? this.options.defaultCwd;
-          const agent = await this.resolveAgent(action.chatId, sessionId, cwd);
-          this.turns.set(action.chatId, {
-            title: turnTitle(prompt),
-            content: '',
-            rows: [],
-            openThinkId: undefined,
-            status: 'working',
-          });
-          try {
-            await this.options.cards.open(action.chatId, turnTitle(prompt));
-          } catch (error: unknown) {
-            this.options.logger.warn(
-              `retry card unavailable, continuing text-only: ${String(error)}`,
-            );
-          }
-          agent.followup(
-            createUserMessage({
-              content: [{ type: 'text', text: prompt }],
-              source: { kind: 'user' },
-            }),
+        if (prompt === undefined || prompt === '') {
+          await this.options.transport.sendText(
+            action.chatId,
+            'Nothing to retry — send a message first.',
+          );
+          break;
+        }
+        const sessionId = this.options.sessionMap.ensure(action.chatId);
+        const cwd = this.options.sessionMap.cwdFor(action.chatId) ?? this.options.defaultCwd;
+        const agent = await this.resolveAgent(action.chatId, sessionId, cwd);
+        this.turns.set(action.chatId, {
+          title: turnTitle(prompt),
+          content: '',
+          rows: [],
+          openThinkId: undefined,
+          status: 'working',
+        });
+        try {
+          await this.options.cards.open(action.chatId, turnTitle(prompt));
+        } catch (error: unknown) {
+          this.options.logger.warn(
+            `retry card unavailable, continuing text-only: ${String(error)}`,
           );
         }
+        agent.followup(
+          createUserMessage({
+            content: [{ type: 'text', text: prompt }],
+            source: { kind: 'user' },
+          }),
+        );
         break;
       }
       case 'repo-pick': {
@@ -717,12 +745,15 @@ export class Bridge {
         break;
       }
       case 'panel': {
+        const agent = this.liveAgent(action.chatId);
+        const running = agent !== undefined && agent.status === 'running';
         const output = this.lastOutputs.get(action.chatId);
-        const statusLine =
-          output === undefined
+        const statusLine = running
+          ? '**Running** — a turn is in progress.'
+          : output === undefined
             ? '**Idle** — send a message to start a turn.'
             : '**Ready** — the last answer is in the card above; copy or retry it.';
-        await this.options.transport.sendCard(action.chatId, buildPanelCard(statusLine));
+        await this.options.transport.sendCard(action.chatId, buildPanelCard(statusLine, running));
         break;
       }
       default: {

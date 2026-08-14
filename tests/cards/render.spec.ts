@@ -393,11 +393,24 @@ describe('buildRowDetailsCard', () => {
 });
 
 describe('buildPanelCard', () => {
-  it('emits a control card with the operation buttons', () => {
-    const card = buildPanelCard('**Idle** — send a message.');
+  it('emits a control card with operation buttons', () => {
+    const card = buildPanelCard('**Idle** — send a message.', false);
     expect(card.header?.title.content).toBe('⚙️ dsh-feishu panel');
     const action = card.elements.find((el) => el.tag === 'action');
-    expect(action && 'actions' in action ? action.actions.length : 0).toBe(3);
+    expect(action && 'actions' in action ? action.actions.length : 0).toBe(2);
+  });
+
+  it('includes the Stop button only while a turn is running', () => {
+    const running = buildPanelCard('**Running**', true);
+    const idle = buildPanelCard('**Idle**', false);
+    const labelsOf = (card: ReturnType<typeof buildPanelCard>): string[] => {
+      const action = card.elements.find((el) => el.tag === 'action');
+      return action && 'actions' in action
+        ? action.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
+        : [];
+    };
+    expect(labelsOf(running)).toEqual(['⏹ Stop current', '🔁 Retry last', '📋 Copy last']);
+    expect(labelsOf(idle)).toEqual(['🔁 Retry last', '📋 Copy last']);
   });
 });
 

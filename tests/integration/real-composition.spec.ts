@@ -306,6 +306,24 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
       expect(JSON.stringify(detailCard?.elements)).toContain('IN');
       expect(JSON.stringify(detailCard?.elements)).toContain('OUT');
 
+      // Stop after the turn finished: the agent is idle → explanatory text,
+      // not a hanging "Stopping…" (the user-reported bug).
+      writeAction({
+        messageId: 'mem-1',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'stop' },
+      });
+      await waitFor(
+        'the idle-stop explanation text',
+        () =>
+          readOutbox().some(
+            (r) => r.kind === 'text' && r.text?.includes('No active turn'),
+          ),
+        30_000,
+      );
+      expect(readOutbox().some((r) => r.kind === 'text' && r.text?.includes('Stopping'))).toBe(false);
+
       // Collapse again → back to the sequence line.
       writeAction({
         messageId: 'mem-1',
