@@ -51,6 +51,26 @@ docs, and lands on `main`.
   '@deepseek-ai/dsh-commands'`).
 - **Misconfiguration fails loud.** Never silently skip a missing referent;
   log what is missing and why.
+- **No truncation without user confirmation.** Never cut user-visible
+  content (card size, list length, output length, collapsed sequences,
+  details views) as a silent default. Physical platform limits (the Feishu
+  ~109 KB card cap) are the only exception, and even those must be raised
+  with the user before relying on them. Content integrity is a product
+  decision, not an implementation shortcut.
+- **Stateful UI is a state machine, not patches.** One authoritative state
+  object per surface (see `ChatCardState` in `src/bridge.ts`) and one
+  render path (`syncCard`) that draws from it. When the same bug resurfaces
+  in different actions, refactor the state into a single source of truth —
+  do not add another per-case reassert. Card actions mutate the state (or
+  not) and always end with the single render path.
+- **Card-callback ACK contract (Feishu).** `card.action.trigger` is a
+  synchronous callback with a 3 s deadline and no re-push. Always ACK with
+  a valid response — never `undefined`, which the client rejects as an
+  invalid ACK and can then re-render the card to a stale state. Card
+  patches issued from inside a callback must be deferred out of it (a
+  macrotask) so the ACK lands first; Lark can otherwise restore the
+  pre-click card. See `docs/ux-specification.md` §3.4 and
+  `docs/pitfalls.md`.
 
 ## Commands
 
@@ -100,10 +120,29 @@ PLAN.md               # the development plan (bilingual planning artifact)
 ## Iterating
 
 1. Pick the next item from `PLAN.md` (current iteration).
-2. Implement the module with its unit tests; wire integration through the
-   plugin entry.
-3. Update the relevant `docs/` page and the CHANGELOG.
-4. Run all gates; commit with a Conventional Commit message.
+2. **Spec first, then implement.** Before building a UX feature, study the
+   reference implementation — botmux (`_tmp/botmux`: `im/lark/card-builder.ts`,
+   `card-handler.ts`, `event-dispatcher.ts`, `services/project-scanner.ts`) and
+   DSH web (deepseek-harness `packages/client/ui-tool`,
+   `packages/client/ui-conversation`) — and record the intended behavior in
+   `docs/ux-specification.md` (per part, with the reference cited) plus the
+   relevant `docs/` page. The spec doubles as developer guidance and
+   user-facing documentation. Their comments encode real failure modes (ACK
+   deadlines, invalid-ACK card re-renders, pre-click card restore, silent
+   `form` drops); reading the source beats guessing behavior.
+3. Implement against the spec with a state-machine-shaped design (one
+   authoritative state, one render path — not per-case patches).
+4. **Test at both layers.** Interactive/stateful behavior gets (a) unit tests
+   with fakes for fast iteration AND (b) a real-composition integration test
+   (`tests/integration/real-composition.spec.ts`: real dsh process, memory
+   transport, mock LLM) — fakes prove our logic, the real process proves the
+   agent's actual state transitions. Fixing a bug first adds a failing test at
+   the layer that exposed it.
+5. **Verify before asking the user to verify.** Run the full matrix yourself;
+   hand the user a checklist of what to confirm, not a debugging session. The
+   developer absorbs the iteration cost, not the user.
+6. Update the relevant `docs/` page and the CHANGELOG.
+7. Run all gates; commit with a Conventional Commit message.
 
 When in doubt about a dsh API, read the installed package's `lib/types/*.d.ts`
 in the dsh installation, or the upstream source under a checkout of
