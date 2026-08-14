@@ -638,8 +638,10 @@ describe('buildPanelCard palette', () => {
     const chatHeader = markdowns.findIndex((m) => m.content === '**💬 Chat**');
     expect(sessionHeader).toBeGreaterThanOrEqual(0);
     expect(chatHeader).toBeGreaterThan(sessionHeader);
-    expect(sessionHeader).toBeLessThan(card.elements.findIndex((el) => el === actions[1]));
-    expect(chatHeader).toBeLessThan(card.elements.findIndex((el) => el === actions[2]));
+    const sessionRowIndex = card.elements.indexOf(actions[1] as CardElement);
+    const chatRowIndex = card.elements.indexOf(actions[2] as CardElement);
+    expect(sessionHeader).toBeLessThan(sessionRowIndex);
+    expect(chatHeader).toBeLessThan(chatRowIndex);
     // The page indicator is a quiet note, not a bold line.
     const notes = card.elements.filter(
       (el): el is Extract<CardElement, { tag: 'note' }> => el.tag === 'note',

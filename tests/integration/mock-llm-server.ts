@@ -96,7 +96,10 @@ export async function startMockLlmServer(): Promise<MockLlmServer> {
 
   /** Stream one scripted response. The script is passed in — the request
    *  handler already consumed it (one consumption per request). */
-  function writeScripted(res: ServerResponse, script: readonly MockScriptChunk[] | undefined): void {
+  function writeScripted(
+    res: ServerResponse,
+    script: readonly MockScriptChunk[] | undefined,
+  ): void {
     if (script === undefined || script.length === 0) {
       res.write(sseChunk({ content: 'Hello from mock LLM ' }));
       res.write(sseChunk({ content: '— integration ok' }, true));

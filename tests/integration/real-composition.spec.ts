@@ -105,9 +105,7 @@ async function pinWorkingDir(chatId: string): Promise<void> {
     () =>
       readOutbox().some(
         (r) =>
-          r.kind === 'text' &&
-          r.chatId === chatId &&
-          r.text?.includes('Working directory set to'),
+          r.kind === 'text' && r.chatId === chatId && r.text?.includes('Working directory set to'),
       ),
     30_000,
   );
@@ -1551,9 +1549,8 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
         await waitFor(
           'both green cards',
           () =>
-            readOutbox().filter(
-              (r) => r.kind === 'patch' && r.card?.header?.template === 'green',
-            ).length >= 2,
+            readOutbox().filter((r) => r.kind === 'patch' && r.card?.header?.template === 'green')
+              .length >= 2,
           45_000,
         );
       } catch (waitError) {

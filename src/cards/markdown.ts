@@ -111,7 +111,7 @@ function buildTableFromTokens(tokens: readonly Token[]): CardElement | undefined
 /** Render a table's source lines as a fenced code block (the over-cap
  *  fallback — keeps the content, in a monospace block). */
 function fencedTableSource(lines: readonly string[], map: readonly [number, number]): string {
-  return '```\n' + sliceLines(lines, map).trim() + '\n```';
+  return `\`\`\`\n${sliceLines(lines, map).trim()}\n\`\`\``;
 }
 
 /** Index of the token that closes the block opened at `openIndex`. */
