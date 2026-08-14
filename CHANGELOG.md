@@ -177,3 +177,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `▸ Expand` restores; works on live turns and finished cards (in-place
     re-render of the stored final snapshot via lastMessageId).
   - 138 tests total.
+- UX feedback round 4 — collapsed default, untruncated details, card ACK:
+  - Cards start collapsed (`think -> tool -> …` sequence line); ▸ Expand
+    reveals full rows, per-chat explicit expansion is remembered.
+  - The collapsed sequence streams: new think/tool rows append to the line
+    as they arrive.
+  - Details cards show the full args (pretty JSON) and result — the
+    2000-char details truncation and the 300-char store truncation are
+    both removed (a details view must not truncate).
+  - `card.action.trigger` returns `{}` (valid ACK, no UI update) instead
+    of `undefined` — botmux's lesson: undefined yields a code-only ACK
+    the Feishu client rejects as invalid, letting it re-render the card
+    to a stale state (the 'card reverted to Stop after opening details'
+    bug).
+  - 142 tests total.
