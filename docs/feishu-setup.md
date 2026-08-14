@@ -125,6 +125,19 @@ or in the profile's `cordis.patch.yml`:
     appSecret: yyy
 ```
 
+Every other config option follows the same shape in `cordis.patch.yml`
+(`groupMentionMode`, `allowedChats`, `allowedUsers`, `unknownCommand`,
+`repoRoots`, `requireWorkingDir`, `reactions`, …). The surface options that
+affect routing also have environment fallbacks (config wins, env falls
+back):
+
+| Environment variable | Values | Meaning |
+|---|---|---|
+| `FEISHU_ALLOWED_USERS` | comma-separated `ou_` open ids | user allowlist (messages and card buttons) |
+| `FEISHU_ALLOWED_CHATS` | comma-separated chat ids | chat allowlist |
+| `FEISHU_GROUP_MENTION_MODE` | `always` \| `never` \| `ambient` \| `topic` | group mention policy |
+| `FEISHU_UNKNOWN_COMMAND` | `error` \| `passthrough` | unknown slash-line policy |
+
 ## Verify
 
 With credentials configured, the boot log prints:

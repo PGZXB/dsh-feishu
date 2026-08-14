@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Env-configurable routing options.** `FEISHU_GROUP_MENTION_MODE`,
+  `FEISHU_ALLOWED_CHATS`, and `FEISHU_UNKNOWN_COMMAND` extend the
+  config-wins/env-falls-back seam (`FEISHU_ALLOWED_USERS` already existed),
+  so deployments can set routing policy without profile files; the
+  test-only `FEISHU_MOCK_CHAT_STATS` (`'2u,1b'`) feeds member counts to the
+  memory transport (solo-group relaxation path).
+- **Scenario integration suite** (`tests/integration/scenarios.spec.ts`,
+  20 real-process tests): daemon-restart session durability, group mention
+  modes never/ambient/topic, chat allowlist, `/group` + `/repo`, `/history`
+  subsets, every question-card variant (multi-select, free-text, cancel),
+  group approval/question cards carrying the requester @-mention, message
+  dedup, unknown-command passthrough, the stopped-turn reaction swap, and
+  `/export` transcripts with tool rows. The suite uses its own dsh home
+  (`_dev/dsh-home-scenarios`) so parallel test files never race the shared
+  session map; CI prepares both profiles.
 - **Two-stage reaction ack (Iteration 4).** An accepted turn message gets a
   received reaction (`GoGoGo` by default, botmux code) that is removed and
   swapped for `DONE` / `WARN` / `WARN` when the turn settles — configurable
@@ -46,6 +61,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   packs whole category blocks — a category larger than the page size keeps
   its own page, and the boundary falls between categories. The system group
   (9 buttons) stays together on page 2 (the palette is 2 pages again).
+- **`allowedUsers` with a defaulted-empty config served everyone**
+  (regression found in the real process): schemastery materializes absent
+  optional arrays as `[]`, which passed the "not undefined" gate and
+  silently disabled the allowlist. The resolvers normalize `[]` to
+  unrestricted; unit-tested in `tests/index.spec.ts`.
 
 
 - **`/export` sends the session log as a file message.** The Feishu

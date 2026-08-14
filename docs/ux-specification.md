@@ -271,7 +271,7 @@ rounds 1–5.
 
 ## 8. Command surface
 
-### 8.1 Command set (15 surface commands)
+### 8.1 Command set (19 commands: 14 surface + 5 web wrappers)
 
 Every command is a `SurfaceCommand`: one handler shared by the slash line
 and the panel button (button = command, botmux `/list-slash-command`
@@ -286,6 +286,7 @@ palette idea). `category` groups the panel palette.
 | `/repo [<path>]` | session | project picker card (dropdown ≤ 50, buttons + pages above) |
 | `/group [<name>]` | chat | create a group with the bot and sender |
 | `/sessions` | session | session list card (title/id/cwd/age/live/saved), paginated, per-row Resume buttons |
+| `/history [last <n>]` | system | replay this chat's session log as **in-chat cards** — the card sibling of `/export`: the same transcript, lark_md-safe (headings → bold), split across cards on line boundaries when long (`part i/n`) so nothing is ever cut; `last <n>` replays an explicit event subset. Read-only (allowed while a turn runs) |
 | `/model` | system | **model picker card** (catalog from `ctx.llm` `listProviders` × `listModels`, current preselected); a pick sets the default for new sessions. `/model <provider>/<model>` sets it directly. Surface-native — the web `/model` is a client popup with no host command |
 | `/export` | system | send this chat's session log as a **file message** (`session-<id>.md` markdown transcript from `ctx.sessionQuery.readSession`) — the Feishu equivalent of the web's browser-download `/export` |
 | `/panel` | system | open the control panel card from any chat (slash line only — its palette button is hidden, since a palette button that opens the panel would be the panel launching itself) |
@@ -349,9 +350,9 @@ never an implicit choice — a fresh chat or a brand-new group must pick a
 repo before DSH works there (user requirement). `requireWorkingDir`
 (default true) disables the gate for deployments that want the fallback.
 
-- Read-only commands (`/help /status /sessions /panel` and the pickers)
-  stay usable unpinned; the panel surfaces "No working directory — pick
-  one with /repo or /cd first".
+- Read-only commands (`/help /status /sessions /history /panel` and the
+  pickers) stay usable unpinned; the panel surfaces "No working directory —
+  pick one with /repo or /cd first".
 - `/clear` keeps the pinned directory (only the session rebinds).
 - **Resume adopts the session's working directory**: the /sessions Resume
   button carries the session's cwd in its value, and a typed `/resume`
@@ -361,10 +362,10 @@ repo before DSH works there (user requirement). `requireWorkingDir`
 ### 8.4 Working-state gate (state-machine rule)
 
 While a turn is running (`cardStates[chatId].status === 'working'`), only
-read-only commands may run: `/help`, `/status`, `/sessions` (read state),
-`/cancel` (the stop itself), `/group` (separate chat), `/model` (picker —
-picks are refused mid-turn, but opening it is fine), `/panel` (the panel
-carries Stop). Every other command —
+read-only commands may run: `/help`, `/status`, `/sessions`, `/history`
+(read state), `/cancel` (the stop itself), `/group` (separate chat),
+`/model` (picker — picks are refused mid-turn, but opening it is fine),
+`/panel` (the panel carries Stop). Every other command —
 `/cd /repo /clear /new /resume` and the five web wrappers — is refused with
 "a turn is running — stop it first." The gate lives in `handleCommand` and
 the panel `command` action (one rule, two entry points), so a mid-turn

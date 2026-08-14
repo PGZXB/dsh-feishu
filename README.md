@@ -16,15 +16,18 @@ watch the answer stream back as live Feishu cards. Slash commands operate
 either the surface itself (working directory, sessions, models, presets) or
 pass through to dsh's own command registry.
 
-> **Status: Iteration 1–2 complete.** Private and group chats, the streaming
+> **Status: Iteration 1–4 complete.** Private and group chats, the streaming
 > card (tool rows, reasoning, markdown, native tables), the control panel
 > with the full command palette as buttons, session lifecycle
-> (`/sessions /resume /clear`), working-directory gating (DSH refuses work
-> until a repo is chosen), and the dsh web command surface in-chat
-> (`/plan /goal /compact /feedback /permission`, plus surface-native
-> `/model` and the pickers). Every feature ships unit + real-composition
-> integration tests (275 total). See [`PLAN.md`](PLAN.md) for what remains
-> (interactive approvals/questions, scheduling, multi-bot).
+> (`/sessions /resume /clear /history`), working-directory gating (DSH
+> refuses work until a repo is chosen), interactive approvals and questions
+> as cards, the dsh web command surface in-chat (`/plan /goal /compact
+> /feedback /permission`, plus surface-native `/model` and the pickers),
+> two-stage reaction ack, `allowedUsers` allowlists, and proactive
+> @-mentions in groups. Every feature ships unit + real-composition
+> integration tests (397 total; 48 against real dsh processes). See
+> [`PLAN.md`](PLAN.md) for what remains (long-session folding,
+> scheduling, multi-bot).
 
 ## Why DSH-native
 

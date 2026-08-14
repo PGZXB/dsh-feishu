@@ -176,6 +176,33 @@ The harness sandbox (and this checkout's environment) has specific rules:
 - Each mock completion request must consume the script exactly once —
   consuming in both the error check and the stream writer doubles
   consumption and silently shifts every subsequent scripted response.
+- **The integration suites run the BUILT `lib/`, not `src/`.** A change to
+  `src/` does not reach the spawned process until `pnpm run build`; a
+  "works locally, fails in integration" symptom is usually a stale lib
+  (the real-process `/history` case: the command was "Unknown" until the
+  rebuild landed).
+- **Two real-process suites must not share a dsh home.** vitest runs test
+  files in parallel; both suites boot dsh children that persist the session
+  map + logs, and concurrent writes race (a pinned `/cd` is lost, turns get
+  refused). The scenario suite uses its own `_dev/dsh-home-scenarios`
+  (`FEISHU_INT_SCENARIOS_DSH_HOME`), and CI prepares both profiles.
+- **Schemastery materializes absent optional arrays as `[]`.** A config
+  key declared `z.array(z.string()).required(false)` reads as `[]`, not
+  `undefined` — gate logic that checks `config.x !== undefined` then treats
+  an empty list as "no restriction" is silently ALWAYS off. The
+  allowlist resolvers (`resolveAllowedUsers` & friends) normalize
+  `[]` → `undefined`; regression-tested in `tests/index.spec.ts`.
+- **Assert card-markdown content, not `JSON.stringify`d cards.** A mention
+  in a card renders as `<at id="ou_x"></at>`; `JSON.stringify(card.elements)`
+  escapes the quotes to `\"`, so `.includes('<at id="ou_x"></at>')` never
+  matches. Read the `markdown` element's `content` field instead.
+- **The `ask_user_question` tool schema is snake_case.** The wire argument
+  is `multi_select` (not `multiSelect`); camelCase is silently dropped by
+  the tool schema and the question arrives single-select.
+- **Toggle re-posts retarget the interaction to the newest card.** After a
+  multi-select toggle, the Submit action must carry the NEWEST question
+  card's message id — the original card id is stale and the registry
+  rejects it (the turn then hangs on an unanswered question).
 
 ## Commit hygiene: local "green" vs CI green
 

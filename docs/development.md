@@ -124,6 +124,41 @@ The `FEISHU_TRANSPORT=memory` seam is also handy for manual debugging:
 inject a fake message by writing a JSON file into
 `$FEISHU_MEMORY_DIR/inbox/` while the surface runs.
 
+#### Scenario suite (two real-process suites, two dsh homes)
+
+`tests/integration/scenarios.spec.ts` is a second real-process suite for
+edge scenarios: daemon-restart durability, group mention modes and
+allowlists (via the `FEISHU_*` env seams), `/group` + `/repo`, every
+question-card variant, proactive mentions, dedup, passthrough, and the
+stopped-turn reaction swap. Because vitest runs test **files** in
+parallel, the two suites must not share a dsh home (both persist the
+session map + logs): the scenario suite defaults to
+`_dev/dsh-home-scenarios` (`FEISHU_INT_SCENARIOS_DSH_HOME` overrides),
+prepared with the same `dsh plugin --profile feishu-dev add link:<checkout>`
+recipe. CI prepares both profiles.
+
+##### Scenario coverage matrix
+
+| Scenario | Test |
+|---|---|
+| Daemon restart resumes the same session; `/history` spans restarts | `restart resumes the same session` |
+| `/clear` rebinds; `/history` replays only the new turn | `/clear starts a fresh session` |
+| `/history last <n>` replays a strict subset | `/history last <n>` |
+| `/status` read-only while a turn runs | `/status is read-only` |
+| Bare `/repo` posts the picker card | `bare /repo posts the project picker card` |
+| `/group` creates a group; @-turn works there | `/group creates a group chat` |
+| Mention modes `never` / `ambient` / `topic` | three `groupMentionMode=` tests |
+| `allowedChats` (env) gates whole chats | `allowedChats env` |
+| Solo-group relaxation (`1u,1b`) accepts un-@ | `solo-group relaxation` |
+| Multi-select toggles + Submit (retargeted cards) | `multi-select question` |
+| Free-text question answered by a chat message | `free-text question` |
+| Question Cancel settles empty answers | `question Cancel` |
+| Group approval/question cards @ the requester; p2p cards don't | two mention tests |
+| Redelivered message id is deduped | `message dedup` |
+| `unknownCommand=passthrough` routes unknown slashes to the model | `unknownCommand=passthrough` |
+| Stop mid-turn swaps the reaction to the stopped emoji | `stop mid-turn swaps the received reaction` |
+| `/export` transcript includes tool rows | `/export after a tool-calling turn` |
+
 ## Verifying the bundle in a real dsh profile
 
 The bundle must mount into a real dsh profile. Use an isolated `DSH_HOME` so

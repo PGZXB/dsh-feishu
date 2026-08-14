@@ -4,7 +4,7 @@
 >
 > 开发方式：**迭代式**——先完成核心功能并测试，再逐步叠加新功能。
 >
-> 状态：**Iteration 1–2 ✅**（私聊/群聊闭环、重启安全、命令体系（17 个表面命令 + 完整按钮面板 + DSH web 命令包装 `/plan /goal /compact /feedback /permission`、surface-native `/model`）、会话生命周期 `/sessions /resume /clear`、UX 打磨（下拉选择卡、note 状态、按钮分行）、**工作目录门禁**（未显式选 repo 前拒绝工作）；`/export` 因 Web-only 浏览器下载通道有意排除）；**Iteration 3 ✅（交互审批卡 + 提问卡 + 统一交互机制 `cards/interactions.ts`，fail-closed 语义）**；299 测试全绿（含 21 个真实组合集成测试，其中 2 个为真实审批链路：沙箱升级工具调用 → 审批卡 → Allow/Reject → 工具继续/报错）。**Iteration 4 ✅（两阶段表情回执 + `/history` 会话回放卡 + `allowedUsers` 用户白名单 + 群内主动 @ 提醒）**；364 单元测试 + 28 真实组合集成测试全绿。`/export` 已落地为**文件消息**（web 浏览器下载的飞书等价物），`ask_user_question` 提问工具已随 bundle 挂载（与 web standard/code 预设对齐）。
+> 状态：**Iteration 1–2 ✅**（私聊/群聊闭环、重启安全、命令体系（17 个表面命令 + 完整按钮面板 + DSH web 命令包装 `/plan /goal /compact /feedback /permission`、surface-native `/model`）、会话生命周期 `/sessions /resume /clear`、UX 打磨（下拉选择卡、note 状态、按钮分行）、**工作目录门禁**（未显式选 repo 前拒绝工作）；`/export` 因 Web-only 浏览器下载通道有意排除）；**Iteration 3 ✅（交互审批卡 + 提问卡 + 统一交互机制 `cards/interactions.ts`，fail-closed 语义）**；299 测试全绿（含 21 个真实组合集成测试，其中 2 个为真实审批链路：沙箱升级工具调用 → 审批卡 → Allow/Reject → 工具继续/报错）。**Iteration 4 ✅（两阶段表情回执 + `/history` 会话回放卡 + `allowedUsers` 用户白名单 + 群内主动 @ 提醒）**；**349 单元测试 + 48 真实组合集成测试（主套件 28 + 场景套件 20）全绿**。`/export` 已落地为**文件消息**（web 浏览器下载的飞书等价物），`ask_user_question` 提问工具已随 bundle 挂载（与 web standard/code 预设对齐）；场景套件（重启恢复、群模式、提问变体、去重等）使用独立 `_dev/dsh-home-scenarios`，与主套件并行不冲突。
 >
 > 已确认决策（2026-08）：npm 包名 `@dsh-feishu/dsh-feishu`；未知 slash 命令默认报错提示（附 `/help` 指引，配置项留后门）；飞书测试机器人由用户自行申请、稍后提供凭据。
 >
