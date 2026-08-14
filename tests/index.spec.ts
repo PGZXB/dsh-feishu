@@ -24,7 +24,11 @@ import {
   dshHome,
   executeDshCommand,
   name,
+  resolveAllowedChats,
+  resolveAllowedUsers,
   resolveCredentials,
+  resolveGroupMentionMode,
+  resolveUnknownCommand,
 } from '../src/index.js';
 
 /** A recorded command registration as the fake registry sees it. */
@@ -140,6 +144,57 @@ describe('resolveCredentials', () => {
     expect(resolveCredentials({ appId: 'cli_app' })).toBeUndefined();
     process.env.FEISHU_APP_ID = 'env_app';
     expect(resolveCredentials({ appId: 'cli_app' })).toBeUndefined();
+  });
+});
+
+describe('allowlist / policy resolvers (config first, env fallback)', () => {
+  const VARS = [
+    'FEISHU_ALLOWED_USERS',
+    'FEISHU_ALLOWED_CHATS',
+    'FEISHU_GROUP_MENTION_MODE',
+    'FEISHU_UNKNOWN_COMMAND',
+  ];
+  afterEach(() => {
+    for (const variable of VARS) delete process.env[variable];
+  });
+
+  it('resolveAllowedUsers: config wins; env comma-list parses; [] means unrestricted', () => {
+    process.env.FEISHU_ALLOWED_USERS = ' ou_a, ou_b ';
+    expect(resolveAllowedUsers({})).toEqual(['ou_a', 'ou_b']);
+    expect(resolveAllowedUsers({ allowedUsers: ['ou_cfg'] })).toEqual(['ou_cfg']);
+    // Schemastery materializes absent optional arrays as [] — the resolver
+    // treats an empty list as "no restriction" (regression: the real
+    // process silently served everyone when the config defaulted to []).
+    // With no env either, [] must resolve to undefined, not [].
+    process.env.FEISHU_ALLOWED_USERS = '';
+    expect(resolveAllowedUsers({ allowedUsers: [] })).toBeUndefined();
+    expect(resolveAllowedUsers({})).toBeUndefined();
+  });
+
+  it('resolveAllowedChats: config wins; env comma-list parses; [] means unrestricted', () => {
+    process.env.FEISHU_ALLOWED_CHATS = 'oc_a,oc_b';
+    expect(resolveAllowedChats({})).toEqual(['oc_a', 'oc_b']);
+    expect(resolveAllowedChats({ allowedChats: ['oc_cfg'] })).toEqual(['oc_cfg']);
+    // An explicit empty list with an env set falls through to the env (the
+    // config did not restrict); with no env it must be undefined, not [].
+    process.env.FEISHU_ALLOWED_CHATS = '';
+    expect(resolveAllowedChats({ allowedChats: [] })).toBeUndefined();
+  });
+
+  it('resolveGroupMentionMode: config wins; env accepts the four modes only', () => {
+    process.env.FEISHU_GROUP_MENTION_MODE = 'never';
+    expect(resolveGroupMentionMode({})).toBe('never');
+    expect(resolveGroupMentionMode({ groupMentionMode: 'ambient' })).toBe('ambient');
+    process.env.FEISHU_GROUP_MENTION_MODE = 'bogus';
+    expect(resolveGroupMentionMode({})).toBeUndefined();
+  });
+
+  it('resolveUnknownCommand: config wins; env accepts error|passthrough only', () => {
+    process.env.FEISHU_UNKNOWN_COMMAND = 'passthrough';
+    expect(resolveUnknownCommand({})).toBe('passthrough');
+    expect(resolveUnknownCommand({ unknownCommand: 'error' })).toBe('error');
+    process.env.FEISHU_UNKNOWN_COMMAND = 'bogus';
+    expect(resolveUnknownCommand({})).toBeUndefined();
   });
 });
 

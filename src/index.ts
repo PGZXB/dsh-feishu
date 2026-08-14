@@ -219,7 +219,7 @@ type SessionQueryLike = {
 /** Resolve the user allowlist: config first, then the `FEISHU_ALLOWED_USERS`
  *  environment variable (comma-separated open ids; the integration-test
  *  seam — sender open ids are fixed there). Empty means no restriction. */
-function resolveAllowedUsers(config: Config): string[] | undefined {
+export function resolveAllowedUsers(config: Config): string[] | undefined {
   // Schemastery materializes absent optional arrays as `[]` — treat an empty
   // list as "no restriction" exactly like an absent one.
   if (config.allowedUsers !== undefined && config.allowedUsers.length > 0) {
@@ -233,12 +233,47 @@ function resolveAllowedUsers(config: Config): string[] | undefined {
     .filter((id) => id !== '');
 }
 
+/** Resolve the chat allowlist: config first, then `FEISHU_ALLOWED_CHATS`
+ *  (comma-separated chat ids). Empty means no restriction. */
+export function resolveAllowedChats(config: Config): string[] | undefined {
+  if (config.allowedChats !== undefined && config.allowedChats.length > 0) {
+    return config.allowedChats;
+  }
+  const env = process.env.FEISHU_ALLOWED_CHATS;
+  if (env === undefined || env.trim() === '') return undefined;
+  return env
+    .split(',')
+    .map((id) => id.trim())
+    .filter((id) => id !== '');
+}
+
+/** Resolve the group mention mode: config first, then
+ *  `FEISHU_GROUP_MENTION_MODE` (always | never | ambient | topic). */
+export function resolveGroupMentionMode(
+  config: Config,
+): 'always' | 'never' | 'ambient' | 'topic' | undefined {
+  if (config.groupMentionMode !== undefined) return config.groupMentionMode;
+  const env = process.env.FEISHU_GROUP_MENTION_MODE;
+  if (env === 'always' || env === 'never' || env === 'ambient' || env === 'topic') return env;
+  return undefined;
+}
+
+/** Resolve the unknown-slash policy: config first, then
+ *  `FEISHU_UNKNOWN_COMMAND` (error | passthrough). */
+export function resolveUnknownCommand(config: Config): 'error' | 'passthrough' | undefined {
+  if (config.unknownCommand !== undefined) return config.unknownCommand;
+  const env = process.env.FEISHU_UNKNOWN_COMMAND;
+  if (env === 'error' || env === 'passthrough') return env;
+  return undefined;
+}
+
 /** The default transport factory picks this up; see below. */
 function defaultTransportFactory(
   dataDir: string,
 ): (credentials: Credentials, logger: BridgeLogger) => FeishuTransport {
   if (process.env.FEISHU_TRANSPORT === 'memory') {
     const dir = process.env.FEISHU_MEMORY_DIR ?? join(dataDir, 'memory');
+    const mockStats = parseMockChatStats();
     return (_credentials, _logger) =>
       createMemoryTransport({
         dir,
@@ -247,9 +282,25 @@ function defaultTransportFactory(
         ...(process.env.FEISHU_MOCK_BOT_OPEN_ID !== undefined
           ? { botOpenId: process.env.FEISHU_MOCK_BOT_OPEN_ID }
           : {}),
+        // Solo-group relaxation tests inject member counts ('2u,1b').
+        ...(mockStats !== undefined ? { chatStats: mockStats } : {}),
       });
   }
   return createLarkTransport;
+}
+
+/** Parse `FEISHU_MOCK_CHAT_STATS` ('<users>u,<bots>b' — a test-only seam) into
+ *  the member counts the memory transport serves for every chat. `undefined`
+ *  when the variable is absent or malformed (no relaxation applied). */
+function parseMockChatStats():
+  | { readonly userCount: number; readonly botCount: number }
+  | undefined {
+  const env = process.env.FEISHU_MOCK_CHAT_STATS;
+  if (env === undefined) return undefined;
+  const users = /(\d+)u/.exec(env)?.[1];
+  const bots = /(\d+)b/.exec(env)?.[1];
+  if (users === undefined || bots === undefined) return undefined;
+  return { userCount: Number(users), botCount: Number(bots) };
 }
 
 /**
@@ -324,6 +375,9 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
   const sessionMap = new SessionMap(join(dataDir, 'session-map.json'));
   sessionMap.load();
   const allowedUsers = resolveAllowedUsers(config);
+  const allowedChats = resolveAllowedChats(config);
+  const groupMentionMode = resolveGroupMentionMode(config);
+  const unknownCommand = resolveUnknownCommand(config);
   const transportFactory = deps.createTransport ?? defaultTransportFactory(dataDir);
   const transport = transportFactory(credentials, logger);
   const cards = new StreamingCardManager(transport, {
@@ -370,10 +424,10 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
     cards,
     defaultCwd: config.defaultCwd ?? process.cwd(),
     logger,
-    ...(config.groupMentionMode !== undefined ? { groupMentionMode: config.groupMentionMode } : {}),
-    ...(config.allowedChats !== undefined ? { allowedChats: config.allowedChats } : {}),
+    ...(groupMentionMode !== undefined ? { groupMentionMode } : {}),
+    ...(allowedChats !== undefined ? { allowedChats } : {}),
     ...(allowedUsers !== undefined ? { allowedUsers } : {}),
-    ...(config.unknownCommand !== undefined ? { unknownCommand: config.unknownCommand } : {}),
+    ...(unknownCommand !== undefined ? { unknownCommand } : {}),
     ...(config.repoRoots !== undefined ? { repoRoots: config.repoRoots } : {}),
     ...(config.requireWorkingDir !== undefined
       ? { requireWorkingDir: config.requireWorkingDir }
