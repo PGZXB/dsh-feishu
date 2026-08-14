@@ -863,6 +863,36 @@ describe('Bridge', () => {
       );
       expect(panelMarkdown?.content).toContain('Stopped');
     });
+
+    it('retry after a stopped turn starts a fresh turn with the same prompt', async () => {
+      const h = makeHarness({ throttleMs: 0 });
+      await h.bridge.handleMessage(message({ text: 'retry me after stop' }));
+      await h.bridge.handleEvent('feishu-session-1', chunkEvent('partial output'));
+      h.agentStore.setStatus('feishu-session-1', 'running');
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'stop' },
+      });
+      await h.bridge.handleEvent(
+        'feishu-session-1',
+        turnEndEvent({ kind: 'aborted' }) as SessionEvent,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const before = h.agentStore.followups.get('feishu-session-1')?.length ?? 0;
+      // Stopped is terminal but retryable: Retry queues the same prompt again.
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'retry' },
+      });
+      expect(h.agentStore.followups.get('feishu-session-1')?.length).toBe(before + 1);
+      const card = h.transport.sentCards.at(-1);
+      expect(card?.header?.title.content).toBe('retry me after stop');
+      expect(card?.header?.template).toBe('wathet');
+    });
     it('panel after done does not reset the streaming card to working', async () => {
       // The user-reported regression: done → panel → the streaming card
       // reverted to the non-done state. The state machine's single syncCard
@@ -1315,6 +1345,15 @@ describe('Bridge', () => {
       expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(1);
     });
 
+    it('always: an @-only message (mention, no text) is answered', async () => {
+      const h = makeHarness({ groupMentionMode: 'always' });
+      await h.bridge.handleMessage(groupMessage(['ou_bot'], { text: '' }));
+      expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(1);
+      expect(h.agentStore.followups.get('feishu-session-1')?.[0]?.content).toEqual([
+        { type: 'text', text: '' },
+      ]);
+    });
+
     it('respects the chat allowlist', async () => {
       const h = makeHarness({ allowedChats: ['oc_allowed'] });
       await h.bridge.handleMessage(message({ chatId: 'oc_other' }));
@@ -1405,6 +1444,25 @@ describe('working directory commands', () => {
     expect(h.transport.sentTexts.some((t) => t.text.includes('does not exist'))).toBe(true);
   });
 
+  it('/cd resolves a relative path against the process cwd', async () => {
+    const { mkdirSync } = await import('node:fs');
+    const target = join(SCRATCH, 'cd-relative-target');
+    mkdirSync(target, { recursive: true });
+    const relative = join('_dev', 'test-bridge', 'cd-relative-target');
+    const h = makeHarness();
+    await h.bridge.handleMessage(message({ text: `/cd ${relative}` }));
+    expect(h.sessionMap.cwdFor('oc_chat')).toBe(join(process.cwd(), relative));
+  });
+
+  it('/cd keeps spaces in the path intact', async () => {
+    const { mkdirSync } = await import('node:fs');
+    const target = join(SCRATCH, 'my project dir');
+    mkdirSync(target, { recursive: true });
+    const h = makeHarness();
+    await h.bridge.handleMessage(message({ text: `/cd ${target}` }));
+    expect(h.sessionMap.cwdFor('oc_chat')).toBe(target);
+  });
+
   it('/repo posts a dropdown picker card and selects via callback option', async () => {
     const h = makeHarness({ repoRoots: [join(SCRATCH, 'projects')] });
     const { mkdirSync, writeFileSync } = await import('node:fs');
@@ -1443,6 +1501,27 @@ describe('working directory commands', () => {
           el.tag === 'markdown' && 'content' in el && el.content.includes(join(root, 'proj-b')),
       ),
     ).toBe(true);
+  });
+
+  it('/repo with an empty root list posts an empty picker (no crash, no dropdown)', async () => {
+    const h = makeHarness({ repoRoots: [join(SCRATCH, 'no-projects-here')] });
+    await h.bridge.handleMessage(message({ text: '/repo' }));
+    const picker = h.transport.sentCards.find((c) =>
+      c.header?.title.content.includes('Pick a project'),
+    );
+    expect(picker).toBeDefined();
+    // No options and no dropdown: just the guidance markdown.
+    expect(picker?.elements.some((el) => el.tag === 'action')).toBe(false);
+  });
+
+  it('/repo without repoRoots configured still posts the picker (empty)', async () => {
+    const h = makeHarness();
+    await h.bridge.handleMessage(message({ text: '/repo' }));
+    const picker = h.transport.sentCards.find((c) =>
+      c.header?.title.content.includes('Pick a project'),
+    );
+    expect(picker).toBeDefined();
+    expect(picker?.elements.some((el) => el.tag === 'action')).toBe(false);
   });
 
   it('rejects a stale repo pick from a superseded picker card', async () => {
@@ -1964,6 +2043,35 @@ describe('panel command palette', () => {
     expect(navLabels(panel2)).toEqual(['◀️ Prev']);
   });
 
+  it('panel-page clamps out-of-range pages and ignores non-numeric ones', async () => {
+    const h = makeHarness();
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel' },
+    });
+    const before = h.transport.sentCards.length;
+    // A huge page number clamps to the last page — a panel is still posted.
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel-page', page: '99' },
+    });
+    expect(h.transport.sentCards.length).toBe(before + 1);
+    // Non-numeric, fractional, and negative pages are ignored entirely.
+    for (const page of ['abc', '1.5', '-1']) {
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'panel-page', page },
+      });
+    }
+    expect(h.transport.sentCards.length).toBe(before + 1);
+  });
+
   it('a command button executes the same handler as the slash line', async () => {
     const h = makeHarness();
     await h.bridge.handleCardAction({
@@ -2424,6 +2532,24 @@ describe('/model picker', () => {
     );
   });
 
+  it('a bare /model with an empty provider catalog still posts a picker card (no crash)', async () => {
+    const llm: LlmService = {
+      listProviders: () => [],
+      async listModels() {
+        return [];
+      },
+    };
+    const h = makeHarness({ llm });
+    await h.bridge.handleMessage(message({ text: '/model' }));
+    const card = h.transport.sentCards.at(-1);
+    expect(card?.header?.title.content).toBe('🤖 Model');
+    // No dropdown options — the card is posted without a select.
+    const action = card?.elements.find((el) => el.tag === 'action');
+    expect(
+      action && 'actions' in action ? action.actions.some((a) => a.tag === 'select_static') : false,
+    ).toBe(false);
+  });
+
   it('a model pick applies the selection through the default service', async () => {
     const llm = new FakeLlmService();
     const defaults = new FakeAgentDefaultModelService();
@@ -2805,6 +2931,25 @@ describe('interactive questions (Iteration 3)', () => {
     });
   });
 
+  it('submitting a multi-select question with no selection settles an empty answer', async () => {
+    const h = makeHarness();
+    h.sessionMap.set('oc_chat', 'feishu-session-1');
+    const agent = await h.agentStore.resume('feishu-session-1');
+    const pending = h.bridge.askQuestions({
+      agent,
+      questions: [{ id: 'q1', question: 'Pick any', multiSelect: true, options: [{ label: 'A' }] }],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Submit without toggling anything: the empty selection settles.
+    await h.bridge.handleCardAction({
+      messageId: `msg-${h.transport.sentCards.length}`,
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'question-submit', id: 'q1' },
+    });
+    await expect(pending).resolves.toEqual({ answers: [{ id: 'q1', selected: [] }] });
+  });
+
   it('captures the next chat message as a free-text answer', async () => {
     const h = makeHarness();
     h.sessionMap.set('oc_chat', 'feishu-session-1');
@@ -2912,6 +3057,18 @@ describe('/export command', () => {
     h.sessionMap.set('oc_chat', 'feishu-session-1');
     await h.bridge.handleMessage(message({ text: '/export' }));
     expect(h.transport.sentTexts.some((t) => t.text.includes('session export failed'))).toBe(true);
+  });
+
+  it('exports an empty session log as a file with a no-content marker', async () => {
+    const h = makeExportHarness(async () => ({
+      session: { id: 'feishu-session-1' },
+      events: [],
+    }));
+    h.sessionMap.set('oc_chat', 'feishu-session-1');
+    await h.bridge.handleMessage(message({ text: '/export' }));
+    expect(h.transport.sentFiles).toHaveLength(1);
+    expect(h.transport.sentFiles[0]?.content).toContain('no content');
+    expect(h.transport.sentTexts.some((t) => t.text.includes('Exported 0 events'))).toBe(true);
   });
 });
 
@@ -3281,6 +3438,29 @@ describe('compaction lifecycle (user report regression)', () => {
     // The chat is unlocked even when compaction failed (regression).
     await h.bridge.handleMessage(message({ messageId: 'om_clear', text: '/clear' }));
     expect(h.transport.sentTexts.some((t) => t.text.includes('a turn is running'))).toBe(false);
+    expect(h.transport.sentTexts.some((t) => t.text.includes('New conversation started'))).toBe(
+      true,
+    );
+  });
+
+  it('compact with no compactable history replies and never wedges the chat', async () => {
+    const h = makeHarness({
+      executeCommand: async () => ({ kind: 'success', text: 'No compactable history yet.' }),
+    });
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'command', name: 'compact' },
+    });
+    expect(h.transport.sentTexts.some((t) => t.text.includes('No compactable history'))).toBe(true);
+    // No compaction card was opened and the chat is NOT left working.
+    expect(h.transport.sentCards.some((c) => c.header?.title.content === '🧹 Compacting…')).toBe(
+      false,
+    );
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/clear' }));
     expect(h.transport.sentTexts.some((t) => t.text.includes('New conversation started'))).toBe(
       true,
     );

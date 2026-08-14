@@ -2899,4 +2899,310 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
       );
     }
   }, 180_000);
+
+  /** Compact on a chat with no compactable history: the reply is
+   *  informational and the chat stays servable (nothing is wedged). */
+  it('compact with no history replies and leaves the chat servable', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_nohist_${Date.now()}`;
+      await pinWorkingDir(chatId);
+      // A brand-new chat: nothing to compact.
+      writeAction({
+        messageId: 'mem-nohist-1',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'command', name: 'compact' },
+      });
+      await waitFor(
+        'the no-compactable-history reply',
+        () =>
+          readOutbox().some((r) => r.kind === 'text' && r.text?.includes('No compactable history')),
+        60_000,
+      );
+      // The chat was not wedged: a command still works.
+      sendMessage(chatId, '/status');
+      await waitFor(
+        'the /status reply after compact',
+        () =>
+          readOutbox().some(
+            (r) => r.kind === 'text' && r.chatId === chatId && r.text?.includes(`chat: ${chatId}`),
+          ),
+        30_000,
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 120_000);
+
+  /** Out-of-range panel navigation must clamp, never crash: a huge page
+   *  number still shows a panel; garbage pages are ignored. */
+  it('panel navigation clamps out-of-range pages and ignores garbage', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_panelclamp_${Date.now()}`;
+      writeAction({
+        messageId: 'mem-pc-1',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'panel' },
+      });
+      await waitFor(
+        'the panel card',
+        () =>
+          readOutbox()
+            .filter((r) => r.kind === 'card')
+            .some((r) => r.card?.header?.title.content === '⚙️ dsh-feishu panel'),
+        30_000,
+      );
+      const before = readOutbox().filter((r) => r.kind === 'card').length;
+      // A huge page clamps to the last page: another panel card is posted.
+      writeAction({
+        messageId: 'mem-pc-2',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'panel-page', page: '99' },
+      });
+      await waitFor(
+        'the clamped panel card',
+        () => readOutbox().filter((r) => r.kind === 'card').length > before,
+        30_000,
+      );
+      // Garbage pages are ignored — the chat still answers commands.
+      writeAction({
+        messageId: 'mem-pc-3',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'panel-page', page: 'abc' },
+      });
+      writeAction({
+        messageId: 'mem-pc-4',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'panel-page', page: '-1' },
+      });
+      sendMessage(chatId, '/status');
+      await waitFor(
+        'the /status reply after garbage pages',
+        () =>
+          readOutbox().some(
+            (r) => r.kind === 'text' && r.chatId === chatId && r.text?.includes(`chat: ${chatId}`),
+          ),
+        30_000,
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 120_000);
+
+  /** Copy after a stopped turn resends the partial output the card held
+   *  (the stop did not erase it). */
+  it('copy after a stopped turn resends the held output', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      server.holdNextResponse();
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_stopcopy_${Date.now()}`;
+      await pinWorkingDir(chatId);
+      sendMessage(chatId, 'start then stop me');
+      await waitFor(
+        'the working streaming card',
+        () => readOutbox().some((r) => r.kind === 'card' && r.chatId === chatId),
+        30_000,
+      );
+      writeAction({
+        messageId: 'mem-sc-1',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'stop' },
+      });
+      await waitFor(
+        'the stopped card',
+        () => readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'orange'),
+        60_000,
+      );
+      // Copy resends the partial output that was streamed before the stop.
+      writeAction({
+        messageId: 'mem-sc-2',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'copy' },
+      });
+      await waitFor(
+        'the copied partial output',
+        () =>
+          readOutbox().some(
+            (r) => r.kind === 'text' && r.chatId === chatId && r.text?.includes('starting…'),
+          ),
+        30_000,
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 120_000);
+
+  /** A question card submitted with nothing selected settles an EMPTY
+   *  answer and the turn continues (the model gets the empty selection). */
+  it('question card submitted empty settles an empty answer and the turn continues', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      server.setScripts([
+        [
+          {
+            toolCall: {
+              index: 0,
+              id: 'call-qempty-1',
+              name: 'ask_user_question',
+              arguments:
+                '{"questions":[{"id":"q1","question":"Pick any","multiSelect":true,"options":[{"label":"A"},{"label":"B"}]}]}',
+            },
+          },
+        ],
+        [{ content: 'Empty selection accepted.' }],
+      ]);
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_qempty_${Date.now()}`;
+      await pinWorkingDir(chatId);
+      sendMessage(chatId, 'ask me something');
+      await waitFor(
+        'the question card',
+        () =>
+          readOutbox().some(
+            (r) => r.kind === 'card' && r.card?.header?.title.content === '❓ Question',
+          ),
+        60_000,
+      );
+      // Submit with nothing toggled (the callback must carry the question
+      // card's real message id or the stale-card guard rejects it).
+      const questionRecord = [...readOutbox()]
+        .reverse()
+        .find((r) => r.kind === 'card' && r.card?.header?.title.content === '❓ Question');
+      writeAction({
+        messageId: questionRecord?.messageId ?? '',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'question-submit', id: 'q1' },
+      });
+      // The turn continues and completes with the model's reply.
+      await waitFor(
+        'the turn completing after the empty submit',
+        () =>
+          readOutbox().some(
+            (r) =>
+              r.kind === 'patch' &&
+              r.card?.header?.template === 'green' &&
+              JSON.stringify(r.card.elements).includes('Empty selection accepted.'),
+          ),
+        90_000,
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 120_000);
 });

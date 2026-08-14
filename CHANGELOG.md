@@ -114,6 +114,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   New scenario test: a stop button on a pre-restart card explains there is
   no live session and the chat stays usable. New unit edge cases cover
   blank messages and malformed/unknown card actions.
+- **Edge-case coverage pass (pre-release).** New unit tests: an @-only
+  group message is answered; `/compact` with no compactable history
+  replies without wedging the chat; `/repo` with an empty root list or no
+  roots posts an empty picker; a multi-select question submitted empty
+  settles an empty answer; a bare `/model` with an empty provider catalog
+  still posts the picker; retry after a stopped turn starts a fresh turn;
+  `panel-page` clamps out-of-range pages and ignores non-numeric ones;
+  `/cd` resolves relative paths and keeps spaces; `/export` of an empty
+  session ships a no-content file. New real-composition tests: compact
+  with no history leaves the chat servable, panel navigation clamps
+  garbage pages, copy after a stopped turn resends the held output, and an
+  empty question submit continues the turn.
 
 ### Fixed
 
