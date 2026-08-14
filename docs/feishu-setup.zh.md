@@ -29,6 +29,11 @@ pnpm run setup:feishu -- --new       # 创建新应用并完成配置
    管理员。
 6. 将 `appId` / `appSecret` 写入 profile 的 `cordis.patch.yml`（会保留一份
    `.bak` 备份），或使用 `--print-env` 打印导出行。
+7. **引导 surface 配置**——三个提示（直接回车 = 使用显示的默认值）：
+   `repoRoots`（`/repo` 的扫描根目录，默认你的主目录）、
+   `groupMentionMode`（默认 `always`）、`requireWorkingDir`（默认 `y`）。
+   默认值优先取 profile 里已有的配置；非交互运行（CI、脚本）跳过提示，
+   静默使用默认值。
 
 如需重新配置现有应用而非新建：
 

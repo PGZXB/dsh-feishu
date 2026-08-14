@@ -31,6 +31,12 @@ The wizard then, with no further web-console work:
    auto-approved, no administrator wait.
 6. Writes `appId` / `appSecret` into the profile's `cordis.patch.yml`
    (a `.bak` backup is kept), or prints export lines with `--print-env`.
+7. **Guides the surface options** with three prompts (empty input = the
+   shown default): `repoRoots` for `/repo` (default: your home directory),
+   `groupMentionMode` (default `always`), and `requireWorkingDir`
+   (default `y`). The defaults are the profile's existing values when it
+   was already configured. Non-interactive runs (CI, scripts) skip the
+   prompts and use the defaults silently.
 
 Reconfigure an existing app instead of creating one:
 

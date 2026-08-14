@@ -81,22 +81,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **README overhaul.** Rebuilt around the finalized positioning — *The
-  Feishu UI for DeepSeek Harness (dsh)* — and kept deliberately minimal:
-  hero + one-line web-parity evidence (the same `ctx.permissionPresets` /
-  `ctx.planMode` / `ctx.agentDefaultModel` services as the web UI), a
-  4-step quickstart (install → one-QR setup wizard, which writes the
-  credentials itself — no manual env vars needed for new apps; env vars
-  documented for existing apps), a compact feature list. Badges: license
-  and Node (static), CI (renders once the repository is public).
-  `package.json` gains a description and keywords. Screenshots are
-  deferred — `docs/screenshot-checklist.md` + `docs/assets/` stage the
-  eleven planned captures for a gallery added once real shots exist; no
-  test-rendered mockups, no broken image links. Hero follows the
-  dsh-cc-tui pattern — a positioning blockquote ("DeepSeek Harness
-  officially ships a browser UI; the Feishu UI is provided by this
-  plugin") using the full product name, with no terminal-surface claim
-  (the official project ships no TUI).
+- **README overhaul.** Rebuilt around the positioning — *The Feishu UI for
+  DeepSeek Harness (dsh)* — as a complete, zero-context onboarding: a
+  from-blank-machine quickstart (Node.js → pnpm → plugin →
+  one-QR setup → run), commands in the official npx style, and two equal install paths under Quickstart —
+  from npm and from source — both starting from installing Node.js,
+  mirroring the dsh README, a "Usage"
+  walkthrough (a concrete end-to-end scenario: /group or DM → /cd → ask →
+  streaming card → in-chat approval/question → session management), the full slash-command
+  table, a compact feature list, license/Node/CI badges, and
+  Contributing/security links. `package.json` gains a description and
+  keywords; `README.zh.md` is kept in sync. Screenshots are deferred —
+  `docs/screenshot-checklist.md` + `docs/assets/` stage eleven planned
+  captures for a gallery added once real shots exist.
+
+### Fixed
+
+- **`pnpm install` failed under pnpm 11** (user report): pnpm 11 defaults
+  `minimumReleaseAge` to 1440 minutes (24 h), rejecting any lockfile entry
+  published within the last day — freshly released transitive deps (koffi,
+  @smithy, @hono, content-type, …) blocked installs on pnpm ≥ 11. Set
+  `minimumReleaseAge: 0` explicitly in `pnpm-workspace.yaml` so installs
+  work on every pnpm version; the `allowBuilds` allowlist (the build-script
+  supply-chain control) is unchanged.
+- **`pnpm run setup:feishu -- --new` failed under pnpm 11** (user report):
+  pnpm ≥ 11 forwards the `--` run-argument separator verbatim, so the CLI
+  received `-- --new …` and rejected `--` as an unknown option. The setup
+  CLI now skips a leading `--` (regression-tested); the documented command
+  works on every pnpm version.
+- **Feishu QR login failed with 4401 "请求无效"** (user report): the
+  `accounts.qrlogin/init` request was missing the mandatory `x-locale`
+  and `x-terminal-type` headers (botmux's reference carries them; ours was
+  copied without). Added both; the QR init now returns a token live
+  (regression test pins the required headers).
+
+- **Long-connection / REST calls failed behind a proxy** (user report:
+  `Protocol "https:" not supported. Expected "http:"` from
+  follow-redirects). The lark SDK's default axios instance honors
+  `http(s)_proxy` env vars, which breaks WS endpoint discovery and REST
+  calls when a proxy is set. The transport now injects a shared
+  `proxy: false` axios instance (`FEISHU_HTTP`) into both the `Client` and
+  the `WSClient` (regression test pins `defaults.proxy === false`).
+
+- **WS endpoint discovery failed with `code: undefined` after the proxy
+  fix** (user report): the injected axios instance lacked the SDK default's
+  response interceptor that unwraps `resp.data`, so `request()` resolved to
+  the AxiosResponse wrapper and the SDK's `{code, data:{URL}, msg}`
+  destructure came back undefined. `FEISHU_HTTP` now mirrors the SDK
+  default instance: `proxy: false` plus the response-unwrap and
+  `$return_headers` interceptors (regression tests pin both).
+
+- **Setup wizard did not configure `repoRoots`** (user report): the profile
+  it writes only carried appId/appSecret, so `/repo` had nothing to list out
+  of the box. Creating the feishu row now includes a `repoRoots` default of
+  the user's home directory (mirrors the dev profile); existing rows are
+  never touched. Regression test pins the created row's shape.
+
+- **Setup wizard now guides the surface options.** `pnpm run setup:feishu`
+  prompts for `repoRoots` (default: the user's home directory),
+  `groupMentionMode` (default `always`), and `requireWorkingDir`
+  (default `y`) — empty input accepts the shown default, which is the
+  profile's existing value when already configured. Non-TTY runs (CI,
+  scripts, `--print-env`) skip the prompts and use the defaults silently.
+  The writer merges the guided options on both create and update without
+  touching unrelated keys. `FEISHU_ALLOWED_USERS`-style env overrides are
+  unaffected.
+
+- **README gains an Uninstall section** (user request): the proper
+  `dsh plugin --profile feishu remove @dsh-feishu/dsh-feishu` plus the
+  full clean-slate `rm -rf ~/.dsh/profiles/feishu ~/.dsh/feishu`, verified
+  against a scratch profile before documenting.
 
 ### Removed
 
