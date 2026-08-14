@@ -21,6 +21,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
 import {
   assistantText,
+  buildCard,
   buildPanelCard,
   buildRepoPickedCard,
   buildRepoPickerCard,
@@ -201,6 +202,10 @@ export class Bridge {
   private readonly lastOutputs = new Map<string, string>();
   /** Last completed turn's rows per chat (for the ⋯ row expand buttons). */
   private readonly lastRows = new Map<string, readonly TurnRow[]>();
+  /** Per-chat collapsed state of the think/tool row sequence. */
+  private readonly collapsedRows = new Map<string, boolean>();
+  /** Last card snapshot per chat (finished card, for the collapse toggle). */
+  private readonly lastSnapshots = new Map<string, CardSnapshot>();
   /** Active repo-picker card message id per chat; a pick consumes it. */
   private readonly pickerMessageIds = new Map<string, string>();
   private readonly disposeEvents: () => void;
@@ -504,11 +509,20 @@ export class Bridge {
         }
         settleOpenThink(turn);
         turn.status = status;
+        const finalSnapshot: CardSnapshot = {
+          title: turn.title,
+          content: turn.content,
+          rows: turn.rows,
+          cwd: this.options.sessionMap.cwdFor(chatId) ?? this.options.defaultCwd,
+          collapsed: this.collapsedRows.get(chatId) ?? false,
+          status,
+        };
         this.patch(chatId, turn);
         await this.options.cards.finalize(chatId, status);
         const finalText = turn.content.trim();
         if (finalText !== '') this.lastOutputs.set(chatId, finalText);
         if (turn.rows.length > 0) this.lastRows.set(chatId, turn.rows);
+        this.lastSnapshots.set(chatId, finalSnapshot);
         this.turns.delete(chatId);
         // The card holds the full answer and finalizes green in place; the
         // initial card send already notified, so a completed turn sends no
@@ -643,6 +657,31 @@ export class Bridge {
           break;
         }
         await this.options.transport.sendCard(action.chatId, buildRowDetailsCard(row));
+        break;
+      }
+      case 'toggle-rows': {
+        // Flip the per-chat collapsed state, then re-render: a live turn
+        // re-patches through the streaming manager; a finished card is
+        // updated in place from the stored final snapshot.
+        const collapsed = !(this.collapsedRows.get(action.chatId) ?? false);
+        this.collapsedRows.set(action.chatId, collapsed);
+        const turn = this.turns.get(action.chatId);
+        if (turn !== undefined) {
+          this.patch(action.chatId, turn);
+          break;
+        }
+        const snapshot = this.lastSnapshots.get(action.chatId);
+        const messageId = this.options.cards.lastMessageId(action.chatId);
+        if (snapshot !== undefined && messageId !== undefined) {
+          try {
+            await this.options.transport.updateCard(
+              messageId,
+              buildCard({ ...snapshot, collapsed }),
+            );
+          } catch (error: unknown) {
+            this.options.logger.warn(`rows toggle update failed: ${String(error)}`);
+          }
+        }
         break;
       }
       case 'panel': {
@@ -803,6 +842,7 @@ export class Bridge {
       content: turn.content,
       rows: turn.rows,
       cwd: this.options.sessionMap.cwdFor(chatId) ?? this.options.defaultCwd,
+      collapsed: this.collapsedRows.get(chatId) ?? false,
       status: turn.status,
     };
     this.options.cards.patch(chatId, snapshot);

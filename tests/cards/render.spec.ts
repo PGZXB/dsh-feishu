@@ -11,6 +11,7 @@ import {
   buildRepoPickedCard,
   buildRepoPickerCard,
   buildRowDetailsCard,
+  collapseSequence,
   REPO_SELECT_MAX_OPTIONS,
   repoOptionLabel,
   repoRelativePath,
@@ -74,15 +75,13 @@ describe('assistantText', () => {
 });
 
 describe('rowLine', () => {
-  it('shows a running think row as Thinking', () => {
+  it('always shows the cloud emoji and Thinking for a think row', () => {
     expect(rowLine({ kind: 'think', id: 't1', text: 'hmm', settled: false })).toBe(
-      'Think · Thinking…',
+      '☁️ Think · Thinking',
     );
-  });
-
-  it('shows the first line of a settled think row', () => {
+    // Even after the block settles, the line stays minimal.
     expect(rowLine({ kind: 'think', id: 't1', text: 'first line\nsecond', settled: true })).toBe(
-      'Think · first line',
+      '☁️ Think · Thinking',
     );
   });
 
@@ -96,6 +95,44 @@ describe('rowLine', () => {
       result: '',
     };
     expect(rowLine(row)).toBe('✅ Bash · ls -la');
+  });
+});
+
+describe('collapseSequence', () => {
+  it('joins think and tool names with ->', () => {
+    const rows = [
+      { kind: 'think' as const, id: 't1', text: '', settled: false },
+      {
+        kind: 'tool' as const,
+        id: 'c1',
+        name: 'bash',
+        status: 'done' as const,
+        args: '',
+        result: '',
+      },
+      {
+        kind: 'tool' as const,
+        id: 'c2',
+        name: 'read',
+        status: 'done' as const,
+        args: '',
+        result: '',
+      },
+    ];
+    expect(collapseSequence(rows)).toBe('think -> bash -> read');
+  });
+
+  it('caps long sequences with an ellipsis', () => {
+    const rows = Array.from({ length: 15 }, (_, i) => ({
+      kind: 'tool' as const,
+      id: `c${i}`,
+      name: `t${i}`,
+      status: 'done' as const,
+      args: '',
+      result: '',
+    }));
+    const seq = collapseSequence(rows, 3);
+    expect(seq).toBe('t0 -> t1 -> t2 …');
   });
 });
 
@@ -145,11 +182,44 @@ describe('buildCard', () => {
     });
     const rows = card.elements.filter((el) => el.tag === 'column_set');
     expect(rows).toHaveLength(3);
-    expect(rowText(rows[0])).toBe('Think · hmm');
+    expect(rowText(rows[0])).toBe('☁️ Think · Thinking');
     expect(rowText(rows[1])).toContain('✅ Bash');
     expect(rowText(rows[2])).toContain('❌ Read');
     expect(rowButton(rows[0])?.content).toBe('⋯');
     expect(rowButton(rows[1])?.value).toEqual({ kind: 'row-details', id: 'c1' });
+  });
+
+  it('collapsed mode renders one sequence line with an expand toggle', () => {
+    const card = buildCard({
+      title: 'T',
+      content: 'done',
+      rows: [
+        { kind: 'think', id: 't1', text: 'hmm', settled: true },
+        { kind: 'tool', id: 'c1', name: 'bash', status: 'done', args: '{}', result: '' },
+        { kind: 'tool', id: 'c2', name: 'read', status: 'done', args: '{}', result: '' },
+      ],
+      collapsed: true,
+      status: 'done',
+    });
+    const sequence = card.elements.find(
+      (el): el is Extract<CardElement, { tag: 'markdown' }> =>
+        el.tag === 'markdown' && el.content.includes(' -> '),
+    );
+    expect(sequence?.content).toBe('think -> bash -> read');
+    expect(card.elements.filter((el) => el.tag === 'column_set')).toHaveLength(0);
+    const action = card.elements.find((el) => el.tag === 'action');
+    expect(buttonLabels(action)).toContain('▸ Expand');
+  });
+
+  it('expanded mode shows the collapse toggle when rows exist', () => {
+    const card = buildCard({
+      title: 'T',
+      content: 'done',
+      rows: [{ kind: 'tool', id: 'c1', name: 'bash', status: 'done', args: '{}', result: '' }],
+      status: 'done',
+    });
+    const action = card.elements.find((el) => el.tag === 'action');
+    expect(buttonLabels(action)).toContain('▾ Collapse');
   });
 
   it('renders the complete output at the bottom as markdown', () => {
@@ -168,7 +238,7 @@ describe('buildCard', () => {
     expect(joined).not.toContain('# Hello');
   });
 
-  it('shows copy/retry/panel when done (no tools button)', () => {
+  it('shows copy/retry/panel plus the rows toggle when done', () => {
     const card = buildCard({
       title: 'T',
       content: 'done',
@@ -176,7 +246,7 @@ describe('buildCard', () => {
       status: 'done',
     });
     const action = card.elements.find((el) => el.tag === 'action');
-    expect(buttonLabels(action)).toEqual(['📋 Copy', '🔁 Retry', '⚙️ Panel']);
+    expect(buttonLabels(action)).toEqual(['📋 Copy', '🔁 Retry', '⚙️ Panel', '▾ Collapse']);
   });
 });
 
@@ -210,7 +280,7 @@ describe('card buttons', () => {
 });
 
 describe('buildRowDetailsCard', () => {
-  it('shows the full reasoning text for a think row', () => {
+  it('shows the full reasoning in a code block for a think row', () => {
     const card = buildRowDetailsCard({
       kind: 'think',
       id: 't1',
@@ -220,24 +290,44 @@ describe('buildRowDetailsCard', () => {
     const markdowns = card.elements.filter(
       (el): el is Extract<CardElement, { tag: 'markdown' }> => el.tag === 'markdown',
     );
-    expect(markdowns[0]?.content).toBe('full reasoning');
+    expect(markdowns[0]?.content).toBe('```\nfull reasoning\n```');
   });
 
-  it('shows IN args and OUT result for a tool row', () => {
+  it('shows formatted JSON input and code-blocked output for a tool row', () => {
     const card = buildRowDetailsCard({
       kind: 'tool',
       id: 'c1',
       name: 'bash',
       status: 'done',
-      args: '{"command":"ls"}',
+      args: '{"command":"ls","n":1}',
       result: 'file.txt',
     });
     const markdowns = card.elements.filter(
       (el): el is Extract<CardElement, { tag: 'markdown' }> => el.tag === 'markdown',
     );
     expect(markdowns[0]?.content).toContain('Bash');
+    // IN: pretty-printed JSON inside a json fence.
     expect(markdowns[1]?.content).toContain('IN');
+    expect(markdowns[1]?.content).toContain('```json');
+    expect(markdowns[1]?.content).toContain('  "command": "ls",');
+    // OUT: fenced result.
     expect(markdowns[2]?.content).toContain('OUT');
+    expect(markdowns[2]?.content).toContain('```');
+  });
+
+  it('handles unparseable args as raw text', () => {
+    const card = buildRowDetailsCard({
+      kind: 'tool',
+      id: 'c1',
+      name: 'bash',
+      status: 'done',
+      args: '{not json',
+      result: '',
+    });
+    const markdowns = card.elements.filter(
+      (el): el is Extract<CardElement, { tag: 'markdown' }> => el.tag === 'markdown',
+    );
+    expect(markdowns[1]?.content).toContain('{not json');
   });
 });
 

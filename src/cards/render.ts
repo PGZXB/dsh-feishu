@@ -21,13 +21,16 @@ import { toolRowSummary, toolRowTitle } from './tool-summary.js';
 /** Terminal/working state of one streaming card. */
 export type CardStatus = 'working' | 'done' | 'error';
 
-/** One think row: a reasoning block, line = `Think · …`. */
+/** One think row: a reasoning block, line = `☁️ Think · Thinking`.
+ *  The line always reads "Thinking" (a live latest-line would flicker
+ *  through throttled card patches); the full text lives in the expand card.
+ */
 export interface ThinkRow {
   readonly kind: 'think';
   readonly id: string;
   /** Accumulated reasoning text (full, for the expand card). */
   readonly text: string;
-  /** Whether the block settled (shows its first line once settled). */
+  /** Whether the block settled (row lifecycle; display never changes). */
   readonly settled: boolean;
 }
 
@@ -56,6 +59,8 @@ export interface CardSnapshot {
   readonly rows: readonly TurnRow[];
   /** Session cwd, used to relativize workspace-rooted path summaries. */
   readonly cwd?: string;
+  /** Collapse the row sequence to one `think -> tool -> …` line. */
+  readonly collapsed?: boolean;
   readonly status: CardStatus;
 }
 
@@ -82,6 +87,7 @@ export type SurfaceAction =
   | { readonly kind: 'retry' }
   | { readonly kind: 'panel' }
   | { readonly kind: 'row-details'; readonly id: string }
+  | { readonly kind: 'toggle-rows' }
   | { readonly kind: 'repo-pick' }
   | { readonly kind: 'repo-page' };
 
@@ -242,8 +248,9 @@ export function actionValue(action: SurfaceAction): Record<string, string> {
 }
 
 /** The button row appended by status: working → stop; done → copy/retry/panel;
- *  error → retry/panel. Tool detail rows carry their own expand buttons. */
-function statusButtons(status: CardStatus): CardElement {
+ *  error → retry/panel. When the turn has rows, a persistent toggle button
+ *  expands/collapses the think-tool sequence (always visible, like Stop). */
+function statusButtons(status: CardStatus, hasRows: boolean, collapsed: boolean): CardElement {
   const actions: Array<{
     readonly tag: 'button';
     readonly text: { readonly tag: 'plain_text'; readonly content: string };
@@ -274,6 +281,14 @@ function statusButtons(status: CardStatus): CardElement {
       tag: 'button',
       text: { tag: 'plain_text', content: '⚙️ Panel' },
       value: actionValue({ kind: 'panel' }),
+    });
+  }
+  if (hasRows) {
+    actions.push({
+      tag: 'button',
+      text: { tag: 'plain_text', content: collapsed ? '▸ Expand' : '▾ Collapse' },
+      type: 'default',
+      value: actionValue({ kind: 'toggle-rows' }),
     });
   }
   return { tag: 'action', actions };
@@ -316,21 +331,28 @@ export function assistantText(blocks: readonly ContentBlock[]): string {
     .join('');
 }
 
-function firstLine(text: string): string {
-  const nl = text.indexOf('\n');
-  return nl === -1 ? text : text.slice(0, nl);
-}
-
 /** The one-line display text of a row, DSH web style. */
 export function rowLine(row: TurnRow, cwd?: string): string {
   if (row.kind === 'think') {
-    if (!row.settled) return 'Think · Thinking…';
-    const first = firstLine(row.text.trim());
-    return first === '' ? 'Think · Thinking…' : `Think · ${first}`;
+    // Always "Thinking" — a live latest-line would flicker through
+    // throttled card patches; the full text lives in the expand card.
+    return '☁️ Think · Thinking';
   }
   const icon = row.status === 'running' ? '🔧' : row.status === 'done' ? '✅' : '❌';
   const summary = toolRowSummary(row.name, row.args, cwd);
   return `${icon} ${toolRowTitle(row.name)} · ${summary}`;
+}
+
+/**
+ * The minimal collapsed sequence for a turn: row names joined with
+ * ` -> ` (`think -> bash -> read -> …`). Think rows read "think", tool
+ * rows read their tool name; the sequence is capped for a single line.
+ */
+export function collapseSequence(rows: readonly TurnRow[], max = 12): string {
+  const names = rows.map((row) => stripAngleBrackets(row.kind === 'think' ? 'think' : row.name));
+  const shown = names.slice(0, max);
+  const suffix = names.length > max ? ' …' : '';
+  return shown.join(' -> ') + suffix;
 }
 
 /** One card row: the line text plus its expand button (opens row details). */
@@ -374,8 +396,14 @@ function rowElement(row: TurnRow, cwd?: string): CardElement {
  */
 export function buildCard(snapshot: CardSnapshot): CardJson {
   const elements: CardElement[] = [];
-  for (const row of snapshot.rows) {
-    elements.push(rowElement(row, snapshot.cwd));
+  const collapsed = snapshot.collapsed ?? false;
+  if (collapsed && snapshot.rows.length > 0) {
+    // The minimal sequence, one line: `think -> bash -> read -> …`.
+    elements.push({ tag: 'markdown', content: collapseSequence(snapshot.rows) });
+  } else {
+    for (const row of snapshot.rows) {
+      elements.push(rowElement(row, snapshot.cwd));
+    }
   }
   if (elements.length > 0 && snapshot.content.trim() !== '') {
     elements.push({ tag: 'hr' });
@@ -394,7 +422,7 @@ export function buildCard(snapshot: CardSnapshot): CardJson {
           : '**… working**';
     elements.push({ tag: 'markdown', content: statusLine });
   }
-  elements.push(statusButtons(snapshot.status));
+  elements.push(statusButtons(snapshot.status, snapshot.rows.length > 0, collapsed));
   return {
     config: { wide_screen_mode: true },
     header: {
@@ -408,9 +436,33 @@ export function buildCard(snapshot: CardSnapshot): CardJson {
 }
 
 /**
+ * Wrap text in a fenced code block for a Feishu markdown element. If the
+ * content itself contains a longer backtick run, the fence lengthens so the
+ * block cannot close early.
+ * @param text - code text.
+ * @param lang - fence language tag (e.g. `json`), or empty for none.
+ * @returns fenced markdown.
+ */
+function fencedCode(text: string, lang = ''): string {
+  let fence = '```';
+  while (text.includes(fence)) fence += '`';
+  return `${fence}${lang}\n${text.replace(/\n+$/, '')}\n${fence}`;
+}
+
+/** Pretty-print JSON args for the IN block; raw text when unparseable. */
+function formatArgs(args: string): string {
+  try {
+    const parsed = JSON.parse(args) as unknown;
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    return args;
+  }
+}
+
+/**
  * Build the details card for one row, opened by its ⋯ button: a think row
- * shows the full reasoning text; a tool row shows args (IN) and result
- * (OUT).
+ * shows the full reasoning in a code block; a tool row shows the formatted
+ * JSON input in a `json` code block and the result in a code block.
  * @param row - the row to expand.
  * @returns Feishu interactive card JSON (v1 layout).
  */
@@ -420,7 +472,8 @@ export function buildRowDetailsCard(row: TurnRow): CardJson {
     const text = row.text.trim();
     elements.push({
       tag: 'markdown',
-      content: text === '' ? '_(no reasoning text)_' : truncateHead(text, MAX_CARD_CHARS),
+      content:
+        text === '' ? '_(no reasoning text)_' : fencedCode(truncateHead(text, MAX_CARD_CHARS)),
     });
   } else {
     elements.push({
@@ -430,13 +483,13 @@ export function buildRowDetailsCard(row: TurnRow): CardJson {
     if (row.args !== '') {
       elements.push({
         tag: 'markdown',
-        content: `<font color='grey'>IN</font>\n${truncateHead(row.args, 2000)}`,
+        content: `IN\n${fencedCode(truncateHead(formatArgs(row.args), 2000), 'json')}`,
       });
     }
     if (row.result !== '') {
       elements.push({
         tag: 'markdown',
-        content: `<font color='grey'>OUT</font>\n${truncateHead(row.result, 2000)}`,
+        content: `OUT\n${fencedCode(truncateHead(row.result, 2000))}`,
       });
     }
     if (row.args === '' && row.result === '') {
@@ -448,7 +501,7 @@ export function buildRowDetailsCard(row: TurnRow): CardJson {
     header: {
       title: {
         tag: 'plain_text',
-        content: row.kind === 'think' ? '💭 Think' : `🔧 ${toolRowTitle(row.name)}`,
+        content: row.kind === 'think' ? '☁️ Think' : `🔧 ${toolRowTitle(row.name)}`,
       },
       template: 'wathet',
     },

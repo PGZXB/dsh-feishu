@@ -356,7 +356,7 @@ describe('Bridge', () => {
       doneAction && 'actions' in doneAction
         ? doneAction.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
         : [];
-    expect(doneLabels).toEqual(['📋 Copy', '🔁 Retry', '⚙️ Panel']);
+    expect(doneLabels).toEqual(['📋 Copy', '🔁 Retry', '⚙️ Panel', '▾ Collapse']);
   });
 
   it('streams reasoning deltas into a think row (settled on turn end)', async () => {
@@ -413,6 +413,43 @@ describe('Bridge', () => {
         (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('Bash'),
       ),
     ).toBe(true);
+  });
+
+  it('toggle-rows collapses a finished card to the minimal sequence', async () => {
+    const h = makeHarness();
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleEvent('feishu-session-1', {
+      type: 'tool/call',
+      seq: 1,
+      time: 0,
+      data: { turn: 0, step: 0, callId: 'call-1', name: 'bash', arguments: '{"command":"ls"}' },
+    } as unknown as SessionEvent);
+    await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+    const before = h.transport.updatedCards.length;
+    // The finished card is re-rendered in place with the collapsed sequence.
+    await h.bridge.handleCardAction({
+      messageId: 'msg-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'toggle-rows' },
+    });
+    const collapsed = h.transport.updatedCards.at(-1);
+    expect(h.transport.updatedCards.length).toBe(before + 1);
+    expect(
+      collapsed?.elements.some(
+        (el) => el.tag === 'markdown' && 'content' in el && el.content === 'bash',
+      ),
+    ).toBe(true);
+    expect(collapsed?.elements.some((el) => el.tag === 'column_set')).toBe(false);
+    // Toggling again expands back to the row view.
+    await h.bridge.handleCardAction({
+      messageId: 'msg-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'toggle-rows' },
+    });
+    const expanded = h.transport.updatedCards.at(-1);
+    expect(expanded?.elements.some((el) => el.tag === 'column_set')).toBe(true);
   });
 
   it('marks the turn card error and still delivers the final text', async () => {

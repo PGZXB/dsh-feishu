@@ -39,6 +39,10 @@ interface ActiveCard {
  */
 export class StreamingCardManager {
   private readonly active = new Map<string, ActiveCard>();
+  /** The most recently opened card's message id per chat, kept after the
+   *  card retires so the bridge can still re-render it (e.g. the rows
+   *  collapse toggle on a finished card). */
+  private readonly lastMessageIds = new Map<string, string>();
   private readonly throttleMs: number;
 
   /**
@@ -50,6 +54,14 @@ export class StreamingCardManager {
     options: StreamingCardOptions = {},
   ) {
     this.throttleMs = options.throttleMs ?? 150;
+  }
+
+  /**
+   * The message id of the most recently opened card for a chat, or
+   * `undefined` when none was opened yet (or it was superseded/cleared).
+   */
+  lastMessageId(chatId: string): string | undefined {
+    return this.lastMessageIds.get(chatId);
   }
 
   /**
@@ -65,6 +77,7 @@ export class StreamingCardManager {
     }
     const card = buildCard({ title, content: '', rows: [], status: 'working' });
     const { messageId } = await this.transport.sendCard(chatId, card);
+    this.lastMessageIds.set(chatId, messageId);
     this.active.set(chatId, {
       chatId,
       messageId,
