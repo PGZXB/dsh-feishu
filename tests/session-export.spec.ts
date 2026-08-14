@@ -7,8 +7,6 @@ import {
   buildSessionExport,
   type SessionExportEvent,
   sessionExportLine,
-  splitTranscriptParts,
-  toLarkCardMarkdown,
 } from '../src/session-export.js';
 
 function event(type: string, seq: number, data?: SessionExportEvent['data']): SessionExportEvent {
@@ -91,39 +89,5 @@ describe('buildSessionExport', () => {
       }),
     ]);
     expect(long).toContain('x'.repeat(200_000));
-  });
-});
-
-describe('toLarkCardMarkdown', () => {
-  it('turns headings, blockquotes and rules into lark_md-safe text', () => {
-    const converted = toLarkCardMarkdown(
-      '# dsh-feishu session log\n\n> My session\n\n## user\n\nhi\n\n---\n\n*turn ended: completed*',
-    );
-    expect(converted).not.toContain('#');
-    expect(converted).toContain('**dsh-feishu session log**');
-    expect(converted).toContain('_My session_');
-    expect(converted).toContain('**user**');
-    expect(converted).not.toContain('---');
-    expect(converted).toContain('*turn ended: completed*');
-  });
-});
-
-describe('splitTranscriptParts', () => {
-  it('keeps a short transcript as one part', () => {
-    expect(splitTranscriptParts('short', 100)).toEqual(['short']);
-  });
-
-  it('splits on line boundaries and loses no content', () => {
-    const lines = Array.from({ length: 50 }, (_, index) => `line ${index} - ${'x'.repeat(40)}`);
-    const transcript = lines.join('\n');
-    const parts = splitTranscriptParts(transcript, 500);
-    expect(parts.length).toBeGreaterThan(1);
-    expect(parts.every((part) => part.length <= 500)).toBe(true);
-    expect(parts.join('\n')).toBe(transcript);
-  });
-
-  it('keeps an overlong single line whole (never cut mid-line)', () => {
-    const single = 'y'.repeat(10_000);
-    expect(splitTranscriptParts(single, 100)).toEqual([single]);
   });
 });

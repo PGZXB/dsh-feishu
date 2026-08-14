@@ -17,8 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   memory transport (solo-group relaxation path).
 - **Scenario integration suite** (`tests/integration/scenarios.spec.ts`,
   20 real-process tests): daemon-restart session durability, group mention
-  modes never/ambient/topic, chat allowlist, `/group` + `/repo`, `/history`
-  subsets, every question-card variant (multi-select, free-text, cancel),
+  modes never/ambient/topic, chat allowlist, `/group` + `/repo`, every
+  question-card variant (multi-select, free-text, cancel),
   group approval/question cards carrying the requester @-mention, message
   dedup, unknown-command passthrough, the stopped-turn reaction swap, and
   `/export` transcripts with tool rows. The suite uses its own dsh home
@@ -47,6 +47,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   question cards carry an @-mention of that requester (`<at user_id>` in
   text, `<at id>` in card markdown). p2p chats and unknown requesters get
   no mention.
+
+### Removed
+
+- **`/history` card replay (user decision).** The command duplicated
+  `/export` (both ship the same session-log transcript), and printing a full
+  history into cards was ugly. Session replay now has exactly one surface —
+  the `/export` file message. The `buildHistoryCard` renderer,
+  `toLarkCardMarkdown` / `splitTranscriptParts` helpers, and their tests are
+  deleted; the restart-durability integration test now proves continuity via
+  `/export` after the restart.
 
 ### Fixed
 

@@ -25,7 +25,6 @@ import {
   buildApprovalCard,
   buildApprovalDecidedCard,
   buildCard,
-  buildHistoryCard,
   buildModelPickerCard,
   buildPanelCard,
   buildPermissionPickerCard,
@@ -51,12 +50,7 @@ import { CommandRegistry, type CommandResult, parseSlash } from './commands.js';
 import type { CardAction, FeishuMessage, FeishuTransport, SentCard } from './feishu/types.js';
 import { MessageDeduplicator } from './message-dedup.js';
 import { type ProjectInfo, scanMultipleProjects } from './projects.js';
-import {
-  buildSessionExport,
-  type SessionExportEvent,
-  splitTranscriptParts,
-  toLarkCardMarkdown,
-} from './session-export.js';
+import { buildSessionExport, type SessionExportEvent } from './session-export.js';
 import type { SessionMap } from './session-map.js';
 
 /** Minimal logger surface the bridge needs. */
@@ -683,7 +677,6 @@ export class Bridge {
     'help',
     'status',
     'sessions',
-    'history',
     'cancel',
     'group',
     'model',
@@ -2150,54 +2143,6 @@ export class Bridge {
       handler: async (invocation) => {
         await this.openSessionsPicker(invocation.chatId);
         return { kind: 'success', text: '' };
-      },
-    });
-    // /history: replay this chat's session log as in-chat cards — the card
-    // sibling of /export (which ships the same transcript as a file). The
-    // full log is always replayed; an explicit `last <n>` argument replays
-    // only the last n events (a user-requested subset, never silent
-    // truncation). Long logs are split across cards on line boundaries.
-    this.commands.register({
-      name: 'history',
-      description: 'Replay this chat\u2019s session log as cards (/history [last <n>])',
-      category: 'system',
-      buttonLabel: '📜 History',
-      handler: async (invocation) => {
-        const sessionId = options.sessionMap.get(invocation.chatId);
-        if (sessionId === undefined) {
-          return { kind: 'error', text: 'no session to replay yet — send a message first.' };
-        }
-        if (options.readSession === undefined) {
-          return {
-            kind: 'error',
-            text: 'session replay unavailable — the session query service is not mounted.',
-          };
-        }
-        try {
-          const log = await options.readSession(sessionId);
-          const raw = invocation.rawInput.trim();
-          const requested = /^(?:last\s+)?(\d+)$/.exec(raw)?.[1];
-          let events = log.events;
-          if (requested !== undefined) {
-            const count = Number(requested);
-            if (!Number.isInteger(count) || count < 1) {
-              return { kind: 'error', text: 'usage: /history [last <n>]' };
-            }
-            events = events.slice(-count);
-          }
-          const markdown = toLarkCardMarkdown(buildSessionExport(events));
-          const parts = splitTranscriptParts(markdown);
-          for (let index = 0; index < parts.length; index += 1) {
-            await options.transport.sendCard(
-              invocation.chatId,
-              buildHistoryCard(sessionId, parts[index] ?? '', index + 1, parts.length),
-            );
-          }
-          return { kind: 'success', text: '' };
-        } catch (error: unknown) {
-          this.options.logger.warn(`session replay failed: ${String(error)}`);
-          return { kind: 'error', text: `session replay failed: ${String(error)}` };
-        }
       },
     });
     this.commands.register({

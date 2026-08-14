@@ -130,7 +130,8 @@ inject a fake message by writing a JSON file into
 edge scenarios: daemon-restart durability, group mention modes and
 allowlists (via the `FEISHU_*` env seams), `/group` + `/repo`, every
 question-card variant, proactive mentions, dedup, passthrough, and the
-stopped-turn reaction swap. Because vitest runs test **files** in
+stopped-turn reaction swap. (Session replay has one surface — `/export`;
+`/history` was removed by decision as redundant and ugly.) Because vitest runs test **files** in
 parallel, the two suites must not share a dsh home (both persist the
 session map + logs): the scenario suite defaults to
 `_dev/dsh-home-scenarios` (`FEISHU_INT_SCENARIOS_DSH_HOME` overrides),
@@ -141,9 +142,7 @@ recipe. CI prepares both profiles.
 
 | Scenario | Test |
 |---|---|
-| Daemon restart resumes the same session; `/history` spans restarts | `restart resumes the same session` |
-| `/clear` rebinds; `/history` replays only the new turn | `/clear starts a fresh session` |
-| `/history last <n>` replays a strict subset | `/history last <n>` |
+| Daemon restart resumes the same session; `/export` after restart ships a transcript spanning both sides | `restart resumes the same session` |
 | `/status` read-only while a turn runs | `/status is read-only` |
 | Bare `/repo` posts the picker card | `bare /repo posts the project picker card` |
 | `/group` creates a group; @-turn works there | `/group creates a group chat` |

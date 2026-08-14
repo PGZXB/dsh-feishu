@@ -4,7 +4,7 @@
  * Complements `real-composition.spec.ts` (the primary happy-path suite)
  * with edge scenarios that need the real dsh process: restart durability,
  * group mention modes, chat allowlists, the /group and /repo commands,
- * history subsets, every question-card variant, proactive mentions on
+ * every question-card variant, proactive mentions on
  * approval/question cards, message dedup, unknown-command passthrough,
  * the stopped-turn reaction swap, and solo-group relaxation.
  *
@@ -240,7 +240,7 @@ describe.skipIf(!integrationReady)('scenario integration (real process)', () => 
   // Sessions & durability
   // ----------------------------------------------------------------------
 
-  it('restart resumes the same session; /history spans the restart', async () => {
+  it('restart resumes the same session; /export spans the restart', async () => {
     try {
       mock?.setScripts([[{ content: 'First answer.' }]]);
       await spawnBridge();
@@ -283,178 +283,25 @@ describe.skipIf(!integrationReady)('scenario integration (real process)', () => 
         90_000,
       );
       expect(sessionIdOf(chatId)).toBe(sessionBefore);
-      // /history replays the whole session — both sides of the restart.
-      sendMessage(chatId, '/history');
+      // The persisted session log survives the restart too: /export after
+      // the restart ships a transcript containing BOTH turns (proves the
+      // resumed session continued the same log, not a fresh one).
+      sendMessage(chatId, '/export');
       await waitFor(
-        'the history card',
-        () =>
-          readOutbox()
-            .filter((r) => r.kind === 'card')
-            .some((r) => r.card?.header?.title.content.startsWith('📜 History')),
+        'the file outbox record after restart',
+        () => readOutbox().some((r) => r.kind === 'file'),
         60_000,
       );
-      const history = [...readOutbox()]
-        .reverse()
-        .find(
-          (r) => r.kind === 'card' && r.card?.header?.title.content.startsWith('📜 History'),
-        )?.card;
-      const content = history?.elements.find((el) => el.tag === 'markdown');
-      const text = content && 'content' in content ? content.content : '';
-      expect(text).toContain('first message');
-      expect(text).toContain('First answer.');
-      expect(text).toContain('second message');
-      expect(text).toContain('Second answer.');
+      const file = [...readOutbox()].reverse().find((r) => r.kind === 'file');
+      const transcript = file?.content ?? '';
+      expect(transcript).toContain('first message');
+      expect(transcript).toContain('First answer.');
+      expect(transcript).toContain('second message');
+      expect(transcript).toContain('Second answer.');
     } catch (error) {
       failWithLogs(error);
     }
   }, 240_000);
-
-  it('/clear starts a fresh session; /history replays only the new turn', async () => {
-    try {
-      mock?.setScripts([[{ content: 'Turn one.' }], [{ content: 'Turn two.' }]]);
-      await spawnBridge();
-      const chatId = `oc_clear_${Date.now()}`;
-      await pinWorkingDir(chatId);
-      sendMessage(chatId, 'turn one message');
-      await waitFor(
-        'the first green card',
-        () =>
-          readOutbox().some(
-            (r) =>
-              r.kind === 'patch' &&
-              r.card?.header?.template === 'green' &&
-              JSON.stringify(r.card.elements).includes('Turn one.'),
-          ),
-        90_000,
-      );
-      const sessionBefore = sessionIdOf(chatId);
-      sendMessage(chatId, '/clear');
-      await waitFor(
-        'the fresh-conversation text',
-        () =>
-          readOutbox().some(
-            (r) => r.kind === 'text' && r.text?.includes('New conversation started'),
-          ),
-        30_000,
-      );
-      expect(sessionIdOf(chatId)).not.toBe(sessionBefore);
-      sendMessage(chatId, 'turn two message');
-      await waitFor(
-        'the second green card',
-        () =>
-          readOutbox().some(
-            (r) =>
-              r.kind === 'patch' &&
-              r.card?.header?.template === 'green' &&
-              JSON.stringify(r.card.elements).includes('Turn two.'),
-          ),
-        90_000,
-      );
-      sendMessage(chatId, '/history');
-      await waitFor(
-        'the history card after clear',
-        () =>
-          readOutbox()
-            .filter((r) => r.kind === 'card')
-            .some((r) => r.card?.header?.title.content.startsWith('📜 History')),
-        60_000,
-      );
-      const history = [...readOutbox()]
-        .reverse()
-        .find(
-          (r) => r.kind === 'card' && r.card?.header?.title.content.startsWith('📜 History'),
-        )?.card;
-      const content = history?.elements.find((el) => el.tag === 'markdown');
-      const text = content && 'content' in content ? content.content : '';
-      expect(text).toContain('turn two message');
-      expect(text).toContain('Turn two.');
-      expect(text).not.toContain('Turn one.');
-    } catch (error) {
-      failWithLogs(error);
-    }
-  }, 180_000);
-
-  it('/history last <n> replays an explicit subset', async () => {
-    try {
-      mock?.setScripts([[{ content: 'Answer one.' }], [{ content: 'Answer two.' }]]);
-      await spawnBridge();
-      const chatId = `oc_hlast_${Date.now()}`;
-      await pinWorkingDir(chatId);
-      sendMessage(chatId, 'ask one');
-      await waitFor(
-        'the first green card',
-        () =>
-          readOutbox().some(
-            (r) =>
-              r.kind === 'patch' &&
-              r.card?.header?.template === 'green' &&
-              JSON.stringify(r.card.elements).includes('Answer one.'),
-          ),
-        90_000,
-      );
-      sendMessage(chatId, 'ask two');
-      await waitFor(
-        'the second green card',
-        () =>
-          readOutbox().some(
-            (r) =>
-              r.kind === 'patch' &&
-              r.card?.header?.template === 'green' &&
-              JSON.stringify(r.card.elements).includes('Answer two.'),
-          ),
-        90_000,
-      );
-      sendMessage(chatId, '/history last 2');
-      await waitFor(
-        'the last-2 history card',
-        () =>
-          readOutbox()
-            .filter((r) => r.kind === 'card')
-            .some(
-              (r) =>
-                r.card?.header?.title.content.startsWith('📜 History') &&
-                !JSON.stringify(r.card.elements).includes('Answer one.'),
-            ),
-        60_000,
-      );
-      const history = [...readOutbox()]
-        .reverse()
-        .find(
-          (r) => r.kind === 'card' && r.card?.header?.title.content.startsWith('📜 History'),
-        )?.card;
-      const content = history?.elements.find((el) => el.tag === 'markdown');
-      const text = content && 'content' in content ? content.content : '';
-      // The tail subset replays the newest events and cuts the oldest turn.
-      expect(text).not.toContain('Answer one.');
-      expect(text).not.toContain('ask one');
-      // A full /history in the same chat DOES include the oldest turn — the
-      // subset card is genuinely narrower than the full replay.
-      sendMessage(chatId, '/history');
-      await waitFor(
-        'the full history card',
-        () =>
-          readOutbox()
-            .filter((r) => r.kind === 'card')
-            .some(
-              (r) =>
-                r.card?.header?.title.content.startsWith('📜 History') &&
-                JSON.stringify(r.card.elements).includes('Answer one.'),
-            ),
-        60_000,
-      );
-      const full = [...readOutbox()]
-        .reverse()
-        .find(
-          (r) => r.kind === 'card' && r.card?.header?.title.content.startsWith('📜 History'),
-        )?.card;
-      const fullContent = full?.elements.find((el) => el.tag === 'markdown');
-      const fullText = fullContent && 'content' in fullContent ? fullContent.content : '';
-      expect(fullText).toContain('Answer one.');
-      expect(fullText).toContain('Answer two.');
-    } catch (error) {
-      failWithLogs(error);
-    }
-  }, 180_000);
 
   it('/status is read-only and answers while a turn is running', async () => {
     try {

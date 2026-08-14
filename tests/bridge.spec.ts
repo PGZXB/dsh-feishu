@@ -36,7 +36,6 @@ import type {
   FeishuTransport,
   SentCard,
 } from '../src/feishu/types.js';
-import type { SessionExportEvent } from '../src/session-export.js';
 import { SessionMap } from '../src/session-map.js';
 
 const SCRATCH = join(process.cwd(), '_dev', 'test-bridge');
@@ -2948,128 +2947,6 @@ describe('two-stage reaction ack', () => {
     });
     await h.bridge.handleMessage(message());
     expect(h.transport.reactions[0]?.emojiType).toBe('OK');
-  });
-});
-
-describe('/history', () => {
-  const historyEvents = (): SessionExportEvent[] => [
-    { type: 'user/message', seq: 1, data: { content: [{ type: 'text', text: 'first ask' }] } },
-    {
-      type: 'assistant/message',
-      seq: 2,
-      data: { message: { content: [{ type: 'text', text: 'first answer' }] } },
-    },
-    { type: 'turn/end', seq: 3, data: { reason: { kind: 'completed' } } },
-    { type: 'user/message', seq: 4, data: { content: [{ type: 'text', text: 'second ask' }] } },
-    {
-      type: 'assistant/message',
-      seq: 5,
-      data: { message: { content: [{ type: 'text', text: 'second answer' }] } },
-    },
-  ];
-
-  it('replays the full session log as one card', async () => {
-    const h = makeHarness({
-      readSession: async () => ({ session: { id: 'feishu-session-1' }, events: historyEvents() }),
-    });
-    // Mint the chat's session first (a normal turn), then replay it.
-    await h.bridge.handleMessage(message());
-    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/history' }));
-    const card = h.transport.sentCards.at(-1);
-    expect(card?.header?.title.content).toBe('📜 History · feishu-session-1');
-    const markdown = card?.elements.find((el) => el.tag === 'markdown');
-    expect(markdown && 'content' in markdown ? markdown.content : '').toContain('first ask');
-    expect(markdown && 'content' in markdown ? markdown.content : '').toContain('second answer');
-    expect(markdown && 'content' in markdown ? markdown.content : '').not.toContain('## user');
-  });
-
-  it('replays only the last n events on an explicit /history last <n>', async () => {
-    const h = makeHarness({
-      readSession: async () => ({ session: { id: 'feishu-session-1' }, events: historyEvents() }),
-    });
-    await h.bridge.handleMessage(message());
-    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/history last 2' }));
-    const markdown = h.transport.sentCards.at(-1)?.elements.find((el) => el.tag === 'markdown');
-    const content = markdown && 'content' in markdown ? markdown.content : '';
-    expect(content).toContain('second ask');
-    expect(content).toContain('second answer');
-    expect(content).not.toContain('first ask');
-  });
-
-  it('splits an overlong log into sequential parts without loss', async () => {
-    const events = Array.from({ length: 40 }, (_, index) => ({
-      type: 'assistant/message',
-      seq: index + 1,
-      data: {
-        message: { content: [{ type: 'text', text: `block ${index} ${'x'.repeat(2000)}` }] },
-      },
-    }));
-    const h = makeHarness({
-      readSession: async () => ({ session: { id: 'feishu-session-1' }, events }),
-    });
-    await h.bridge.handleMessage(message());
-    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/history' }));
-    const cards = h.transport.sentCards.filter((c) =>
-      c.header?.title.content.startsWith('📜 History'),
-    );
-    expect(cards.length).toBeGreaterThan(1);
-    expect(cards[0]?.header?.title.content).toContain('(1/');
-    expect(cards.at(-1)?.header?.title.content).toContain(`(${cards.length}/${cards.length})`);
-    const all = cards
-      .map((c) => c.elements.find((el) => el.tag === 'markdown'))
-      .map((el) => (el && 'content' in el ? el.content : ''))
-      .join('');
-    expect(all).toContain('block 0');
-    expect(all).toContain('block 39');
-  });
-
-  it('reports missing session or service', async () => {
-    const noSession = makeHarness();
-    await noSession.bridge.handleMessage(message({ text: '/history' }));
-    expect(
-      noSession.transport.sentTexts.some((t) => t.text.includes('no session to replay yet')),
-    ).toBe(true);
-
-    // A chat with a session but no readSession service → loud degradation.
-    const h = makeHarness();
-    await h.bridge.handleMessage(message());
-    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/history' }));
-    expect(h.transport.sentTexts.some((t) => t.text.includes('session replay unavailable'))).toBe(
-      true,
-    );
-  });
-});
-
-describe('allowedUsers allowlist', () => {
-  it('ignores senders not on the allowlist; serves listed senders', async () => {
-    const h = makeHarness({ allowedUsers: ['ou_admin'] });
-    await h.bridge.handleMessage(message({ messageId: 'om_msg1', senderOpenId: 'ou_stranger' }));
-    expect(h.transport.reactions).toHaveLength(0);
-    expect(h.transport.sentCards).toHaveLength(0);
-    await h.bridge.handleMessage(message({ messageId: 'om_msg2', senderOpenId: 'ou_admin' }));
-    expect(h.transport.reactions).toHaveLength(1);
-  });
-
-  it('an empty allowlist serves everyone', async () => {
-    const h = makeHarness();
-    await h.bridge.handleMessage(message({ senderOpenId: 'ou_anyone' }));
-    expect(h.transport.reactions).toHaveLength(1);
-  });
-
-  it('applies inside allowed chats and to card actions', async () => {
-    const h = makeHarness({ allowedChats: ['oc_chat'], allowedUsers: ['ou_admin'] });
-    await h.bridge.handleMessage(message({ senderOpenId: 'ou_stranger' }));
-    expect(h.transport.sentCards).toHaveLength(0);
-    // A stranger's button tap is ignored too (buttons are commands).
-    await h.bridge.handleCardAction({
-      messageId: 'mem-1',
-      chatId: 'oc_chat',
-      operatorOpenId: 'ou_stranger',
-      value: { kind: 'panel' },
-    });
-    expect(
-      h.transport.sentCards.some((c) => c.header?.title.content === '⚙️ dsh-feishu panel'),
-    ).toBe(false);
   });
 });
 

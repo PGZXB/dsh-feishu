@@ -271,7 +271,7 @@ rounds 1–5.
 
 ## 8. Command surface
 
-### 8.1 Command set (19 commands: 14 surface + 5 web wrappers)
+### 8.1 Command set (18 commands: 13 surface + 5 web wrappers)
 
 Every command is a `SurfaceCommand`: one handler shared by the slash line
 and the panel button (button = command, botmux `/list-slash-command`
@@ -286,7 +286,6 @@ palette idea). `category` groups the panel palette.
 | `/repo [<path>]` | session | project picker card (dropdown ≤ 50, buttons + pages above) |
 | `/group [<name>]` | chat | create a group with the bot and sender |
 | `/sessions` | session | session list card (title/id/cwd/age/live/saved), paginated, per-row Resume buttons |
-| `/history [last <n>]` | system | replay this chat's session log as **in-chat cards** — the card sibling of `/export`: the same transcript, lark_md-safe (headings → bold), split across cards on line boundaries when long (`part i/n`) so nothing is ever cut; `last <n>` replays an explicit event subset. Read-only (allowed while a turn runs) |
 | `/model` | system | **model picker card** (catalog from `ctx.llm` `listProviders` × `listModels`, current preselected); a pick sets the default for new sessions. `/model <provider>/<model>` sets it directly. Surface-native — the web `/model` is a client popup with no host command |
 | `/export` | system | send this chat's session log as a **file message** (`session-<id>.md` markdown transcript from `ctx.sessionQuery.readSession`) — the Feishu equivalent of the web's browser-download `/export` |
 | `/panel` | system | open the control panel card from any chat (slash line only — its palette button is hidden, since a palette button that opens the panel would be the panel launching itself) |
@@ -350,7 +349,7 @@ never an implicit choice — a fresh chat or a brand-new group must pick a
 repo before DSH works there (user requirement). `requireWorkingDir`
 (default true) disables the gate for deployments that want the fallback.
 
-- Read-only commands (`/help /status /sessions /history /panel` and the
+- Read-only commands (`/help /status /sessions /panel` and the
   pickers) stay usable unpinned; the panel surfaces "No working directory —
   pick one with /repo or /cd first".
 - `/clear` keeps the pinned directory (only the session rebinds).
@@ -362,7 +361,7 @@ repo before DSH works there (user requirement). `requireWorkingDir`
 ### 8.4 Working-state gate (state-machine rule)
 
 While a turn is running (`cardStates[chatId].status === 'working'`), only
-read-only commands may run: `/help`, `/status`, `/sessions`, `/history`
+read-only commands may run: `/help`, `/status`, `/sessions`
 (read state), `/cancel` (the stop itself), `/group` (separate chat),
 `/model` (picker — picks are refused mid-turn, but opening it is fine),
 `/panel` (the panel carries Stop). Every other command —
@@ -468,7 +467,7 @@ profile composition so the Feishu agent has web-parity question capability.
 The agent's `signal` abort settles unanswered questions as empty answers.
 The answer card becomes a static confirmation.
 
-## 10. Iteration 4: reaction ack, history replay, allowlists, proactive mentions
+## 10. Iteration 4: reaction ack, allowlists, proactive mentions
 
 Reference: botmux (`im/lark/client.ts` reactions, `RECEIVED_REACTION_EMOJI_TYPE`
 / `DONE`), DSH web (`/export` file download), and the harness config surface.
@@ -491,17 +490,12 @@ disables the ack entirely. Reaction calls are best-effort: a failure logs and
 never blocks the turn. Slash commands and gate-refused messages get no
 reaction. `/clear`/`/resume` drop the pending-tracking entry.
 
-### 10.2 `/history` — session log replay
+### 10.2 Session replay is `/export` only
 
-`/history` replays the chat's session log as **in-chat cards** — the card
-sibling of `/export` (which ships the same transcript as a file message).
-The transcript is the same builder (`buildSessionExport`); a lark_md-safe
-conversion turns ATX headings into bold, blockquotes into italic, and rules
-into blank lines (`toLarkCardMarkdown`), and long logs are split across
-cards on line boundaries (`splitTranscriptParts`, `📜 History · <session>`
-header, `part i/n` note) — **nothing is ever cut**. `/history last <n>`
-replays only the last `n` events (an explicit user-requested subset, never a
-silent truncation). Read-only: allowed while a turn is running.
+The session log has exactly one surface: `/export` ships the transcript as a
+**file message** (see §8.1). A card-replay command (`/history`) was built and
+then **removed by decision**: it duplicated `/export`'s content, and printing
+a full history into cards was ugly — the file message is the review surface.
 
 ### 10.3 `allowedUsers` allowlist
 
