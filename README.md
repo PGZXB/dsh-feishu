@@ -4,29 +4,55 @@ English | [中文](README.zh.md)
 
 The Feishu UI for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) — a dsh-native plugin, installable via `dsh plugin add`; live streaming cards, in-card questions & approvals, one-QR setup.
 
-dsh officially ships a **browser surface** (its web UI, which calls itself the "browser-surface bundle") and a terminal surface; the **Feishu UI** is provided by this plugin. A Feishu chat maps to a dsh session — the chat bot is the agent's avatar, and every reply streams back as a live card.
+dsh is an open-source agent harness built on an everything-is-a-plugin
+architecture. It officially ships a **browser surface** (its web UI, which
+calls itself the "browser-surface bundle") and a terminal surface; the
+**Feishu UI** is provided by this plugin. A Feishu chat maps to a dsh
+session — the chat bot is the agent's avatar, and every reply streams back
+as a live card.
 
+## Contents
+
+- [Why DSH-native](#why-dsh-native)
+- [One surface next to the web](#one-surface-next-to-the-web)
+- [Verified](#verified)
+- [See it work](#see-it-work)
+- [5-minute quickstart](#5-minute-quickstart)
+- [Features](#features)
+- [Contributing](#contributing)
+- [Credits](#credits)
+
+## Why DSH-native
+
+The surface is built in-process — it is dsh itself, not a wrapper around it:
+
+1. **No bridge, no capture.** No CLI adapters, no PTY/screen capture, no
+   ANSI parsing. The surface drives the dsh agent/session layer directly
+   (`ctx.agents`, `ctx.commands`, `session/event`).
+2. **Full transparency.** Every token, tool call, question, and approval
+   streams natively into the chat — the agent never has to do anything to be
+   seen (there is no explicit "send" contract).
+3. **Everything is a card.** Every dsh surface element maps to a Feishu
+   card: streaming output, tool calls, session lists, approvals, questions,
+   pickers.
+
+## One surface next to the web
+
+Both surfaces sit at the same layer: bundles riding on `@deepseek-ai/dsh-base`,
+driving the same in-process services.
+
+```mermaid
+graph LR
+    BASE[dsh-base<br/>the harness core] -->|"patch layer<br/>(dsh.bundle.patch)"| WEB[Browser surface (web)<br/>official "browser-surface bundle"]
+    BASE -->|"patch layer<br/>(dsh.bundle.patch)"| FEISHU[Feishu surface (this)<br/>@dsh-feishu/dsh-feishu]
 ```
-dsh (the harness core)
- │  agent / session / event services
- │  ctx.permissionPresets · ctx.planMode · ctx.userQuestions · …
- │
- ├─ browser surface (web) — the official "browser-surface bundle"
- │     · /permission · /plan · /export · …
- │
- └─ Feishu surface (this) — @dsh-feishu/dsh-feishu
-       · the same dsh services, rendered as Feishu cards
-       · /permission opens the same preset picker, /plan toggles the same
-         plan-mode controller, questions and approvals arrive as cards
-```
 
-The two surfaces sit at the same layer: both are bundles riding on
-`@deepseek-ai/dsh-base`, both drive the same in-process services. Nothing is
-bridged and nothing is reimplemented — a Feishu chat is dsh itself.
+Web parity where it counts: `/permission`, `/plan`, `/model` and the other
+dsh web wrappers run against the **same** `ctx.permissionPresets` /
+`ctx.planMode` / `ctx.agentDefaultModel` services the web UI uses — a preset
+picked on Feishu is the preset the web UI would read.
 
-<!-- docs/assets/demo.gif — user-recorded demo (real bot, real Feishu client). -->
-
-## Why you can trust it
+## Verified
 
 - **Installs like any dsh plugin.** `dsh plugin --profile feishu add
   @dsh-feishu/dsh-feishu` — no separate daemon, no external CLI, no bridge.
@@ -62,6 +88,8 @@ session-log export.
 <!-- docs/assets/sessions.png — user screenshot: the /sessions list with Resume buttons -->
 <!-- docs/assets/export.png — user screenshot: the exported session log file message -->
 <!-- docs/assets/group.png — user screenshot: a group chat with an @-mention answer -->
+
+<!-- docs/assets/demo.gif — user-recorded demo (real bot, real Feishu client). -->
 
 ## 5-minute quickstart
 
@@ -101,9 +129,13 @@ variables or the profile config. Full setup detail:
 | **Diagnostics** | `/feishu-status` posts a card with connection state, session count, and last activity |
 | **One-QR setup** | `pnpm run setup:feishu -- --new` — app, permissions, events, publish, config |
 
-Web parity where it counts: `/permission`, `/plan`, `/model` and the other
-dsh web wrappers run against the **same** `ctx.permissionPresets` /
-`ctx.planMode` / `ctx.agentDefaultModel` services the web UI uses.
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to report issues and submit
+changes, and [SECURITY.md](SECURITY.md) for the security policy. Build,
+test, and lint commands plus the local-profile mount recipe:
+[docs/development.md](docs/development.md). The UX contract is specified in
+[docs/ux-specification.md](docs/ux-specification.md).
 
 ## Credits
 
@@ -118,12 +150,6 @@ dsh web wrappers run against the **same** `ctx.permissionPresets` /
   approvals, and questions.
 - **[Lark Open Platform SDK](https://github.com/larksuite/node-sdk)** — the
   WebSocket long connection and card APIs the transport builds on.
-
-## Development
-
-Build, test, and lint commands, plus the local-profile mount recipe:
-[docs/development.md](docs/development.md). The UX contract is specified in
-[docs/ux-specification.md](docs/ux-specification.md).
 
 ## License
 

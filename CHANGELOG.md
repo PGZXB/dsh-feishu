@@ -82,17 +82,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **README overhaul.** Rebuilt around the finalized positioning — *The Feishu
-  UI for DeepSeek Harness (dsh)*: a surface-model diagram (dsh-base ← patch
-  layer → browser surface (web) / Feishu surface (this)) with web-parity
-  evidence (the same `ctx.permissionPresets` / `ctx.planMode` services), a
-  hard-proof section (installable via `dsh plugin add`, 346 unit + 47
-  real-process integration tests, CI never skips integration), a "See it
-  work" screenshot wall with concrete selling points (the answer finalizes
-  in place on the card — no second bubble; tap Allow once to continue; one
-  QR scan creates + configures + publishes the app), a 5-minute quickstart,
-  and a feature table. Screenshot slots are placeholders awaiting real
-  user-captured Feishu client screenshots (see `_dev/readme-briefing.md`);
-  no test-rendered mockups and no broken image links.
+  UI for DeepSeek Harness (dsh)*: a "Why DSH-native" narrative (no bridge/no
+  capture, full transparency, everything-is-a-card), a Mermaid surface-model
+  diagram (dsh-base ← patch layer → browser surface (web) / Feishu surface
+  (this)) with web-parity evidence (the same `ctx.permissionPresets` /
+  `ctx.planMode` services), a verified section (installable via `dsh plugin
+  add`, 346 unit + 47 real-process integration tests, CI never skips
+  integration), a "See it work" wall with concrete selling points (the
+  answer finalizes in place on the card — no second bubble; tap Allow once
+  to continue; one QR scan creates + configures + publishes the app), a
+  5-minute quickstart, a feature table, and Contributing/security links.
+  Screenshot slots are placeholders awaiting real user-captured Feishu
+  client screenshots (see `_dev/readme-briefing.md`); no test-rendered
+  mockups and no broken image links.
 
 ### Removed
 
