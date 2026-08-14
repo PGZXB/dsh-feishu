@@ -47,6 +47,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   question cards carry an @-mention of that requester (`<at user_id>` in
   text, `<at id>` in card markdown). p2p chats and unknown requesters get
   no mention.
+- **`/feishu-status` diagnostic card.** The status command is upgraded
+  from a text reply to a diagnostic **card** (`📊 dsh-feishu status`): app
+  id, live long-connection state (`✅ ready` / `⚠️ reconnecting` / `❌ error`
+  tracked by the transport; `🧪 memory` for the test transport), session
+  count, and last inbound activity. Read-only, allowed while a turn runs.
 
 ### Removed
 

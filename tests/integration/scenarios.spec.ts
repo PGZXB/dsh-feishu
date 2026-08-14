@@ -380,6 +380,34 @@ describe.skipIf(!integrationReady)('scenario integration (real process)', () => 
     }
   }, 180_000);
 
+  it('/feishu-status posts the diagnostic card', async () => {
+    try {
+      await spawnBridge();
+      const chatId = `oc_status_card_${Date.now()}`;
+      sendMessage(chatId, '/feishu-status');
+      await waitFor(
+        'the status diagnostic card',
+        () =>
+          readOutbox()
+            .filter((r) => r.kind === 'card')
+            .some((r) => r.card?.header?.title.content === '📊 dsh-feishu status'),
+        30_000,
+      );
+      const card = [...readOutbox()]
+        .reverse()
+        .find(
+          (r) => r.kind === 'card' && r.card?.header?.title.content === '📊 dsh-feishu status',
+        )?.card;
+      const markdown = card?.elements.find((el) => el.tag === 'markdown');
+      const content = markdown && 'content' in markdown ? markdown.content : '';
+      expect(content).toContain('**app:** `cli_mock_app`');
+      expect(content).toContain('memory (test transport)');
+      expect(content).toContain('**sessions:**');
+    } catch (error) {
+      failWithLogs(error);
+    }
+  }, 120_000);
+
   // ----------------------------------------------------------------------
   // Group mention modes & allowlists (env-config seams)
   // ----------------------------------------------------------------------

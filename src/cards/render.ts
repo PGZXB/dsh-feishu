@@ -1119,3 +1119,49 @@ export function buildQuestionAnsweredCard(question: string, answer: string): Car
     ],
   };
 }
+
+/** Everything the `/feishu-status` diagnostic card shows. */
+export interface StatusView {
+  readonly appId: string;
+  /** Live wire state; 'memory' for the file-channel test/demo transport. */
+  readonly connection: 'ready' | 'reconnecting' | 'error' | 'memory' | 'unknown';
+  readonly sessionCount: number;
+  /** Epoch ms of the last accepted inbound message, or undefined (none yet). */
+  readonly lastInboundAt: number | undefined;
+}
+
+/** The connection line label per state. */
+const CONNECTION_LABEL: Record<StatusView['connection'], string> = {
+  ready: '✅ ready',
+  reconnecting: '⚠️ reconnecting',
+  error: '❌ error',
+  memory: '🧪 memory (test transport)',
+  unknown: '❓ unknown',
+};
+
+/**
+ * Build the `/feishu-status` diagnostic card: app id, live connection
+ * state, session count, and last inbound activity — the health of the
+ * surface at a glance.
+ * @param view - the current status snapshot.
+ * @returns Feishu interactive card JSON (v1 layout).
+ */
+export function buildStatusCard(view: StatusView): CardJson {
+  const last =
+    view.lastInboundAt === undefined ? 'never' : new Date(view.lastInboundAt).toISOString();
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: '📊 dsh-feishu status' }, template: 'wathet' },
+    elements: [
+      {
+        tag: 'markdown',
+        content: [
+          `**app:** \`${view.appId}\``,
+          `**connection:** ${CONNECTION_LABEL[view.connection]}`,
+          `**sessions:** ${view.sessionCount}`,
+          `**last inbound:** ${last}`,
+        ].join('\n'),
+      },
+    ],
+  };
+}

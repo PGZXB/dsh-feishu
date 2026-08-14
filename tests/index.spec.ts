@@ -299,19 +299,17 @@ describe('apply', () => {
     });
   });
 
-  it('reports the configured app from the feishu-status handler', () => {
+  it('configured mode leaves feishu-status to the bridge card command', () => {
+    // The configured `/feishu-status` is the bridge's diagnostic CARD
+    // command (connection/sessions/activity); the harness registry only
+    // keeps the not-configured text hint.
     const { ctx, registered } = makeFakeContext();
     apply(
       ctx,
       { appId: 'cli_app', appSecret: 'secret' },
       { createTransport: () => new FakeTransport() },
     );
-    const status = registered.find((def) => def.name === 'feishu-status');
-    const result = status?.handler({ rawInput: '' });
-    expect(result).toEqual({
-      kind: 'success',
-      text: 'dsh-feishu is configured for app cli_app; bridge running.',
-    });
+    expect(registered.map((def) => def.name)).not.toContain('feishu-status');
   });
 
   it('skips command registration when the commands service is unavailable', () => {

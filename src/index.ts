@@ -366,10 +366,6 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
     return;
   }
   ctx.logger.info(`[feishu] starting surface for app ${credentials.appId}`);
-  registerStatusCommand(ctx, () => ({
-    kind: 'success',
-    text: `dsh-feishu is configured for app ${credentials.appId}; bridge running.`,
-  }));
 
   const dataDir = config.dataDir ?? defaultDataDir();
   const sessionMap = new SessionMap(join(dataDir, 'session-map.json'));
@@ -424,6 +420,8 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
     cards,
     defaultCwd: config.defaultCwd ?? process.cwd(),
     logger,
+    appId: credentials.appId,
+    transportMode: process.env.FEISHU_TRANSPORT === 'memory' ? 'memory' : 'lark',
     ...(groupMentionMode !== undefined ? { groupMentionMode } : {}),
     ...(allowedChats !== undefined ? { allowedChats } : {}),
     ...(allowedUsers !== undefined ? { allowedUsers } : {}),

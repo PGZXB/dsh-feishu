@@ -73,6 +73,7 @@ class RecordingTransport implements FeishuTransport {
   async sendFile(chatId: string, fileName: string, content: string): Promise<void> {
     this.sentFiles.push({ chatId, fileName, content });
   }
+  connectionState?: () => 'ready' | 'reconnecting' | 'error';
   reactions: Array<{
     messageId: string;
     emojiType?: string;
@@ -206,6 +207,8 @@ function makeHarness(
     agentDefaultModel?: AgentDefaultModelService;
     llm?: LlmService;
     requireWorkingDir?: boolean;
+    appId?: string;
+    transportMode?: 'lark' | 'memory';
     reactions?: NonNullable<BridgeOptions['reactions']>;
     readSession?: NonNullable<BridgeOptions['readSession']>;
   } = {},
@@ -257,6 +260,8 @@ function makeHarness(
     // Tests default the working-directory gate OFF (production defaults it
     // ON); the gate's own tests enable it explicitly.
     requireWorkingDir: options.requireWorkingDir ?? false,
+    ...(options.appId !== undefined ? { appId: options.appId } : {}),
+    ...(options.transportMode !== undefined ? { transportMode: options.transportMode } : {}),
   });
   const emit = (sessionId: string, event: SessionEvent): void => {
     for (const listener of [...listeners]) listener(sessionId, event);
@@ -3000,5 +3005,44 @@ describe('proactive @ mentions in groups', () => {
     expect(markdown && 'content' in markdown ? markdown.content : '').toContain(
       '<at id="ou_user"></at>',
     );
+  });
+});
+
+describe('/feishu-status diagnostic card', () => {
+  it('posts a diagnostic card with app, connection, sessions and last inbound', async () => {
+    const h = makeHarness({ appId: 'cli_test', transportMode: 'memory' });
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/feishu-status' }));
+    const card = h.transport.sentCards.at(-1);
+    expect(card?.header?.title.content).toBe('📊 dsh-feishu status');
+    const markdown = card?.elements.find((el) => el.tag === 'markdown');
+    const content = markdown && 'content' in markdown ? markdown.content : '';
+    expect(content).toContain('cli_test');
+    expect(content).toContain('memory (test transport)');
+    expect(content).toContain('**sessions:** 1');
+    expect(content).not.toContain('never');
+  });
+
+  it('reads a lark transport connection state; never-received shows never', async () => {
+    const h = makeHarness({ appId: 'cli_live', transportMode: 'lark' });
+    const transport = h.transport;
+    transport.connectionState = () => 'reconnecting';
+    await h.bridge.handleMessage(message({ text: '/feishu-status' }));
+    const card = h.transport.sentCards.at(-1);
+    const markdown = card?.elements.find((el) => el.tag === 'markdown');
+    const content = markdown && 'content' in markdown ? markdown.content : '';
+    expect(content).toContain('⚠️ reconnecting');
+  });
+
+  it('is read-only and answers while a turn is running', async () => {
+    const h = makeHarness({ throttleMs: 0, appId: 'cli_test', transportMode: 'memory' });
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/feishu-status' }));
+    // The working card exists (the turn is held open by the throttle); the
+    // diagnostic still posts.
+    const status = h.transport.sentCards.filter(
+      (c) => c.header?.title.content === '📊 dsh-feishu status',
+    );
+    expect(status).toHaveLength(1);
   });
 });

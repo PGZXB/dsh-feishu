@@ -215,4 +215,10 @@ export interface FeishuTransport {
    * owner/creator). Resolves with the new chat id.
    */
   createGroup(name: string, memberOpenIds: readonly string[]): Promise<{ chatId: string }>;
+  /**
+   * Live connection state of the wire, for the `/feishu-status` diagnostic.
+   * `undefined` when the transport does not track connection state (the
+   * memory transport, test stubs).
+   */
+  connectionState?(): 'ready' | 'reconnecting' | 'error';
 }

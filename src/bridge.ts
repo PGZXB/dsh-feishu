@@ -33,12 +33,14 @@ import {
   buildRepoPickedCard,
   buildRepoPickerCard,
   buildRowDetailsCard,
+  buildStatusCard,
   type CardSnapshot,
   type CardStatus,
   type ModelOptionView,
   type PanelCommand,
   type PermissionPresetView,
   type QuestionView,
+  type StatusView,
   type ThinkRow,
   type ToolRow,
   type TurnRow,
@@ -198,6 +200,15 @@ export interface BridgeOptions {
   readonly cards: StreamingCardManager;
   readonly defaultCwd: string;
   readonly logger: BridgeLogger;
+  /**
+   * The Feishu app id this surface runs as (shown by `/feishu-status`).
+   */
+  readonly appId?: string;
+  /**
+   * Wire mode for the `/feishu-status` diagnostic: 'lark' (long connection)
+   * or 'memory' (the file-channel test/demo transport). Absent → 'unknown'.
+   */
+  readonly transportMode?: 'lark' | 'memory';
   /**
    * Group mention policy (botmux-compatible): `always` requires an @-mention
    * (relaxed in 1-person-1-bot solo groups); `never` answers every message;
@@ -474,6 +485,9 @@ function parseModelArg(
 
 export class Bridge {
   private readonly dedup = new MessageDeduplicator();
+  /** Epoch ms of the last accepted inbound message (any chat), for
+   *  `/feishu-status`. */
+  private lastInboundAtValue: number | undefined;
   /** The authoritative streaming-card state per chat (the state machine). */
   private readonly cardStates = new Map<string, ChatCardState>();
   private readonly lastPrompts = new Map<string, string>();
@@ -590,6 +604,7 @@ export class Bridge {
   async handleMessage(message: FeishuMessage): Promise<void> {
     if (!this.dedup.claim(message.messageId)) return;
     if (!(await this.shouldRespond(message))) return;
+    this.lastInboundAtValue = Date.now();
     this.options.logger.info(
       `inbound message ${message.messageId} in ${message.chatId} (${message.chatType}): ${message.text.slice(0, 80)}`,
     );
@@ -676,6 +691,7 @@ export class Bridge {
   private static readonly ALLOWED_WHILE_WORKING = new Set([
     'help',
     'status',
+    'feishu-status',
     'sessions',
     'cancel',
     'group',
@@ -2041,6 +2057,27 @@ export class Bridge {
           `mention mode: ${options.groupMentionMode ?? 'always'}`,
         ];
         return { kind: 'success', text: lines.join('\n') };
+      },
+    });
+    this.commands.register({
+      name: 'feishu-status',
+      description: 'Show the surface diagnostic card (connection, sessions, activity)',
+      category: 'system',
+      buttonLabel: '📡 Surface status',
+      handler: async (invocation) => {
+        const raw = this.options.transport.connectionState?.();
+        const connection: StatusView['connection'] =
+          this.options.transportMode === 'memory' ? 'memory' : (raw ?? 'unknown');
+        await options.transport.sendCard(
+          invocation.chatId,
+          buildStatusCard({
+            appId: options.appId ?? '(not configured)',
+            connection,
+            sessionCount: options.sessionMap.size,
+            lastInboundAt: this.lastInboundAtValue,
+          }),
+        );
+        return { kind: 'success', text: '' };
       },
     });
     this.commands.register({

@@ -150,6 +150,8 @@ export class LarkTransport implements FeishuTransport {
   private readonly logger: TransportLogger | undefined;
   private botOpenIdValue: string | undefined;
   private readonly statsCache = new Map<string, { stats: ChatStats; at: number }>();
+  /** Live long-connection state, maintained by the WSClient callbacks. */
+  private connectionStateValue: 'ready' | 'reconnecting' | 'error' = 'reconnecting';
 
   constructor(options: LarkTransportOptions) {
     const { appId, appSecret } = options.credentials;
@@ -160,11 +162,28 @@ export class LarkTransport implements FeishuTransport {
       appSecret,
       autoReconnect: true,
       handshakeTimeoutMs: 15_000,
-      onReady: () => this.logger?.info('feishu long connection ready'),
-      onError: (error) => this.logger?.error(`feishu long connection failed: ${error.message}`),
-      onReconnecting: () => this.logger?.warn('feishu long connection reconnecting'),
-      onReconnected: () => this.logger?.info('feishu long connection reconnected'),
+      onReady: () => {
+        this.connectionStateValue = 'ready';
+        this.logger?.info('feishu long connection ready');
+      },
+      onError: (error) => {
+        this.connectionStateValue = 'error';
+        this.logger?.error(`feishu long connection failed: ${error.message}`);
+      },
+      onReconnecting: () => {
+        this.connectionStateValue = 'reconnecting';
+        this.logger?.warn('feishu long connection reconnecting');
+      },
+      onReconnected: () => {
+        this.connectionStateValue = 'ready';
+        this.logger?.info('feishu long connection reconnected');
+      },
     });
+  }
+
+  /** The live long-connection state for the `/feishu-status` diagnostic. */
+  connectionState(): 'ready' | 'reconnecting' | 'error' {
+    return this.connectionStateValue;
   }
 
   /** Connect the long connection and begin delivering messages. */

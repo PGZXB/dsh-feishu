@@ -271,7 +271,7 @@ rounds 1–5.
 
 ## 8. Command surface
 
-### 8.1 Command set (18 commands: 13 surface + 5 web wrappers)
+### 8.1 Command set (19 commands: 14 surface + 5 web wrappers)
 
 Every command is a `SurfaceCommand`: one handler shared by the slash line
 and the panel button (button = command, botmux `/list-slash-command`
@@ -286,6 +286,7 @@ palette idea). `category` groups the panel palette.
 | `/repo [<path>]` | session | project picker card (dropdown ≤ 50, buttons + pages above) |
 | `/group [<name>]` | chat | create a group with the bot and sender |
 | `/sessions` | session | session list card (title/id/cwd/age/live/saved), paginated, per-row Resume buttons |
+| `/feishu-status` | system | **surface diagnostic card**: app id, live long-connection state (`✅ ready` / `⚠️ reconnecting` / `❌ error`, `🧪 memory` for the test transport), session count, last inbound activity. Read-only (allowed while a turn runs) |
 | `/model` | system | **model picker card** (catalog from `ctx.llm` `listProviders` × `listModels`, current preselected); a pick sets the default for new sessions. `/model <provider>/<model>` sets it directly. Surface-native — the web `/model` is a client popup with no host command |
 | `/export` | system | send this chat's session log as a **file message** (`session-<id>.md` markdown transcript from `ctx.sessionQuery.readSession`) — the Feishu equivalent of the web's browser-download `/export` |
 | `/panel` | system | open the control panel card from any chat (slash line only — its palette button is hidden, since a palette button that opens the panel would be the panel launching itself) |
@@ -361,7 +362,7 @@ repo before DSH works there (user requirement). `requireWorkingDir`
 ### 8.4 Working-state gate (state-machine rule)
 
 While a turn is running (`cardStates[chatId].status === 'working'`), only
-read-only commands may run: `/help`, `/status`, `/sessions`
+read-only commands may run: `/help`, `/status`, `/feishu-status`, `/sessions`
 (read state), `/cancel` (the stop itself), `/group` (separate chat),
 `/model` (picker — picks are refused mid-turn, but opening it is fine),
 `/panel` (the panel carries Stop). Every other command —
