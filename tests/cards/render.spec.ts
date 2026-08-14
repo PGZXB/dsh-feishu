@@ -6,10 +6,14 @@ import { describe, expect, it } from 'vitest';
 import { markdownToElements } from '../../src/cards/markdown.js';
 import {
   assistantText,
+  buildApprovalCard,
+  buildApprovalDecidedCard,
   buildCard,
   buildModelPickerCard,
   buildPanelCard,
   buildPermissionPickerCard,
+  buildQuestionAnsweredCard,
+  buildQuestionCard,
   buildRepoPickedCard,
   buildRepoPickerCard,
   buildRowDetailsCard,
@@ -828,5 +832,95 @@ describe('buildModelPickerCard', () => {
     // Nav buttons present with page bounds.
     const nav = pageButtons.filter((a) => a.value.kind === 'model-page').map((a) => a.text.content);
     expect(nav).toEqual(['Next ›']);
+  });
+});
+
+describe('interaction cards (approvals/questions)', () => {
+  it('approval card shows the tool and reason with Allow/Reject buttons', () => {
+    const card = buildApprovalCard('bash', 'delete the files', 'approval-1');
+    expect(card.header?.title.content).toBe('🔐 Approval needed');
+    expect(JSON.stringify(card.elements)).toContain('delete the files');
+    const action = card.elements.find((el) => el.tag === 'action');
+    const values =
+      action && 'actions' in action
+        ? action.actions.filter((a) => a.tag === 'button').map((a) => a.value)
+        : [];
+    expect(values).toEqual([
+      { kind: 'approval', decision: 'allow', id: 'approval-1' },
+      { kind: 'approval', decision: 'reject', id: 'approval-1' },
+    ]);
+  });
+
+  it('approval decided card is static (no buttons)', () => {
+    for (const outcome of ['allowed-once', 'rejected', 'cancelled', 'unavailable']) {
+      const card = buildApprovalDecidedCard(outcome);
+      expect(card.elements.some((el) => el.tag === 'action')).toBe(false);
+    }
+    expect(JSON.stringify(buildApprovalDecidedCard('allowed-once').elements)).toContain(
+      'Allowed once',
+    );
+  });
+
+  it('single-select question card answers on an option button', () => {
+    const card = buildQuestionCard({
+      id: 'q1',
+      question: 'Which stack?',
+      detail: undefined,
+      options: [{ label: 'Go' }, { label: 'Rust' }],
+      multiSelect: false,
+    });
+    const action = card.elements.find((el) => el.tag === 'action');
+    const buttons =
+      action && 'actions' in action
+        ? action.actions.filter((a) => a.tag === 'button').map((a) => a.value)
+        : [];
+    expect(buttons).toEqual([
+      { kind: 'question', id: 'q1', answer: 'Go' },
+      { kind: 'question', id: 'q1', answer: 'Rust' },
+    ]);
+  });
+
+  it('multi-select question card toggles and submits', () => {
+    const card = buildQuestionCard(
+      {
+        id: 'q1',
+        question: 'Pick any',
+        detail: undefined,
+        options: [{ label: 'A' }, { label: 'B' }],
+        multiSelect: true,
+      },
+      ['A'],
+    );
+    const actions = card.elements.filter((el) => el.tag === 'action');
+    const values = actions.flatMap((el) =>
+      'actions' in el ? el.actions.filter((a) => a.tag === 'button').map((a) => a.value) : [],
+    );
+    // Selected options render checked and toggle; a Submit button follows.
+    expect(JSON.stringify(card.elements)).toContain('✅ A');
+    expect(values).toContainEqual({ kind: 'question-toggle', id: 'q1', option: 'A' });
+    expect(values).toContainEqual({ kind: 'question-toggle', id: 'q1', option: 'B' });
+    expect(values).toContainEqual({ kind: 'question-submit', id: 'q1' });
+  });
+
+  it('free-text question card asks for a message reply with a cancel button', () => {
+    const card = buildQuestionCard({
+      id: 'q1',
+      question: 'Describe it',
+      detail: undefined,
+      options: [],
+      multiSelect: false,
+    });
+    expect(JSON.stringify(card.elements)).toContain('Reply with your answer as a message');
+    const action = card.elements.find((el) => el.tag === 'action');
+    expect(action && 'actions' in action ? action.actions[0]?.value : undefined).toEqual({
+      kind: 'question-cancel',
+      id: 'q1',
+    });
+  });
+
+  it('question answered card is static', () => {
+    const card = buildQuestionAnsweredCard('Which stack?', 'Rust');
+    expect(card.elements.some((el) => el.tag === 'action')).toBe(false);
+    expect(JSON.stringify(card.elements)).toContain('Answer: Rust');
   });
 });

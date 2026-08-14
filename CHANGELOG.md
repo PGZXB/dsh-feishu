@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Interactive approvals (Iteration 3).** `ctx.on('approval/request')`
+  answers every approval with a Feishu card (tool + reason, ✅ Allow once /
+  ❌ Reject) through the new shared `InteractionRegistry`
+  (`src/cards/interactions.ts`): card callbacks settle
+  `'allowed-once'` / `'rejected'`, signal abort or a 5-minute timeout
+  settles `'cancelled'`, unknown-chat / card-send failure fails closed to
+  `'unavailable'` (loud log). The decided card becomes a static no-button
+  card, deferred out of the callback ACK. Feature-detected: absent service
+  logs loudly.
+- **Interactive questions (Iteration 3).**
+  `ctx.userQuestions.registerProvider` answers questions with question
+  cards: single-select answers on tap, multi-select toggles (card re-posts
+  with checkmarks) + Submit, free-text (no options) captures the next chat
+  message as the answer. Agent abort settles unanswered questions empty.
+- **Real-approval integration tests.** A scripted sandbox-escalation bash
+  call (`sandbox_permissions` + `justification`) raises a real
+  `approval/request` in the real process; Allow grants the escalation and
+  the turn completes, Reject fails the escalation and the turn still
+  completes — both with the static decided card. Tests: 299 (was 275).
+
+
 - **Integration-test expansion (19 real-composition tests).** New coverage:
   error turn → red card + ⚠️ notice and error→retry recovery; copy resends
   the answer and retry starts a fresh turn; the group mention gate on the

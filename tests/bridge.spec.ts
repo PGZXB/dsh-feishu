@@ -149,7 +149,7 @@ class FakeAgentStore {
     return {
       followup,
       cancel,
-      session: { events: [] },
+      session: { id: sessionId, events: [] },
       get options() {
         return optionMap.get(sessionId) ?? {};
       },
@@ -2559,5 +2559,222 @@ describe('working-directory gate (requireWorkingDir)', () => {
     });
     await h.bridge.handleMessage(message({ text: '/resume feishu-session-9' }));
     expect(h.sessionMap.cwdFor('oc_chat')).toBe('/work/old');
+  });
+});
+
+describe('interactive approvals (Iteration 3)', () => {
+  /** The id stamped on the approval card's buttons. */
+  function approvalRequestId(h: Harness): string {
+    const card = h.transport.sentCards.at(-1);
+    const action = card?.elements.find((el) => el.tag === 'action');
+    const allow =
+      action && 'actions' in action
+        ? action.actions.find(
+            (a) => a.tag === 'button' && 'value' in a && a.value.kind === 'approval',
+          )
+        : undefined;
+    return (allow && 'value' in allow ? allow.value.id : undefined) ?? '';
+  }
+
+  it('posts an approval card and settles allowed-once on Allow', async () => {
+    const h = makeHarness();
+    h.sessionMap.set('oc_chat', 'feishu-session-1');
+    const agent = h.agentStore.resume ? await h.agentStore.resume('feishu-session-1') : undefined;
+    if (agent === undefined) throw new Error('fake agent missing');
+    const pending = h.bridge.handleApprovalRequest({
+      agent,
+      toolName: 'bash',
+      reason: 'delete the files',
+    });
+    // Flush microtasks: register() runs after the awaited card send.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The approval card carries Allow/Reject buttons with the request id.
+    const card = h.transport.sentCards.at(-1);
+    expect(card?.header?.title.content).toBe('🔐 Approval needed');
+    expect(JSON.stringify(card?.elements)).toContain('delete the files');
+    const requestId = approvalRequestId(h);
+    expect(requestId).not.toBe('');
+    // Press Allow via the card callback.
+    await h.bridge.handleCardAction({
+      messageId: `msg-${h.transport.sentCards.length}`,
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'approval', decision: 'allow', id: requestId },
+    });
+    await expect(pending).resolves.toBe('allowed-once');
+    // The card is updated to a static decided state.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(JSON.stringify(h.transport.updatedCards.at(-1)?.elements)).toContain('Allowed once');
+  });
+
+  it('settles rejected on Reject and cancelled on timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = makeHarness();
+      h.sessionMap.set('oc_chat', 'feishu-session-1');
+      const agent = await h.agentStore.resume('feishu-session-1');
+      const pendingReject = h.bridge.handleApprovalRequest({
+        agent,
+        toolName: 'bash',
+        reason: 'run',
+      });
+      // Under fake timers the flush must advance timers, not setTimeout.
+      await vi.advanceTimersByTimeAsync(0);
+      const requestId = approvalRequestId(h);
+      await h.bridge.handleCardAction({
+        messageId: `msg-${h.transport.sentCards.length}`,
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'approval', decision: 'reject', id: requestId },
+      });
+      await expect(pendingReject).resolves.toBe('rejected');
+      // Timeout settles cancelled without a callback.
+      const pendingTimeout = h.bridge.handleApprovalRequest({
+        agent,
+        toolName: 'read',
+        reason: '',
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      h.transport.sentCards.pop();
+      await vi.advanceTimersByTimeAsync(5 * 60_000 + 1);
+      await expect(pendingTimeout).resolves.toBe('cancelled');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fails closed to unavailable when the session has no chat', async () => {
+    const h = makeHarness();
+    const agent = await h.agentStore.resume('feishu-session-1');
+    const outcome = await h.bridge.handleApprovalRequest({ agent, toolName: 'bash', reason: '' });
+    expect(outcome).toBe('unavailable');
+    expect(h.transport.sentCards).toHaveLength(0);
+  });
+});
+
+describe('interactive questions (Iteration 3)', () => {
+  it('answers a single-select question from an option button', async () => {
+    const h = makeHarness();
+    h.sessionMap.set('oc_chat', 'feishu-session-1');
+    const agent = await h.agentStore.resume('feishu-session-1');
+    const pending = h.bridge.askQuestions({
+      agent,
+      questions: [
+        {
+          id: 'q1',
+          question: 'Which stack?',
+          options: [{ label: 'Go' }, { label: 'Rust' }],
+        },
+      ],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The question card lists the options as buttons.
+    const card = h.transport.sentCards.at(-1);
+    expect(JSON.stringify(card?.elements)).toContain('Which stack?');
+    const action = card?.elements.find((el) => el.tag === 'action');
+    const optionButton =
+      action && 'actions' in action
+        ? action.actions.find(
+            (a) => a.tag === 'button' && 'value' in a && a.value.kind === 'question',
+          )
+        : undefined;
+    // The card stamps the RAW question id; the bridge prefixes it into the
+    // registry key.
+    expect(optionButton && 'value' in optionButton ? optionButton.value.id : '').toBe('q1');
+    await h.bridge.handleCardAction({
+      messageId: `msg-${h.transport.sentCards.length}`,
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'question', id: 'q1', answer: 'Rust' },
+    });
+    await expect(pending).resolves.toEqual({ answers: [{ id: 'q1', selected: ['Rust'] }] });
+  });
+
+  it('collects multi-select answers via toggles and submit', async () => {
+    const h = makeHarness();
+    h.sessionMap.set('oc_chat', 'feishu-session-1');
+    const agent = await h.agentStore.resume('feishu-session-1');
+    const pending = h.bridge.askQuestions({
+      agent,
+      questions: [
+        {
+          id: 'q1',
+          question: 'Pick any',
+          multiSelect: true,
+          options: [{ label: 'A' }, { label: 'B' }],
+        },
+      ],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Toggle A then B: each re-posts the card with checkmarks.
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'question-toggle', id: 'q1', option: 'A' },
+    });
+    const card2 = h.transport.sentCards.at(-1);
+    expect(JSON.stringify(card2?.elements)).toContain('✅ A');
+    await h.bridge.handleCardAction({
+      messageId: `msg-${h.transport.sentCards.length}`,
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'question-toggle', id: 'q1', option: 'B' },
+    });
+    // Submit resolves with the collected selection.
+    await h.bridge.handleCardAction({
+      messageId: `msg-${h.transport.sentCards.length}`,
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'question-submit', id: 'q1' },
+    });
+    await expect(pending).resolves.toEqual({
+      answers: [{ id: 'q1', selected: ['A', 'B'] }],
+    });
+  });
+
+  it('captures the next chat message as a free-text answer', async () => {
+    const h = makeHarness();
+    h.sessionMap.set('oc_chat', 'feishu-session-1');
+    const agent = await h.agentStore.resume('feishu-session-1');
+    const pending = h.bridge.askQuestions({
+      agent,
+      questions: [{ id: 'q1', question: 'Describe it' }],
+    });
+    expect(JSON.stringify(h.transport.sentCards.at(-1)?.elements)).toContain(
+      'Reply with your answer as a message',
+    );
+    // The next plain message is the answer (not a turn).
+    await h.bridge.handleMessage(message({ text: 'my free text answer' }));
+    await expect(pending).resolves.toEqual({
+      answers: [{ id: 'q1', selected: [], custom: 'my free text answer' }],
+    });
+    expect(h.agentStore.followups.get('feishu-session-1')).toBeUndefined();
+  });
+
+  it('cancels a question when the request aborts', async () => {
+    const h = makeHarness();
+    h.sessionMap.set('oc_chat', 'feishu-session-1');
+    const agent = await h.agentStore.resume('feishu-session-1');
+    const controller = new AbortController();
+    const pending = h.bridge.askQuestions({
+      agent,
+      signal: controller.signal,
+      questions: [{ id: 'q1', question: 'Which?', options: [{ label: 'A' }, { label: 'B' }] }],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    controller.abort();
+    await expect(pending).resolves.toEqual({ answers: [{ id: 'q1', selected: [] }] });
+  });
+
+  it('answers cancelled when no chat maps to the agent', async () => {
+    const h = makeHarness();
+    const agent = await h.agentStore.resume('feishu-session-1');
+    const answer = await h.bridge.askQuestions({
+      agent,
+      questions: [{ id: 'q1', question: 'Which?' }],
+    });
+    expect(answer).toEqual({ answers: [{ id: 'q1', selected: [] }] });
+    expect(h.transport.sentCards).toHaveLength(0);
   });
 });

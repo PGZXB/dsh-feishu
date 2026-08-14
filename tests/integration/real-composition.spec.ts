@@ -1859,4 +1859,211 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
       );
     }
   }, 120_000);
+
+  /** The real approval flow end to end: a scripted sandbox-escalation tool
+   *  call raises an approval/request, the approval card posts, and pressing
+   *  Allow grants the escalation so the tool runs and the turn completes. */
+  it('approval card: Allow grants the escalation and the turn completes', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      server.setScripts([
+        [
+          {
+            toolCall: {
+              index: 0,
+              id: 'call-approval-1',
+              name: 'bash',
+              arguments:
+                '{"command":"rm -rf /tmp/dsh-feishu-approval-test","description":"integration approval","sandbox_permissions":"danger-full-access","justification":"integration test approval flow"}',
+            },
+          },
+        ],
+        [{ content: 'Approval flow done.' }],
+      ]);
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_appr_${Date.now()}`;
+      await pinWorkingDir(chatId);
+      sendMessage(chatId, 'run the approval flow');
+      // The approval card appears with Allow/Reject buttons.
+      await waitFor(
+        'the approval card',
+        () =>
+          readOutbox()
+            .filter((r) => r.kind === 'card')
+            .some((r) => r.card?.header?.title.content === '🔐 Approval needed'),
+        60_000,
+      );
+      const approvalRecord = [...readOutbox()]
+        .reverse()
+        .find((r) => r.kind === 'card' && r.card?.header?.title.content === '🔐 Approval needed');
+      const approvalCard = approvalRecord?.card;
+      const action = approvalCard?.elements.find((el) => el.tag === 'action');
+      const allowButton =
+        action && 'actions' in action
+          ? action.actions.find(
+              (a) => a.tag === 'button' && 'value' in a && a.value.decision === 'allow',
+            )
+          : undefined;
+      const requestId = allowButton && 'value' in allowButton ? allowButton.value.id : undefined;
+      expect(requestId).toBeDefined();
+
+      // Press Allow through the card callback channel.
+      writeAction({
+        messageId: approvalRecord?.messageId ?? '',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'approval', decision: 'allow', id: requestId ?? '' },
+      });
+      // The tool runs, the card becomes a static "Allowed once" card, and
+      // the turn completes green with the model's answer.
+      await waitFor(
+        'the approved static card',
+        () =>
+          readOutbox().some(
+            (r) => r.kind === 'patch' && JSON.stringify(r.card?.elements).includes('Allowed once'),
+          ),
+        30_000,
+      );
+      await waitFor(
+        'the green final card patch',
+        () =>
+          readOutbox().some(
+            (r) =>
+              r.kind === 'patch' &&
+              r.card?.header?.template === 'green' &&
+              JSON.stringify(r.card.elements).includes('Approval flow done.'),
+          ),
+        90_000,
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 180_000);
+
+  /** Rejecting the approval fails the escalation: the tool errors, the card
+   *  becomes "Rejected", and the turn still completes (the model answers
+   *  after the tool error). */
+  it('approval card: Reject fails the escalation and the turn completes', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      server.setScripts([
+        [
+          {
+            toolCall: {
+              index: 0,
+              id: 'call-approval-2',
+              name: 'bash',
+              arguments:
+                '{"command":"rm -rf /tmp/dsh-feishu-approval-test-2","description":"integration approval","sandbox_permissions":"danger-full-access","justification":"integration test approval flow"}',
+            },
+          },
+        ],
+        [{ content: 'Rejected flow done.' }],
+      ]);
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_appr_reject_${Date.now()}`;
+      await pinWorkingDir(chatId);
+      sendMessage(chatId, 'run the approval reject flow');
+      await waitFor(
+        'the approval card',
+        () =>
+          readOutbox()
+            .filter((r) => r.kind === 'card')
+            .some((r) => r.card?.header?.title.content === '🔐 Approval needed'),
+        60_000,
+      );
+      const approvalRecord = [...readOutbox()]
+        .reverse()
+        .find((r) => r.kind === 'card' && r.card?.header?.title.content === '🔐 Approval needed');
+      const action = approvalRecord?.card?.elements.find((el) => el.tag === 'action');
+      const rejectButton =
+        action && 'actions' in action
+          ? action.actions.find(
+              (a) => a.tag === 'button' && 'value' in a && a.value.decision === 'reject',
+            )
+          : undefined;
+      const requestId = rejectButton && 'value' in rejectButton ? rejectButton.value.id : undefined;
+      expect(requestId).toBeDefined();
+
+      writeAction({
+        messageId: approvalRecord?.messageId ?? '',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'approval', decision: 'reject', id: requestId ?? '' },
+      });
+      await waitFor(
+        'the rejected static card',
+        () =>
+          readOutbox().some(
+            (r) => r.kind === 'patch' && JSON.stringify(r.card?.elements).includes('Rejected'),
+          ),
+        30_000,
+      );
+      await waitFor(
+        'the green final card patch after rejection',
+        () =>
+          readOutbox().some(
+            (r) =>
+              r.kind === 'patch' &&
+              r.card?.header?.template === 'green' &&
+              JSON.stringify(r.card.elements).includes('Rejected flow done.'),
+          ),
+        90_000,
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 180_000);
 });

@@ -420,3 +420,43 @@ open/pager posts a fresh card built from the current authoritative state
 All cells ACK `{}` and end in a consistent state through `syncCard`
 (existing rule); the matrix is unit-tested in `tests/bridge.spec.ts`
 "state machine matrix extension".
+
+## 9. Interactive cards: approvals and questions (Iteration 3)
+
+Reference: `@deepseek-ai/dsh-user-approval` (`approval/request` waterfall,
+`ApprovalOutcome`) and `@deepseek-ai/dsh-user-questions`
+(`registerProvider`). One shared mechanism — `src/cards/interactions.ts`
+(`InteractionRegistry`): a request posts a card, the surface waits for the
+card callback (or timeout / abort), and settles exactly once. Late or stale
+callbacks (wrong chat/card, already settled, superseded card) are ignored.
+
+### 9.1 Approval card
+
+`approval/request` → the surface maps the agent to its chat
+(`sessionMap.chatFor(agent.session.id)`), posts an **approval card**
+(`🔐 Approval needed`, orange): the tool name + the asker's reason, with
+`✅ Allow once` (primary) and `❌ Reject` (danger) buttons. The card
+callback settles `'allowed-once'` / `'rejected'`; the request `signal`
+abort or a 5-minute timeout settles `'cancelled'`. After a decision the
+card is replaced in place by a static decided card (no buttons — further
+taps do nothing), deferred out of the callback ACK. Failure modes are
+fail-closed `'unavailable'` with a loud log: unknown chat, card send
+failure, or bridge disposal (every pending entry settles `'cancelled'`).
+
+### 9.2 Question card
+
+`ctx.userQuestions.registerProvider` — each `AskUserQuestionItem` becomes a
+**question card** (`❓ Question`, wathet):
+
+- **Single-select** (default): one button per option; the first tap is the
+  answer.
+- **Multi-select**: toggle buttons (the card re-posts with `✅` checkmarks
+  on the selected options — the newest card becomes the interaction
+  target) plus a `✅ Submit` button that settles with the collected labels.
+- **Free-text** (no options): the card asks the user to reply with a
+  message; the next plain chat message is captured as the answer (it
+  bypasses the working-directory gate and is not a turn). A `✖ Cancel`
+  button aborts.
+
+The agent's `signal` abort settles unanswered questions as empty answers.
+The answer card becomes a static confirmation.

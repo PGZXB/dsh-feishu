@@ -54,7 +54,8 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 | `src/cards/render.ts` | Pure rendering: session events → card JSON (v1 layout), markdown escaping, tail truncation, the control-panel palette (grouped, paginated, category blocks), and the permission/model picker cards (dropdown with `initial_option`). |
 | `src/cards/session-list.ts` | The `/sessions` picker card: paginated rows with per-row Resume buttons (pure rendering). |
 | `src/cards/streaming.ts` | One card per turn: POST on open, throttled/coalesced `message.patch` updates, terminal finalize. |
-| `src/bridge.ts` | Orchestrator: message → session → `agent.followup`; `session/event` → card patches; turn end → finalize in place. Agent resolution ladder: live → resume mapped session → create → rebind fresh id on collision. Owns the surface command registry (17 registered, 16 in the palette — `/panel` is hidden), the card state machine (`ChatCardState` + one `syncCard` path), the working-state and working-directory gates, and the session lifecycle (`/sessions /resume /clear`). |
+| `src/cards/interactions.ts` | Pending-interaction registry shared by approvals and questions: resolve-once, timeout, stale-callback rejection, abort, disposal. |
+| `src/bridge.ts` | Orchestrator: message → session → `agent.followup`; `session/event` → card patches; turn end → finalize in place. Agent resolution ladder: live → resume mapped session → create → rebind fresh id on collision. Owns the surface command registry (17 registered, 16 in the palette — `/panel` is hidden), the card state machine (`ChatCardState` + one `syncCard` path), the working-state and working-directory gates, the session lifecycle (`/sessions /resume /clear`), and the interactive approval/question flows (rendering in `render.ts`, settlement through `interactions.ts`). |
 | `src/index.ts` | Plugin entry: config, credential resolution, agent options (config or `agentDefaultModel`), wiring, `feishu-status` command. |
 
 ## Key behaviors
@@ -84,6 +85,17 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
   (`requireWorkingDir`, default true). `/clear` keeps the pin; `/resume`
   adopts the resumed session's cwd (picker button value, or session-list
   lookup) so the resumed chat stays usable (see ux-spec §8.3).
+- **Interactive approvals.** `ctx.on('approval/request')` posts an approval
+  card (tool + reason, Allow once / Reject) and settles through the shared
+  `InteractionRegistry` — `'allowed-once'` / `'rejected'` from the card
+  callback, `'cancelled'` on signal abort or timeout, fail-closed
+  `'unavailable'` when the chat is unknown or the card fails. The decided
+  card is a static no-button card.
+- **Interactive questions.** `ctx.userQuestions.registerProvider` answers
+  questions via question cards: single-select answers on tap, multi-select
+  toggles + Submit, free-text captures the next chat message. Feature
+  detection: absent approval/question services are logged loudly and
+  nothing is mounted (see ux-spec §9).
 - **Configurable group mention gate.** `groupMentionMode` (botmux
   semantics): `always` requires an @-mention (relaxed in 1-person-1-bot solo
   groups via cached chat member counts); `never` answers every group message;

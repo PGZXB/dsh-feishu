@@ -4,7 +4,7 @@
 >
 > 开发方式：**迭代式**——先完成核心功能并测试，再逐步叠加新功能。
 >
-> 状态：**Iteration 1–2 ✅**（私聊/群聊闭环、重启安全、命令体系（17 个表面命令 + 完整按钮面板 + DSH web 命令包装 `/plan /goal /compact /feedback /permission`、surface-native `/model`）、会话生命周期 `/sessions /resume /clear`、UX 打磨（下拉选择卡、note 状态、按钮分行）、**工作目录门禁**（未显式选 repo 前拒绝工作）；`/export` 因 Web-only 浏览器下载通道有意排除）；275 测试全绿（含 19 个真实组合集成测试）。**Iteration 3（P1：交互审批/提问卡）待开始**。
+> 状态：**Iteration 1–2 ✅**（私聊/群聊闭环、重启安全、命令体系（17 个表面命令 + 完整按钮面板 + DSH web 命令包装 `/plan /goal /compact /feedback /permission`、surface-native `/model`）、会话生命周期 `/sessions /resume /clear`、UX 打磨（下拉选择卡、note 状态、按钮分行）、**工作目录门禁**（未显式选 repo 前拒绝工作）；`/export` 因 Web-only 浏览器下载通道有意排除）；**Iteration 3 ✅（交互审批卡 + 提问卡 + 统一交互机制 `cards/interactions.ts`，fail-closed 语义）**；299 测试全绿（含 21 个真实组合集成测试，其中 2 个为真实审批链路：沙箱升级工具调用 → 审批卡 → Allow/Reject → 工具继续/报错）。**Iteration 4（历史回放/表情回执/主动通知/权限白名单）待开始**。
 >
 > 已确认决策（2026-08）：npm 包名 `@dsh-feishu/dsh-feishu`；未知 slash 命令默认报错提示（附 `/help` 指引，配置项留后门）；飞书测试机器人由用户自行申请、稍后提供凭据。
 >
@@ -195,8 +195,8 @@ examples/            # 最小可运行 profile 配置 + 飞书后台配置指南
 - [x] 卡片截断保尾部、patch 节流、错误码转译（表格 5 上限兜底）、@mention 解析
 
 ### P1 —— 交互与多会话（Iteration 3–4）
-- [ ] **审批卡（高优先级，用户介入核心场景）**：监听 `approval/request` → 审批卡（工具名+原因+允许一次/拒绝）→ 回调 → `allowed-once/rejected`；超时/`/cancel` → `cancelled`；断线期间请求 fail-closed 为 `unavailable`（DSH 语义）
-- [ ] **提问卡**：`userQuestions.registerProvider` → 选项按钮/文本输入卡 → 回调解析答案（与审批卡共用 `cards/interactions.ts` 统一机制）
+- [x] **审批卡（高优先级，用户介入核心场景）**：监听 `approval/request` → 审批卡（工具名+原因+允许一次/拒绝）→ 回调 → `allowed-once/rejected`；超时/abort → `cancelled`；无聊天/发卡失败 → fail-closed `unavailable`（DSH 语义）
+- [x] **提问卡**：`userQuestions.registerProvider` → 单选点即答 / 多选切换+提交 / 无选项回复文本捕获（与审批卡共用 `cards/interactions.ts` 统一机制）
 - [ ] 交互按钮卡：`/repo` 目录选择器、确认/取消
 - [ ] 卡片控制按钮：显示/隐藏输出、复制、重试、停止
 - [ ] 表情回执：收到消息时 `addReaction`（botmux `RECEIVED_REACTION_EMOJI_TYPE`）

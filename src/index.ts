@@ -24,10 +24,16 @@ import type { Agent } from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-commands';
 import { credentialRef } from '@deepseek-ai/dsh-credentials';
 import type { SessionId } from '@deepseek-ai/dsh-session';
+// Carries the `approval/request` event key and `ctx.userQuestions` /
+// `ctx.approval` Context merges into this compilation.
+import type {} from '@deepseek-ai/dsh-user-approval';
+import type {} from '@deepseek-ai/dsh-user-questions';
 import z from '@deepseek-ai/schemastery';
 import {
   type AgentDefaultModelService,
   type AgentStore,
+  type ApprovalRequestLike,
+  type AskQuestionsRequestLike,
   Bridge,
   type BridgeLogger,
   type LlmService,
@@ -337,6 +343,32 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
       : {}),
     ...(ctx.get('llm') !== undefined ? { llm: ctx.get('llm') as LlmService } : {}),
   });
+  // Interactive approvals: answer every `approval/request` with a Feishu
+  // approval card. Fail-closed semantics are the service's own (throwing or
+  // no answerer yields `unavailable`), so an absent service is logged, not
+  // fatal.
+  const approvalService = ctx.get('approval');
+  if (approvalService !== undefined) {
+    ctx.on('approval/request', (request: ApprovalRequestLike) =>
+      bridge.handleApprovalRequest(request),
+    );
+  } else {
+    ctx.logger.warn('[feishu] approval service unavailable; approvals fail closed');
+  }
+  // Interactive questions: become the single userQuestions provider.
+  const userQuestionsService = ctx.get('userQuestions');
+  if (userQuestionsService !== undefined) {
+    // The provider is cast through the service's own contract type: the
+    // surface stays structurally typed (no runtime dependency on the
+    // questions package), and the service's parameter shape may drift.
+    const questionsProvider = {
+      ask: (request: unknown) => bridge.askQuestions(request as AskQuestionsRequestLike),
+    } as Parameters<typeof userQuestionsService.registerProvider>[0];
+    const disposeQuestions = userQuestionsService.registerProvider(questionsProvider);
+    ctx.effect(() => disposeQuestions);
+  } else {
+    ctx.logger.warn('[feishu] userQuestions service unavailable; questions cannot be rendered');
+  }
   ctx.effect(() => () => {
     bridge.dispose();
     sessionMap.persist();

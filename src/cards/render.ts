@@ -107,7 +107,13 @@ export type SurfaceAction =
   | { readonly kind: 'permission-pick'; readonly preset?: string }
   // `selection` is optional for the same dropdown-marker reason.
   | { readonly kind: 'model-pick'; readonly selection?: string }
-  | { readonly kind: 'model-page'; readonly page: string };
+  | { readonly kind: 'model-page'; readonly page: string }
+  // Interactive approval/question cards (Iteration 3).
+  | { readonly kind: 'approval'; readonly decision: 'allow' | 'reject'; readonly id: string }
+  | { readonly kind: 'question'; readonly id: string; readonly answer: string }
+  | { readonly kind: 'question-toggle'; readonly id: string; readonly option: string }
+  | { readonly kind: 'question-submit'; readonly id: string }
+  | { readonly kind: 'question-cancel'; readonly id: string };
 
 /**
  * Projects per picker card page (the button-based fallback, used only when
@@ -936,5 +942,173 @@ export function buildModelPickerCard(
     config: { wide_screen_mode: true },
     header: { title: { tag: 'plain_text', content: '🤖 Model' }, template: 'wathet' },
     elements,
+  };
+}
+
+/**
+ * Build the approval card for one `approval/request`: the tool and the
+ * asker's reason, with Allow-once / Reject buttons. The card is a standalone
+ * interaction (not part of the streaming-card state machine).
+ * @param toolName - the tool the approval is about.
+ * @param reason - the asker's human-readable explanation, or undefined.
+ * @param requestId - the approval request id echoed in the button values.
+ * @returns Feishu interactive card JSON (v1 layout).
+ */
+export function buildApprovalCard(
+  toolName: string,
+  reason: string | undefined,
+  requestId: string,
+): CardJson {
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: '🔐 Approval needed' }, template: 'orange' },
+    elements: [
+      {
+        tag: 'markdown',
+        content: `**${stripAngleBrackets(toolName)}** wants to run${
+          reason === undefined || reason === '' ? '.' : `:\n\n${stripAngleBrackets(reason)}`
+        }`,
+      },
+      { tag: 'hr' },
+      {
+        tag: 'action',
+        actions: [
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '✅ Allow once' },
+            type: 'primary',
+            value: actionValue({ kind: 'approval', decision: 'allow', id: requestId }),
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '❌ Reject' },
+            type: 'danger',
+            value: actionValue({ kind: 'approval', decision: 'reject', id: requestId }),
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/** The static card an approval card becomes once a decision is made (no
+ *  buttons — further taps do nothing). */
+export function buildApprovalDecidedCard(outcome: string): CardJson {
+  const label =
+    outcome === 'allowed-once'
+      ? '✅ Allowed once'
+      : outcome === 'rejected'
+        ? '❌ Rejected'
+        : outcome === 'unavailable'
+          ? '⚠️ Unavailable'
+          : '⏹ Cancelled';
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: '🔐 Approval' }, template: 'wathet' },
+    elements: [{ tag: 'note', elements: [{ tag: 'plain_text', content: label }] }],
+  };
+}
+
+/** One user-question as the question card renders it (structural subset of
+ *  `AskUserQuestionItem`). */
+export interface QuestionView {
+  readonly id: string;
+  readonly question: string;
+  readonly detail: string | undefined;
+  readonly options: readonly { readonly label: string; readonly description?: string }[];
+  readonly multiSelect: boolean;
+}
+
+/**
+ * Build the question card for one `AskUserQuestionItem`. Single-select
+ * questions answer on the first option tap; multi-select questions toggle
+ * options (re-posted with checkmarks) and confirm via a Submit button;
+ * free-text questions (no options) ask the user to reply with a message.
+ * @param question - the question to display (its id is echoed in the button
+ *   values — the bridge prefixes it into the registry key).
+ * @param selected - currently selected option labels (multi-select re-post).
+ * @returns Feishu interactive card JSON (v1 layout).
+ */
+export function buildQuestionCard(
+  question: QuestionView,
+  selected: readonly string[] = [],
+): CardJson {
+  const elements: CardElement[] = [
+    {
+      tag: 'markdown',
+      content: `**${stripAngleBrackets(question.question)}**${
+        question.detail === undefined || question.detail === ''
+          ? ''
+          : `\n\n${stripAngleBrackets(question.detail)}`
+      }`,
+    },
+    { tag: 'hr' },
+  ];
+  if (question.options.length === 0) {
+    elements.push({
+      tag: 'markdown',
+      content: 'Reply with your answer as a message — no options to pick from.',
+    });
+    elements.push({
+      tag: 'action',
+      actions: [
+        {
+          tag: 'button',
+          text: { tag: 'plain_text', content: '✖ Cancel' },
+          type: 'default',
+          value: actionValue({ kind: 'question-cancel', id: question.id }),
+        },
+      ],
+    });
+    return {
+      config: { wide_screen_mode: true },
+      header: { title: { tag: 'plain_text', content: '❓ Question' }, template: 'wathet' },
+      elements,
+    };
+  }
+  const buttons = question.options.map((option) => {
+    const isSelected = selected.includes(option.label);
+    return {
+      tag: 'button' as const,
+      text: {
+        tag: 'plain_text' as const,
+        content: `${isSelected ? '✅ ' : ''}${option.label}`,
+      },
+      type: isSelected ? ('primary' as const) : ('default' as const),
+      value: question.multiSelect
+        ? actionValue({ kind: 'question-toggle', id: question.id, option: option.label })
+        : actionValue({ kind: 'question', id: question.id, answer: option.label }),
+    };
+  });
+  elements.push({ tag: 'action', actions: buttons });
+  if (question.multiSelect) {
+    elements.push({
+      tag: 'action',
+      actions: [
+        {
+          tag: 'button',
+          text: { tag: 'plain_text', content: '✅ Submit' },
+          type: 'primary',
+          value: actionValue({ kind: 'question-submit', id: question.id }),
+        },
+      ],
+    });
+  }
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: '❓ Question' }, template: 'wathet' },
+    elements,
+  };
+}
+
+/** The static card a question card becomes once answered (no buttons). */
+export function buildQuestionAnsweredCard(question: string, answer: string): CardJson {
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: '❓ Question' }, template: 'wathet' },
+    elements: [
+      { tag: 'markdown', content: `**${stripAngleBrackets(question)}**` },
+      { tag: 'note', elements: [{ tag: 'plain_text', content: `Answer: ${answer}` }] },
+    ],
   };
 }

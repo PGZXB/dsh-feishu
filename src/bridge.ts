@@ -19,12 +19,16 @@ import { resolve as resolvePath } from 'node:path';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
+import { InteractionRegistry } from './cards/interactions.js';
 import {
   assistantText,
+  buildApprovalCard,
+  buildApprovalDecidedCard,
   buildCard,
   buildModelPickerCard,
   buildPanelCard,
   buildPermissionPickerCard,
+  buildQuestionCard,
   buildRepoPickedCard,
   buildRepoPickerCard,
   buildRowDetailsCard,
@@ -33,6 +37,7 @@ import {
   type ModelOptionView,
   type PanelCommand,
   type PermissionPresetView,
+  type QuestionView,
   type ThinkRow,
   type ToolRow,
   type TurnRow,
@@ -41,7 +46,7 @@ import { buildSessionsCard, type SessionRowView } from './cards/session-list.js'
 import type { StreamingCardManager } from './cards/streaming.js';
 import { toolRowSummary } from './cards/tool-summary.js';
 import { CommandRegistry, type CommandResult, parseSlash } from './commands.js';
-import type { CardAction, FeishuMessage, FeishuTransport } from './feishu/types.js';
+import type { CardAction, FeishuMessage, FeishuTransport, SentCard } from './feishu/types.js';
 import { MessageDeduplicator } from './message-dedup.js';
 import { type ProjectInfo, scanMultipleProjects } from './projects.js';
 import type { SessionMap } from './session-map.js';
@@ -136,6 +141,44 @@ export interface LlmModelView {
 export interface LlmService {
   listProviders(): readonly { readonly id: string; readonly name: string }[];
   listModels(provider: string): Promise<readonly LlmModelView[]>;
+}
+
+/** The approval settlement union (structural subset of `ApprovalOutcome`). */
+export type ApprovalOutcomeLike = 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable';
+
+/** Structural subset of an `approval/request` (`@deepseek-ai/dsh-user-approval`). */
+export interface ApprovalRequestLike {
+  readonly agent: Agent;
+  readonly toolName: string;
+  readonly callId?: string;
+  readonly reason?: string;
+  readonly signal?: AbortSignal;
+}
+
+/** Structural subset of `AskUserQuestionItem`. */
+export interface AskQuestionItemLike {
+  readonly id: string;
+  readonly question: string;
+  readonly detail?: string;
+  readonly options?: readonly { readonly label: string; readonly description?: string }[];
+  readonly multiSelect?: boolean;
+  readonly intent?: string;
+}
+
+/** Structural subset of `AskUserQuestionRequest`. */
+export interface AskQuestionsRequestLike {
+  readonly questions: readonly AskQuestionItemLike[];
+  readonly agent?: Agent;
+  readonly signal?: AbortSignal;
+}
+
+/** Structural subset of `AskUserQuestionAnswer`. */
+export interface AskQuestionsAnswerLike {
+  readonly answers: readonly {
+    readonly id: string;
+    readonly selected: readonly string[];
+    readonly custom?: string;
+  }[];
 }
 
 /** Options for {@link Bridge}. */
@@ -414,6 +457,17 @@ export class Bridge {
   private readonly permissionPickerMessageIds = new Map<string, string>();
   /** Active /model picker card message id per chat (stale-callback guard). */
   private readonly modelPickerMessageIds = new Map<string, string>();
+  /** Pending approval/question card interactions (one resolve path). */
+  private readonly interactions = new InteractionRegistry();
+  /** Multi-select question state per request id (toggle + submit). */
+  private readonly questionState = new Map<
+    string,
+    { readonly chatId: string; readonly view: QuestionView; selection: string[] }
+  >();
+  /** Chats awaiting a free-text question answer (request id per chat). */
+  private readonly awaitingQuestionAnswers = new Map<string, { readonly requestId: string }>();
+  /** Monotonic approval request counter (card callback correlation ids). */
+  private approvalSeq = 0;
 
   /** The live agent for a chat, or `undefined` (no session or not attached). */
   private liveAgent(chatId: string): Agent | undefined {
@@ -450,6 +504,7 @@ export class Bridge {
   /** Detach the session-event subscription. */
   dispose(): void {
     this.disposeEvents();
+    this.interactions.dispose();
   }
 
   /**
@@ -782,6 +837,160 @@ export class Bridge {
     }
   }
 
+  /**
+   * Handle one `approval/request` (the surface's answerer): map the agent to
+   * its chat, post an approval card, and wait for the card callback (or
+   * timeout/abort → `'cancelled'`). Fail-closed `'unavailable'` when the
+   * chat is unknown or the card cannot be posted.
+   * @param request - the approval request.
+   * @returns the settlement outcome.
+   */
+  async handleApprovalRequest(request: ApprovalRequestLike): Promise<ApprovalOutcomeLike> {
+    const chatId = this.options.sessionMap.chatFor(String(request.agent.session.id));
+    if (chatId === undefined) {
+      this.options.logger.warn(
+        `approval request for session ${String(request.agent.session.id)} has no chat; failing closed`,
+      );
+      return 'unavailable';
+    }
+    this.approvalSeq += 1;
+    const requestId = `approval-${this.approvalSeq}`;
+    let messageId: string;
+    try {
+      const sent = await this.options.transport.sendCard(
+        chatId,
+        buildApprovalCard(request.toolName, request.reason, requestId),
+      );
+      messageId = sent.messageId;
+    } catch (error: unknown) {
+      this.options.logger.warn(`approval card send failed: ${String(error)}`);
+      return 'unavailable';
+    }
+    return new Promise<ApprovalOutcomeLike>((resolve) => {
+      this.interactions.register(requestId, chatId, messageId, (outcome) => {
+        // Turn the card into its static decided state, deferred out of the
+        // card-callback ACK (botmux rule), then re-assert the streaming card.
+        const settled: ApprovalOutcomeLike = outcome as ApprovalOutcomeLike;
+        setTimeout(() => {
+          void this.options.transport
+            .updateCard(messageId, buildApprovalDecidedCard(settled))
+            .catch((error: unknown) => {
+              this.options.logger.warn(`approval card settle update failed: ${String(error)}`);
+            });
+        }, 0);
+        this.syncCard(chatId);
+        resolve(settled);
+      });
+      if (request.signal !== undefined) {
+        request.signal.addEventListener('abort', () => {
+          this.interactions.abort(requestId, 'cancelled');
+        });
+      }
+    });
+  }
+
+  /**
+   * Answer one `AskUserQuestionRequest` as the surface's userQuestions
+   * provider: post a question card per item and collect the answers through
+   * card callbacks (or the next chat message for free-text questions).
+   * @param request - the questions to ask.
+   * @returns the structured answers.
+   */
+  async askQuestions(request: AskQuestionsRequestLike): Promise<AskQuestionsAnswerLike> {
+    const agent = request.agent;
+    const chatId =
+      agent === undefined ? undefined : this.options.sessionMap.chatFor(String(agent.session.id));
+    if (chatId === undefined) {
+      this.options.logger.warn('user question has no chat to render into; answering cancelled');
+      return {
+        answers: request.questions.map((question) => ({ id: question.id, selected: [] })),
+      };
+    }
+    const answers = new Map<string, { readonly id: string; selected: string[]; custom?: string }>();
+    let resolveAllPromise!: () => void;
+    const allDone = new Promise<void>((resolve) => {
+      resolveAllPromise = resolve;
+    });
+    let pendingCount = request.questions.length;
+    let settled = false;
+    const resolveAll = (): void => {
+      if (settled) return;
+      settled = true;
+      resolveAllPromise();
+    };
+    const settleOne = (answer: {
+      readonly id: string;
+      selected: string[];
+      custom?: string;
+    }): void => {
+      if (answers.has(answer.id)) return;
+      answers.set(answer.id, answer);
+      pendingCount -= 1;
+      if (pendingCount <= 0) resolveAll();
+    };
+    const viewOf = (question: AskQuestionItemLike): QuestionView => ({
+      id: question.id,
+      question: question.question,
+      detail: question.detail,
+      options: question.options ?? [],
+      multiSelect: question.multiSelect ?? false,
+    });
+    for (const question of request.questions) {
+      const requestId = `question-${question.id}`;
+      const view = viewOf(question);
+      let sent: SentCard;
+      try {
+        sent = await this.options.transport.sendCard(chatId, buildQuestionCard(view));
+      } catch (error: unknown) {
+        this.options.logger.warn(`question card send failed: ${String(error)}`);
+        settleOne({ id: question.id, selected: [] });
+        continue;
+      }
+      const messageId = sent.messageId;
+      if (view.options.length === 0) {
+        // Free-text: await the next message in this chat.
+        this.awaitingQuestionAnswers.set(chatId, { requestId });
+        this.interactions.register(requestId, chatId, messageId, (outcome) => {
+          const pending = this.awaitingQuestionAnswers.get(chatId);
+          if (pending?.requestId === requestId) this.awaitingQuestionAnswers.delete(chatId);
+          const text = outcome === 'cancelled' ? '' : outcome;
+          settleOne({ id: question.id, selected: [], ...(text === '' ? {} : { custom: text }) });
+        });
+        continue;
+      }
+      if (view.multiSelect) {
+        this.questionState.set(requestId, { chatId, view, selection: [] });
+        this.interactions.register(requestId, chatId, messageId, () => {
+          const state = this.questionState.get(requestId);
+          this.questionState.delete(requestId);
+          settleOne({ id: question.id, selected: state?.selection ?? [] });
+        });
+        continue;
+      }
+      // Single-select: the chosen option label is the outcome.
+      this.interactions.register(requestId, chatId, messageId, (outcome) => {
+        settleOne({ id: question.id, selected: [outcome] });
+      });
+    }
+    if (request.signal !== undefined) {
+      request.signal.addEventListener('abort', () => {
+        for (const question of request.questions) {
+          const requestId = `question-${question.id}`;
+          this.awaitingQuestionAnswers.delete(chatId);
+          if (!answers.has(question.id)) settleOne({ id: question.id, selected: [] });
+          this.interactions.abort(requestId, 'cancelled');
+        }
+        resolveAll();
+      });
+    }
+    await allDone;
+    return {
+      answers: request.questions.map(
+        (question) => answers.get(question.id) ?? { id: question.id, selected: [] },
+      ),
+    };
+  }
+
   /** The chat's current model as a `provider/model` selection arg. */
   private currentModelSelection(chatId: string): string | undefined {
     const live = this.liveAgent(chatId);
@@ -860,6 +1069,14 @@ export class Bridge {
 
   /** The normal turn flow: session resolution, streaming card, followup. */
   private async deliverTurn(message: FeishuMessage): Promise<void> {
+    // A free-text question answer is captured here — the reply is the
+    // answer, not a turn (bypasses the working-directory gate).
+    const awaiting = this.awaitingQuestionAnswers.get(message.chatId);
+    if (awaiting !== undefined) {
+      this.awaitingQuestionAnswers.delete(message.chatId);
+      this.interactions.resolveDirect(awaiting.requestId, message.chatId, message.text);
+      return;
+    }
     // The working-directory gate: without an explicit /repo pick or /cd the
     // chat is "unavailable" — DSH refuses to work there (user requirement:
     // a new group must choose a repo before any turn runs). The refused
@@ -1484,6 +1701,58 @@ export class Bridge {
         } catch (error: unknown) {
           this.options.logger.warn(`model picker page refresh failed: ${String(error)}`);
         }
+        break;
+      }
+      case 'approval': {
+        const id = action.value.id;
+        const decision = action.value.decision;
+        if (id === undefined || (decision !== 'allow' && decision !== 'reject')) break;
+        this.interactions.resolveOnce(
+          id,
+          action.chatId,
+          action.messageId,
+          decision === 'allow' ? 'allowed-once' : 'rejected',
+        );
+        break;
+      }
+      case 'question': {
+        // Single-select: the chosen option label is the answer.
+        const id = action.value.id;
+        const answer = action.value.answer;
+        if (id === undefined || answer === undefined) break;
+        this.interactions.resolveOnce(`question-${id}`, action.chatId, action.messageId, answer);
+        break;
+      }
+      case 'question-toggle': {
+        // Multi-select: flip one option and re-post the card with
+        // checkmarks; the newest card becomes the interaction target.
+        const id = `question-${action.value.id ?? ''}`;
+        const option = action.value.option;
+        const state = this.questionState.get(id);
+        if (state === undefined || option === undefined) break;
+        state.selection = state.selection.includes(option)
+          ? state.selection.filter((entry) => entry !== option)
+          : [...state.selection, option];
+        try {
+          const sent = await this.options.transport.sendCard(
+            state.chatId,
+            buildQuestionCard(state.view, state.selection),
+          );
+          this.interactions.retarget(id, sent.messageId);
+        } catch (error: unknown) {
+          this.options.logger.warn(`question toggle re-post failed: ${String(error)}`);
+        }
+        break;
+      }
+      case 'question-submit': {
+        const id = `question-${action.value.id ?? ''}`;
+        this.interactions.resolveOnce(id, action.chatId, action.messageId, 'submit');
+        break;
+      }
+      case 'question-cancel': {
+        const id = `question-${action.value.id ?? ''}`;
+        this.awaitingQuestionAnswers.delete(action.chatId);
+        this.interactions.resolveOnce(id, action.chatId, action.messageId, 'cancelled');
         break;
       }
       default: {
