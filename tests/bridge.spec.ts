@@ -481,7 +481,7 @@ describe('Bridge', () => {
     // The chat is rebound to a fresh session id so the next message starts clean.
     expect(h.sessionMap.get('oc_chat')).toBe('feishu-session-2');
   });
-  it('stop action cancels the live agent', async () => {
+  it('stop action cancels the live agent and acknowledges', async () => {
     const h = makeHarness();
     await h.bridge.handleMessage(message());
     await h.bridge.handleCardAction({
@@ -491,6 +491,21 @@ describe('Bridge', () => {
       value: { kind: 'stop' },
     });
     expect(h.agentStore.cancels).toEqual(['feishu-session-1']);
+    expect(h.transport.sentTexts.some((t) => t.text.includes('Stopping'))).toBe(true);
+  });
+
+  it('stop on a stale card (no live agent) explains instead of silently ignoring', async () => {
+    const h = makeHarness();
+    // No message was delivered → the session map has no entry, so there is
+    // no live agent to cancel (the restart/stale-card case).
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'stop' },
+    });
+    expect(h.agentStore.cancels).toEqual([]);
+    expect(h.transport.sentTexts.some((t) => t.text.includes('No active session'))).toBe(true);
   });
 
   it('copy action resends the last output as text', async () => {

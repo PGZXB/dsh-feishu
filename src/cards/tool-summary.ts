@@ -39,6 +39,12 @@ const TOOL_VARIANTS: Record<string, ToolRowVariant> = {
   cordis_run: 'others',
   cordis_stop: 'others',
   cordis_undefine: 'others',
+  // Background-job tools (DSH web presentCall classifies them as read
+  // rows: `Read output from background job <id>` / `Kill background job
+  // <id>` with the job id as the summary).
+  job_output: 'read',
+  job_list: 'read',
+  job_kill: 'read',
 };
 
 /** Tool-owned titles that refine a variant without replacing it (DSH web). */
@@ -49,12 +55,15 @@ const TOOL_TITLES: Record<string, string> = {
   cordis_stop: 'Stop Cordis Plugin',
   cordis_undefine: 'Remove Cordis Plugin',
   pwsh: 'Pwsh',
+  job_output: 'Read Job',
+  job_list: 'List Jobs',
+  job_kill: 'Kill Job',
 };
 
 /** Summary key preference per variant, from the call's args (DSH web). */
 const SUMMARY_KEYS: Record<ToolRowVariant, readonly string[]> = {
   bash: ['description', 'command'],
-  read: ['path', 'file_path', 'url'],
+  read: ['path', 'file_path', 'url', 'job_id'],
   search: ['query', 'pattern', 'url'],
   write: ['path', 'file_path'],
   edit: ['path', 'file_path'],

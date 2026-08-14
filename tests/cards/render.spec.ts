@@ -485,4 +485,11 @@ describe('toolRowSummary / toolRowTitle', () => {
     expect(toolRowTitle('my_tool')).toBe('Tool call');
     expect(toolRowTitle('bash')).toBe('Bash');
   });
+
+  it('classifies background-job tools as Read rows with the job id summary', () => {
+    expect(toolRowTitle('job_output')).toBe('Read Job');
+    expect(toolRowTitle('job_list')).toBe('List Jobs');
+    expect(toolRowTitle('job_kill')).toBe('Kill Job');
+    expect(toolRowSummary('job_output', '{"job_id":"bash-1"}')).toBe('bash-1');
+  });
 });

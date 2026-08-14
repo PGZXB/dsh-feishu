@@ -556,8 +556,23 @@ export class Bridge {
         const sessionId = this.options.sessionMap.get(action.chatId);
         const agent = sessionId === undefined ? undefined : this.options.agentStore.get(sessionId);
         if (agent !== undefined) {
+          // The same cancel the DSH web Stop button issues (session.cancel →
+          // agent.cancel({kind:'user'}, {keepInbox:true})): abort the active
+          // turn/driver. keepInbox preserves queued work for the next turn.
           agent.cancel({ kind: 'user' }, { keepInbox: true });
           this.options.logger.info(`stop requested for chat ${action.chatId}`);
+          // Visible acknowledgment — a silent stop reads as "not working".
+          await this.options.transport.sendText(action.chatId, '⏹ Stopping…');
+        } else {
+          // No live agent (e.g. the plugin restarted and the card is stale):
+          // surface that instead of silently ignoring the tap.
+          this.options.logger.info(
+            `stop for chat ${action.chatId}: no live agent (stale card or restarted)`,
+          );
+          await this.options.transport.sendText(
+            action.chatId,
+            'No active session to stop — the bot may have restarted. Send a message to start fresh.',
+          );
         }
         break;
       }
