@@ -29,6 +29,17 @@ export interface ProfileCredentials {
   readonly appSecret: string;
 }
 
+/** The guided surface options the setup wizard asks about (defaults on
+ *  empty input). */
+export interface GuidedConfig {
+  /** `/repo` scan roots (one level deep); defaults to the home directory. */
+  readonly repoRoots?: readonly string[];
+  /** Group mention policy; defaults to `always`. */
+  readonly groupMentionMode?: 'always' | 'never' | 'ambient' | 'topic';
+  /** Refuse work until a working directory is chosen; defaults to true. */
+  readonly requireWorkingDir?: boolean;
+}
+
 export interface WriteProfileResult {
   readonly changed: boolean;
   readonly path: string;
@@ -48,11 +59,44 @@ export function loadPatchRows(filePath: string): PatchRow[] {
   return parsed as PatchRow[];
 }
 
+/** The feishu row's guided options read back from a patch row list. */
+export function readFeishuGuidedConfig(rows: PatchRow[]): GuidedConfig {
+  const config = rows.find((row) => row.id === 'feishu')?.config as
+    | Record<string, unknown>
+    | undefined;
+  if (config === undefined) return {};
+  const roots =
+    Array.isArray(config.repoRoots) && config.repoRoots.every((r) => typeof r === 'string')
+      ? (config.repoRoots as string[])
+      : Array.isArray(config.repoRoots)
+        ? config.repoRoots.filter((r): r is string => typeof r === 'string')
+        : undefined;
+  const mode = config.groupMentionMode;
+  const groupMentionMode =
+    mode === 'always' || mode === 'never' || mode === 'ambient' || mode === 'topic'
+      ? mode
+      : undefined;
+  const requireWorkingDir =
+    typeof config.requireWorkingDir === 'boolean' ? config.requireWorkingDir : undefined;
+  return {
+    ...(roots !== undefined && roots.length > 0 ? { repoRoots: roots } : {}),
+    ...(groupMentionMode !== undefined ? { groupMentionMode } : {}),
+    ...(requireWorkingDir !== undefined ? { requireWorkingDir } : {}),
+  };
+}
+
 /**
  * Update the `feishu` row of a patch row list with the given config values.
+ * `guided` (the wizard's prompted options) is merged on both create and
+ * update — a re-run of the wizard with fresh answers overrides those keys;
+ * everything else in the row is preserved.
  * @returns a new array when changed, the same array when already present.
  */
-export function upsertFeishuConfig(rows: PatchRow[], credentials: ProfileCredentials): PatchRow[] {
+export function upsertFeishuConfig(
+  rows: PatchRow[],
+  credentials: ProfileCredentials,
+  guided: GuidedConfig | undefined = undefined,
+): PatchRow[] {
   const feishu = rows.find((row) => row.id === 'feishu');
   if (feishu) {
     const config = (feishu.config ?? {}) as Record<string, unknown>;
@@ -63,7 +107,12 @@ export function upsertFeishuConfig(rows: PatchRow[], credentials: ProfileCredent
       row.id === 'feishu'
         ? {
             ...row,
-            config: { ...config, appId: credentials.appId, appSecret: credentials.appSecret },
+            config: {
+              ...config,
+              appId: credentials.appId,
+              appSecret: credentials.appSecret,
+              ...guided,
+            },
           }
         : row,
     );
@@ -73,7 +122,14 @@ export function upsertFeishuConfig(rows: PatchRow[], credentials: ProfileCredent
     {
       id: 'feishu',
       name: '@dsh-feishu/dsh-feishu',
-      config: { appId: credentials.appId, appSecret: credentials.appSecret },
+      // A sensible default on first write (mirrors the dev profile): /repo
+      // scans one level deep under repoRoots. The wizard's prompted options
+      // (with their own defaults) win when present.
+      config: {
+        appId: credentials.appId,
+        appSecret: credentials.appSecret,
+        ...(guided ?? { repoRoots: [homedir()] }),
+      },
     },
   ];
 }
@@ -86,10 +142,11 @@ export function writeProfileCredentials(
   dshHomeDir: string,
   profileName: string,
   credentials: ProfileCredentials,
+  guided: GuidedConfig | undefined = undefined,
 ): WriteProfileResult {
   const path = profilePatchPath(dshHomeDir, profileName);
   const rows = loadPatchRows(path);
-  const updated = upsertFeishuConfig(rows, credentials);
+  const updated = upsertFeishuConfig(rows, credentials, guided);
   if (updated === rows) {
     return { changed: false, path };
   }

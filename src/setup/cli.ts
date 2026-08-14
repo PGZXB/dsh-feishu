@@ -13,6 +13,7 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { pathToFileURL } from 'node:url';
@@ -20,6 +21,7 @@ import { createOpenPlatformApiClient } from './client.js';
 import { configureFeishuApp } from './configure.js';
 import type { StoredCookie } from './cookies.js';
 import { createFeishuOpenPlatformApp } from './create-app.js';
+import { mergeGuidedConfig, promptGuidedConfig } from './guided-config.js';
 import {
   APP_EVENTS,
   CARD_CALLBACKS,
@@ -28,7 +30,14 @@ import {
   SCOPES,
 } from './manifest.js';
 import { fetchOpenPlatformAppSecret, listOpenPlatformApps } from './payloads.js';
-import { dshHome, profilePatchPath, writeProfileCredentials } from './profile-writer.js';
+import {
+  dshHome,
+  type GuidedConfig,
+  loadPatchRows,
+  profilePatchPath,
+  readFeishuGuidedConfig,
+  writeProfileCredentials,
+} from './profile-writer.js';
 import { classifyFeishuLoginError, loginFeishuWebSession } from './qr-login.js';
 import {
   feishuSessionFilePath,
@@ -52,7 +61,11 @@ interface CliOptions {
   help: boolean;
 }
 
-function parseArgs(argv: readonly string[]): CliOptions {
+/** Parse the setup CLI options. A leading `--` (the `pnpm run <script> --`
+ *  arg separator, forwarded verbatim by pnpm ≥ 11) is skipped so the
+ *  documented `pnpm run setup:feishu -- --new` command works on every
+ *  pnpm version. Unknown options throw. */
+export function parseArgs(argv: readonly string[]): CliOptions {
   const opts: CliOptions = {
     newApp: false,
     list: false,
@@ -68,6 +81,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
+    if (i === 0 && arg === '--') continue;
     const value = (): string => {
       const next = argv[i + 1];
       if (next === undefined) throw new Error(`missing value for ${arg}`);
@@ -217,17 +231,36 @@ async function validateCredentials(
   }
 }
 
-/** Write credentials to the profile or print export lines. */
-function deliverCredentials(
+/** The guided options to write: existing profile config as the prompt
+ *  defaults (or built-ins), overlaid with the user's answers. Non-TTY runs
+ *  (CI / scripts) skip the prompts and keep the defaults. */
+async function resolveGuidedConfig(options: CliOptions): Promise<GuidedConfig> {
+  const existing = readFeishuGuidedConfig(
+    loadPatchRows(profilePatchPath(options.dshHomeDir, options.profile)),
+  );
+  const defaults: GuidedConfig = {
+    repoRoots: existing.repoRoots ?? [homedir()],
+    groupMentionMode: existing.groupMentionMode ?? 'always',
+    requireWorkingDir: existing.requireWorkingDir ?? true,
+  };
+  if (options.printEnv) return defaults;
+  const answers = await promptGuidedConfig(defaults);
+  return mergeGuidedConfig(answers, defaults);
+}
+
+/** Write credentials (and the guided options) to the profile or print
+ *  export lines. */
+async function deliverCredentials(
   options: CliOptions,
   credentials: { appId: string; appSecret: string },
-): void {
+): Promise<void> {
   if (options.printEnv) {
     process.stdout.write(`export FEISHU_APP_ID=${credentials.appId}\n`);
     process.stdout.write(`export FEISHU_APP_SECRET=${credentials.appSecret}\n`);
     return;
   }
-  const result = writeProfileCredentials(options.dshHomeDir, options.profile, credentials);
+  const guided = await resolveGuidedConfig(options);
+  const result = writeProfileCredentials(options.dshHomeDir, options.profile, credentials, guided);
   if (result.changed) {
     log(
       `wrote appId/appSecret into ${result.path}${result.backupPath ? ` (backup: ${result.backupPath})` : ''}`,
@@ -270,7 +303,7 @@ async function runManualSetup(options: CliOptions): Promise<void> {
   if (!validation.ok) {
     throw new Error(`credentials look invalid: ${validation.message ?? 'unknown error'}`);
   }
-  deliverCredentials(options, { appId, appSecret });
+  await deliverCredentials(options, { appId, appSecret });
   printManualChecklist(appId);
 
   const manifestPath = join(process.cwd(), 'feishu-manifest.json');
@@ -373,7 +406,7 @@ async function runAutoSetup(options: CliOptions): Promise<void> {
     appSecret = await fetchOpenPlatformAppSecret(client, appId);
   }
 
-  deliverCredentials(options, { appId, appSecret });
+  await deliverCredentials(options, { appId, appSecret });
 
   if (options.verifyBoot) {
     log('verifying the boot…');

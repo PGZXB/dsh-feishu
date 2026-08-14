@@ -7,9 +7,10 @@
  */
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { parseArgs } from '../src/setup/cli.js';
 import { createOpenPlatformApiClient, type OpenPlatformApiClient } from '../src/setup/client.js';
 import { configureFeishuApp } from '../src/setup/configure.js';
 import {
@@ -44,10 +45,15 @@ import {
 import {
   loadPatchRows,
   profilePatchPath,
+  readFeishuGuidedConfig,
   upsertFeishuConfig,
   writeProfileCredentials,
 } from '../src/setup/profile-writer.js';
-import { buildFeishuQrPayload, mapFeishuQrPollingStatus } from '../src/setup/qr-login.js';
+import {
+  buildFeishuQrPayload,
+  FEISHU_COMMON_HEADERS,
+  mapFeishuQrPollingStatus,
+} from '../src/setup/qr-login.js';
 import {
   extractOpenPlatformCsrfToken,
   extractOpenPlatformSessionIdentity,
@@ -221,6 +227,13 @@ describe('session file', () => {
 // ─── QR helpers ─────────────────────────────────────────────────────────────
 
 describe('qr-login helpers', () => {
+  it('sends the headers the accounts API requires (missing ones return 4401)', () => {
+    // Regression: omitting x-locale / x-terminal-type made the QR init
+    // fail with 4401 "请求无效" (reproduced live against accounts.feishu.cn).
+    expect(FEISHU_COMMON_HEADERS['x-locale']).toBe('zh-CN');
+    expect(FEISHU_COMMON_HEADERS['x-terminal-type']).toBe('2');
+  });
+
   it('builds the console QR payload', () => {
     expect(buildFeishuQrPayload('tok')).toBe(JSON.stringify({ qrlogin: { token: 'tok' } }));
   });
@@ -363,10 +376,14 @@ describe('placeholder icon', () => {
 // ─── Profile writer ─────────────────────────────────────────────────────────
 
 describe('profile writer', () => {
-  it('creates the feishu row when missing', () => {
+  it('creates the feishu row when missing (with the repoRoots default)', () => {
     const rows = upsertFeishuConfig([], { appId: 'cli_x', appSecret: 's' });
     expect(rows).toEqual([
-      { id: 'feishu', name: '@dsh-feishu/dsh-feishu', config: { appId: 'cli_x', appSecret: 's' } },
+      {
+        id: 'feishu',
+        name: '@dsh-feishu/dsh-feishu',
+        config: { appId: 'cli_x', appSecret: 's', repoRoots: [homedir()] },
+      },
     ]);
   });
 
@@ -388,6 +405,56 @@ describe('profile writer', () => {
   it('is idempotent when credentials are unchanged', () => {
     const rows = [{ id: 'feishu', config: { appId: 'cli_x', appSecret: 's' } }];
     expect(upsertFeishuConfig(rows, { appId: 'cli_x', appSecret: 's' })).toBe(rows);
+  });
+
+  it('merges the guided options on create and on update', () => {
+    const guided = {
+      repoRoots: ['/projects'],
+      groupMentionMode: 'never' as const,
+      requireWorkingDir: false,
+    };
+    const created = upsertFeishuConfig([], { appId: 'cli_x', appSecret: 's' }, guided);
+    expect(created[0]?.config).toMatchObject({
+      appId: 'cli_x',
+      appSecret: 's',
+      repoRoots: ['/projects'],
+      groupMentionMode: 'never',
+      requireWorkingDir: false,
+    });
+    // A re-run overrides the guided keys but preserves everything else.
+    const updated = upsertFeishuConfig(
+      [
+        {
+          id: 'feishu',
+          config: { appId: 'cli_old', appSecret: 'old', allowedUsers: ['ou_a'] },
+        },
+      ],
+      { appId: 'cli_new', appSecret: 'new' },
+      { repoRoots: ['/elsewhere'], groupMentionMode: 'ambient', requireWorkingDir: true },
+    );
+    expect(updated[0]?.config).toMatchObject({
+      appId: 'cli_new',
+      appSecret: 'new',
+      repoRoots: ['/elsewhere'],
+      groupMentionMode: 'ambient',
+      requireWorkingDir: true,
+      allowedUsers: ['ou_a'],
+    });
+  });
+
+  it('reads the guided options back from existing rows', () => {
+    const rows = [
+      {
+        id: 'feishu',
+        config: { repoRoots: ['/x'], groupMentionMode: 'topic', requireWorkingDir: false },
+      },
+    ];
+    expect(readFeishuGuidedConfig(rows)).toEqual({
+      repoRoots: ['/x'],
+      groupMentionMode: 'topic',
+      requireWorkingDir: false,
+    });
+    expect(readFeishuGuidedConfig([])).toEqual({});
   });
 
   it('writes a backup and round-trips YAML', () => {
@@ -568,5 +635,24 @@ describe('configureFeishuApp', () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('event_verification_failed');
     expect(result.message).toMatch(/[Ll]ong connection/);
+  });
+});
+
+describe('setup CLI parseArgs', () => {
+  it('skips a leading -- (the pnpm run arg separator, verbatim on pnpm >= 11)', () => {
+    const opts = parseArgs(['--', '--new', '--profile', 'feishu']);
+    expect(opts.newApp).toBe(true);
+    expect(opts.profile).toBe('feishu');
+  });
+
+  it('parses the documented command shape with or without the separator', () => {
+    expect(parseArgs(['--new', '--profile', 'feishu']).profile).toBe('feishu');
+    expect(parseArgs(['--', '--list']).list).toBe(true);
+  });
+
+  it('still rejects unknown options', () => {
+    expect(() => parseArgs(['--nope'])).toThrow('unknown option: --nope');
+    // A mid-argument `--` is not the pnpm separator — it is genuinely unknown.
+    expect(() => parseArgs(['--new', '--', '--profile', 'feishu'])).toThrow('unknown option: --');
   });
 });

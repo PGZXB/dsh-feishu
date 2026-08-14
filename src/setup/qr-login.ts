@@ -11,11 +11,16 @@ import { MutableCookieJar, type StoredCookie } from './cookies.js';
 
 const FEISHU_ACCOUNTS_ORIGIN = 'https://accounts.feishu.cn';
 const FEISHU_APP_ID = '12';
-const FEISHU_COMMON_HEADERS = {
+/** Headers the Feishu accounts API requires. `x-locale` and
+ *  `x-terminal-type` are mandatory — omitting them returns 4401
+ *  "请求无效" (validated live against accounts.feishu.cn). */
+export const FEISHU_COMMON_HEADERS = {
   'x-api-version': '1.0.28',
   'x-device-info':
     'device_id=0;device_name=Chrome;device_os=Mac;device_model=Chrome;lark_version=;' +
     'channel=Release;package_name=feishu;tt_app_id=1658;is_dpop_support=true;is_iframe=false',
+  'x-locale': 'zh-CN',
+  'x-terminal-type': '2',
 };
 
 /** Terminal QR input payload: the console renders `{qrlogin:{token}}`. */
