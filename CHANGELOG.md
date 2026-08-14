@@ -129,6 +129,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`dsh plugin add` failed under pnpm ≥ 11** (user report): pnpm 11
+  blocks dependency build scripts by default, so installing the plugin
+  into a profile failed with `ERR_PNPM_IGNORED_BUILDS` (the lark SDK's
+  `protobufjs` postinstall). pnpm 11 also ignores `pnpm.*` fields in
+  package.json entirely. Documented the fix in the README quickstart and
+  pitfalls: append `--allow-build=protobufjs` to the `dsh plugin add`
+  command (dsh forwards pnpm args verbatim), or add an `allowBuilds` entry
+  to the profile's `pnpm-workspace.yaml`.
+
 - **Integration-test teardown raced the next test's state reset (CI flake
   under Node 22).** `afterEach` sent `SIGTERM` to the dsh child but did not
   wait for it to exit, so the child's lingering outbox writes could make

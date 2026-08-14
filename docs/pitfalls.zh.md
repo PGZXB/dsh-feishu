@@ -90,6 +90,12 @@ harness 沙箱（以及本 checkout 的环境）有一些特定规则：
   `minimumReleaseAge` 隔离了 `@liustack/modlens@3.11.0`，并静默安装了
   3.5.0（它缺少 `dsh.bundle`）—— 通过
   `minimumReleaseAgeExclude: ['@liustack/modlens@3.11.0']` 修复。
+- **pnpm ≥ 11 默认拦截依赖的构建脚本。** profile 里执行
+  `dsh plugin add @dsh-feishu/dsh-feishu` 会以 `ERR_PNPM_IGNORED_BUILDS`
+  失败（lark SDK 的 `protobufjs` postinstall 被拦），除非批准该构建。
+  pnpm 11 完全忽略 package.json 中的 `pnpm.*` 字段——唯一修复是
+  `pnpm add --allow-build=protobufjs`（dsh 会透传该参数）或在 profile 的
+  `pnpm-workspace.yaml` 中加入 `allowBuilds` 条目。
 - 默认 store 目录位于只读文件系统上 —— 将 `store-dir` 固定到仓库内
   （`_dev/pnpm-store`）。
 - **pnpm ≥ 11 默认 `minimumReleaseAge` 为 1440 分钟（24 小时）。** 新生成的

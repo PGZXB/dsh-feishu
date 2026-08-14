@@ -99,6 +99,13 @@ The harness sandbox (and this checkout's environment) has specific rules:
   `minimumReleaseAge` quarantined `@liustack/modlens@3.11.0` and silently
   installed 3.5.0 (which lacks `dsh.bundle`) — fix via
   `minimumReleaseAgeExclude: ['@liustack/modlens@3.11.0']`.
+- **pnpm ≥ 11 blocks dependency build scripts by default.** A profile
+  `dsh plugin add @dsh-feishu/dsh-feishu` fails with
+  `ERR_PNPM_IGNORED_BUILDS` (the lark SDK's `protobufjs` postinstall) unless
+  the build is approved. pnpm 11 ignores `pnpm.*` fields in package.json
+  entirely — the only fixes are `pnpm add --allow-build=protobufjs` (dsh
+  forwards the flag) or an `allowBuilds` entry in the profile's
+  `pnpm-workspace.yaml`.
 - The default store directory sits on a read-only fs — pin `store-dir`
   under the repo (`_dev/pnpm-store`).
 - **pnpm ≥ 11 defaults `minimumReleaseAge` to 1440 minutes (24 h).** A
