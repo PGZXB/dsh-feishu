@@ -823,6 +823,292 @@ describe('Bridge', () => {
       expect(h.transport.sentTexts.some((t) => t.text.includes('Stopping'))).toBe(true);
     });
   });
+  describe('full card state machine matrix (state × action)', () => {
+    // Every (state, action) cell: fire the action and assert the card
+    // outcome AND that the state machine did not corrupt (the single
+    // syncCard path renders from the authoritative state).
+
+    it('none × stop → restart hint', async () => {
+      const h = makeHarness();
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'stop' },
+      });
+      expect(h.transport.sentTexts.some((t) => t.text.includes('No active session'))).toBe(true);
+    });
+
+    it('none × copy → nothing to copy', async () => {
+      const h = makeHarness();
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'copy' },
+      });
+      expect(h.transport.sentTexts.some((t) => t.text.includes('Nothing to copy'))).toBe(true);
+    });
+
+    it('none × retry → nothing to retry', async () => {
+      const h = makeHarness();
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'retry' },
+      });
+      expect(h.transport.sentTexts.some((t) => t.text.includes('Nothing to retry'))).toBe(true);
+    });
+
+    it('none × panel → idle panel, no stop, no streaming-card crash', async () => {
+      const h = makeHarness();
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'panel' },
+      });
+      const panel = h.transport.sentCards.at(-1);
+      const action = panel?.elements.find((el) => el.tag === 'action');
+      const labels =
+        action && 'actions' in action
+          ? action.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
+          : [];
+      expect(labels).toEqual(['🔁 Retry last', '📋 Copy last']);
+    });
+
+    it('none × toggle → no-op (no card state)', async () => {
+      const h = makeHarness();
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'toggle-rows' },
+      });
+      expect(h.transport.updatedCards).toHaveLength(0);
+    });
+
+    it('none × row-details → ignored, no crash', async () => {
+      const h = makeHarness();
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'row-details', id: 'nope' },
+      });
+      expect(h.transport.sentCards).toHaveLength(0);
+    });
+
+    it('working × toggle flips collapse and streams; × row-details opens the row card', async () => {
+      const h = makeHarness({ throttleMs: 0 });
+      await h.bridge.handleMessage(message());
+      await h.bridge.handleEvent('feishu-session-1', {
+        type: 'tool/call',
+        seq: 1,
+        time: 0,
+        data: { turn: 0, step: 0, callId: 'call-1', name: 'bash', arguments: '{"command":"ls"}' },
+      } as unknown as SessionEvent);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      // Collapsed by default → sequence line; toggle expands while working.
+      expect(
+        h.transport.updatedCards
+          .at(-1)
+          ?.elements.some(
+            (el) => el.tag === 'markdown' && 'content' in el && el.content === 'bash',
+          ),
+      ).toBe(true);
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'toggle-rows' },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(h.transport.updatedCards.at(-1)?.elements.some((el) => el.tag === 'column_set')).toBe(
+        true,
+      );
+      // row-details while working opens the details card.
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'row-details', id: 'call-1' },
+      });
+      const details = h.transport.sentCards.find((c) => c.header?.title.content.startsWith('🔧'));
+      expect(details).toBeDefined();
+    });
+
+    it('working × copy → nothing to copy (turn not finished); × retry → new turn', async () => {
+      const h = makeHarness({ throttleMs: 0 });
+      await h.bridge.handleMessage(message());
+      await h.bridge.handleEvent('feishu-session-1', chunkEvent('partial'));
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'copy' },
+      });
+      expect(h.transport.sentTexts.some((t) => t.text.includes('Nothing to copy'))).toBe(true);
+      // Retry while a turn is live: a fresh working turn (followup #2).
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'retry' },
+      });
+      expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(2);
+      expect(h.transport.sentCards).toHaveLength(2); // fresh card
+    });
+
+    it('done × stop → idle explanation; × copy → last output; × retry → new turn', async () => {
+      const h = makeHarness({ throttleMs: 0 });
+      await h.bridge.handleMessage(message());
+      await h.bridge.handleEvent('feishu-session-1', chunkEvent('the answer'));
+      await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      h.agentStore.setStatus('feishu-session-1', 'idle');
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'stop' },
+      });
+      expect(h.transport.sentTexts.some((t) => t.text.includes('No active turn'))).toBe(true);
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'copy' },
+      });
+      expect(h.transport.sentTexts.at(-1)?.text).toBe('the answer');
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'retry' },
+      });
+      expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(2);
+    });
+
+    it('error × stop/copy/retry/panel/toggle/row-details — all safe, card stays error', async () => {
+      const h = makeHarness({ throttleMs: 0 });
+      await h.bridge.handleMessage(message());
+      await h.bridge.handleEvent('feishu-session-1', chunkEvent('oops'));
+      await h.bridge.handleEvent(
+        'feishu-session-1',
+        turnEndEvent({ kind: 'error', error: { code: 'MOCK', message: 'boom' } }) as SessionEvent,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(h.transport.updatedCards.at(-1)?.header?.template).toBe('red');
+      // stop: agent idle → explanation (not a hang).
+      h.agentStore.setStatus('feishu-session-1', 'idle');
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'stop' },
+      });
+      expect(h.transport.sentTexts.some((t) => t.text.includes('No active turn'))).toBe(true);
+      // copy: the error turn's partial text is the last output.
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'copy' },
+      });
+      expect(h.transport.sentTexts.at(-1)?.text).toBe('oops');
+      // panel → idle (no stop) while the card is still in error state.
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'panel' },
+      });
+      const panelAction = h.transport.sentCards.at(-1)?.elements.find((el) => el.tag === 'action');
+      const panelLabels =
+        panelAction && 'actions' in panelAction
+          ? panelAction.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
+          : [];
+      expect(panelLabels).toEqual(['🔁 Retry last', '📋 Copy last']);
+      // toggle → expand; the re-synced card stays red (error state intact).
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'toggle-rows' },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(h.transport.updatedCards.at(-1)?.header?.template).toBe('red');
+      // row-details with a nonexistent id → ignored, no crash.
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'row-details', id: 'missing' },
+      });
+      // retry → fresh working turn (transitions error → working).
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'retry' },
+      });
+      expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(2);
+      expect(h.transport.sentCards.at(-1)?.header?.template).toBe('blue');
+    });
+
+    it('done → new message → working (fresh card) → second done: cross-turn integrity', async () => {
+      const h = makeHarness({ throttleMs: 0 });
+      await h.bridge.handleMessage(message());
+      await h.bridge.handleEvent('feishu-session-1', chunkEvent('first answer'));
+      await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      // Second message: new turn/card, collapsed again, new content.
+      await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: 'second question' }));
+      const second = h.transport.sentCards.at(-1);
+      expect(second?.header?.title.content).toBe('second question');
+      await h.bridge.handleEvent('feishu-session-1', chunkEvent('second answer'));
+      await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(h.transport.updatedCards.at(-1)?.header?.template).toBe('green');
+      // Copy returns the SECOND answer, not the first.
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'copy' },
+      });
+      expect(h.transport.sentTexts.at(-1)?.text).toBe('second answer');
+    });
+
+    it('error → retry → working → done: full recovery cycle', async () => {
+      const h = makeHarness({ throttleMs: 0 });
+      await h.bridge.handleMessage(message());
+      await h.bridge.handleEvent('feishu-session-1', chunkEvent('partial'));
+      await h.bridge.handleEvent(
+        'feishu-session-1',
+        turnEndEvent({ kind: 'error', error: { code: 'MOCK', message: 'boom' } }) as SessionEvent,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(h.transport.updatedCards.at(-1)?.header?.template).toBe('red');
+      // Retry → working → done.
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'retry' },
+      });
+      await h.bridge.handleEvent('feishu-session-1', chunkEvent('recovered'));
+      await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(h.transport.updatedCards.at(-1)?.header?.template).toBe('green');
+      expect(h.transport.updatedCards.at(-1)?.elements).toContainEqual({
+        tag: 'markdown',
+        content: 'recovered',
+      });
+    });
+  });
   describe('group mention gate', () => {
     it('always: responds when the bot is mentioned', async () => {
       const h = makeHarness({ groupMentionMode: 'always' });
