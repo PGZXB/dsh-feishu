@@ -1,5 +1,7 @@
 # Feishu App Setup
 
+English | [中文](feishu-setup.zh.md)
+
 How to create the Feishu (Lark) custom app the surface connects as, and how
 to configure its credentials. Two paths: the **quick setup** (one QR scan,
 the Open Platform is configured automatically — recommended) and the

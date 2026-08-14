@@ -1,5 +1,7 @@
 # Architecture
 
+English | [中文](architecture.zh.md)
+
 How dsh-feishu works, iteration by iteration.
 
 ## Core identity

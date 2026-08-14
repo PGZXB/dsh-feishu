@@ -1,5 +1,7 @@
 # UX Specification
 
+English | [中文](ux-specification.zh.md)
+
 This document specifies the user-facing behavior of dsh-feishu precisely
 enough that a developer can implement each part without inventing details,
 and a user can predict what the bot will do. Every part is derived from a

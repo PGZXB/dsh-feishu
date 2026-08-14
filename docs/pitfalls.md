@@ -1,5 +1,7 @@
 # Development Pitfalls
 
+English | [中文](pitfalls.zh.md)
+
 Field notes from building this plugin — the traps that cost real hours.
 Each entry states the symptom, the root cause, and the fix. Keep this page
 updated when you hit something new.

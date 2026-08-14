@@ -1,0 +1,15 @@
+{
+  "name": "dsh-profile-feishu-example",
+  "private": true,
+  "dependencies": {
+    "@dsh-feishu/dsh-feishu": "link:../.."
+  },
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@dsh-feishu/dsh-feishu"
+      ]
+    }
+  }
+}

@@ -1,0 +1,30 @@
+# Example profile overlay for @dsh-feishu/dsh-feishu. Copy the options you
+# need into your own profile's cordis.patch.yml. Every value below is a
+# sensible default; see docs/ux-specification.md for the full command
+# surface and docs/feishu-setup.md for the Feishu app setup.
+- id: feishu
+  name: '@dsh-feishu/dsh-feishu'
+  config:
+    # appId / appSecret (or the FEISHU_APP_ID / FEISHU_APP_SECRET env vars).
+    # appId: cli_xxx
+    # appSecret: yyy
+    # Where /repo scans for candidate projects (one level deep).
+    repoRoots:
+      - /home/me/projects
+    # Optional user allowlist (ou_ open ids are app-scoped; empty = no
+    # restriction). Messages and card buttons from unlisted users are
+    # ignored entirely.
+    # allowedUsers:
+    #   - ou_xxxx
+    # Group mention policy: always | never | ambient | topic.
+    groupMentionMode: always
+    # The working-directory gate: turns are refused until /repo or /cd
+    # pins a directory. Keep true unless you want the defaultCwd fallback.
+    requireWorkingDir: true
+    # Two-stage reaction ack emojis (received -> done/error/stopped).
+    # Set received to '' to disable the ack entirely.
+    reactions:
+      received: GoGoGo
+      done: DONE
+      error: WARN
+      stopped: WARN

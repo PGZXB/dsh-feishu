@@ -1,5 +1,7 @@
 # Development Guide
 
+English | [中文](development.zh.md)
+
 Setup, build, test, and local-verification workflow for dsh-feishu.
 
 ## Prerequisites
@@ -244,8 +246,11 @@ to fix before the PR exists. If CI is red, fix in the worktree and re-push —
 GitHub re-runs checks on the new head. See AGENTS.md → "Worktree + PR
 workflow" for the end-to-end practice.
 
-## Publishing (planned)
+## Publishing
 
-Publication uses OIDC trusted publishing from a GitHub release workflow,
-mirroring the reference plugin repos (see `PLAN.md`). Details land with the
-release iteration; until then the package is private to the repository.
+Publishing is tag-driven: `node scripts/release.mjs <major|minor|patch>`
+bumps `package.json`, runs the CI gates, commits and tags `v*`; the
+[Release workflow](.github/workflows/release.yml) then publishes to npm
+(`NODE_AUTH_TOKEN` — the same registry-token pattern the DeepSeek Harness
+release workflow uses) and creates a GitHub Release. Before the first
+public release, rotate the Feishu app secret (see `SECURITY.md`).

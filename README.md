@@ -1,5 +1,7 @@
 # dsh-feishu
 
+English | [中文](README.zh.md)
+
 Feishu (Lark) as a native [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) surface.
 
 > **DSH-native — born for dsh, not bridged to it.**
@@ -16,18 +18,20 @@ watch the answer stream back as live Feishu cards. Slash commands operate
 either the surface itself (working directory, sessions, models, presets) or
 pass through to dsh's own command registry.
 
-> **Status: Iteration 1–4 complete.** Private and group chats, the streaming
-> card (tool rows, reasoning, markdown, native tables), the control panel
-> with the full command palette as buttons, session lifecycle
-> (`/sessions /resume /clear`), working-directory gating (DSH
+> **Status: Iteration 1–4 + Iteration 5 core complete.** Private and group
+> chats, the streaming card (tool rows, reasoning, markdown, native tables),
+> the control panel with the full command palette as buttons, session
+> lifecycle (`/sessions /resume /clear`), working-directory gating (DSH
 > refuses work until a repo is chosen), interactive approvals and questions
 > as cards, the dsh web command surface in-chat (`/plan /goal /compact
 > /feedback /permission`, plus surface-native `/model` and the pickers),
-> two-stage reaction ack, `allowedUsers` allowlists, and proactive
-> @-mentions in groups. Every feature ships unit + real-composition
-> integration tests (383 total; 45 against real dsh processes). See
-> [`PLAN.md`](PLAN.md) for what remains (long-session folding,
-> scheduling, multi-bot).
+> two-stage reaction ack, `allowedUsers` allowlists, proactive @-mentions in
+> groups, the `/feishu-status` diagnostic card, and scheduled reminders
+> (dsh-schedule: chat-configured, fired reminders render as `⏰ Reminder`
+> cards; `/schedule` lists them). Every feature ships unit +
+> real-composition integration tests (393 total; 46 against real dsh
+> processes). See [`PLAN.md`](PLAN.md) for what remains (Chinese
+> translations of the docs, v1 release polish).
 
 ## Why DSH-native
 
