@@ -99,6 +99,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   separator, the QR-init `x-locale` / `x-terminal-type` headers, the SDK's
   proxy-honoring default axios instance, and the custom-`httpInstance`
   response-unwrap contract.
+- **Open-source hygiene pass.** Developer-machine absolute paths in
+  `docs/development.md` / `docs/pitfalls.md` (+ zh) are now relative
+  (`$(pwd)/_dev/…`) or generic; the `docs/development.md` Release-workflow
+  link is fixed (`../.github/…`); README (+ zh) gains an npm version badge;
+  `AGENTS.md` adds a "no machine-specific details in tracked docs"
+  convention so absolute paths and ambient env values never land in
+  committed docs again.
 
 ### Fixed
 

@@ -4,6 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D22.13-339933.svg)](package.json)
+[![npm](https://img.shields.io/npm/v/@dsh-feishu/dsh-feishu)](https://www.npmjs.com/package/@dsh-feishu/dsh-feishu)
 [![CI](https://img.shields.io/github/actions/workflow/status/PGZXB/dsh-feishu/ci.yml?branch=main)](.github/workflows/ci.yml)
 
 给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）做的飞书 UI——一个 dsh 原生插件。`dsh plugin add` 装上、扫一次二维码，就能在飞书里跑你的 agent。
