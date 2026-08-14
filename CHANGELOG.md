@@ -266,3 +266,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   both layers (unit with the reported table shape; real-composition with
   a scripted table response). AGENTS.md makes "every user-reported fix
   adds a regression test" explicit. 172 tests total.
+- '目标回调服务未在线' during streaming fixed: the log pinned ErrCode
+  11310 'card table number over limit' — Feishu caps native table
+  elements at five per card, so a patch with more was rejected with a
+  400. Native tables are now capped at 5 per card; any table beyond that
+  degrades to a fenced code block (content preserved, patch never fails).
+  StreamingCardManager.flush also logs a failed patch and continues with
+  the newest snapshot instead of killing the stream. Regression tests at
+  both layers. 174 tests total.
