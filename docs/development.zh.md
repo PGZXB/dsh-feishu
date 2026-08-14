@@ -26,16 +26,16 @@ pnpm install
 
 ### 本地工具链
 
-在这台机器上，`pnpm` 不在 `PATH` 中。请使用本地安装，并把每次 pnpm 调用——包括 profile 派生出的 `pnpm`（因为 `dsh plugin` 会转发给它）——都指向 `_dev/` 下可写的 store/cache 路径：
+如果 `pnpm` 不在 `PATH` 中，请使用本地安装，并把每次 pnpm 调用——包括 profile 派生出的 `pnpm`（因为 `dsh plugin` 会转发给它）——都指向仓库 `_dev/` 下可写的 store/cache 路径：
 
 ```sh
-export PATH="/home/zhangmm23/dsh-feishu/_dev/pnpm/node_modules/.bin:$PATH"
-export npm_config_store_dir="/home/zhangmm23/dsh-feishu/_dev/pnpm-store"
-export npm_config_cache_dir="/home/zhangmm23/dsh-feishu/_dev/pnpm-cache"
-export XDG_CACHE_HOME="/home/zhangmm23/dsh-feishu/_dev/xdg-cache"  # node-gyp builds
+export PATH="$(pwd)/_dev/pnpm/node_modules/.bin:$PATH"
+export npm_config_store_dir="$(pwd)/_dev/pnpm-store"
+export npm_config_cache_dir="$(pwd)/_dev/pnpm-cache"
+export XDG_CACHE_HOME="$(pwd)/_dev/xdg-cache"  # node-gyp builds
 ```
 
-`npm_config_*` 环境变量会覆盖项目配置，因此 `dsh plugin` 内部的 `pnpm add` 会使用同一个 store，而无需编辑 profile。`XDG_CACHE_HOME` 重定向 node-gyp 的头文件缓存（这里的默认 `~/.cache/node-gyp` 位于只读挂载上）——没有它，node-pty 等原生模块将无法构建。
+`npm_config_*` 环境变量会覆盖项目配置，因此 `dsh plugin` 内部的 `pnpm add` 会使用同一个 store，而无需编辑 profile。`XDG_CACHE_HOME` 重定向 node-gyp 的头文件缓存（默认的 `~/.cache/node-gyp` 可能位于只读挂载上）——没有它，node-pty 等原生模块将无法构建。
 
 ## 质量门槛
 
@@ -173,6 +173,11 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 
 打开 PR 之前，先 rebase 到最新的 `origin/main` 并重新运行质量门槛：main 树在并发工作下会移动，在 PR 存在之前解决冲突成本最低。如果 CI 变红，在 worktree 中修复并重新 push——GitHub 会在新的 head 上重新运行 checks。端到端实践见 AGENTS.md → "Worktree + PR workflow"。
 
-## 发布（计划中）
+## 发布
 
-发布使用来自 GitHub release workflow 的 OIDC trusted publishing，与参考插件仓库保持一致（见 `PLAN.md`）。细节随发布迭代落地；在那之前，该包仅限仓库内部私有。
+发布由 tag 驱动：`node scripts/release.mjs <major|minor|patch>` 更新
+`package.json`、运行 CI 门禁、提交并打 `v*` tag；随后
+[Release workflow](../.github/workflows/release.yml) 发布到 npm
+（`NODE_AUTH_TOKEN`，沿用 DeepSeek Harness 发布 workflow 的 registry-token
+认证）并创建 GitHub Release。首次公开发布前，轮换飞书 app secret（见
+`SECURITY.md`）。

@@ -157,4 +157,3 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 - Iteration 4: robustness — folding, permissions, reconnect, observability.
 - Iteration 5: scheduled tasks/webhooks, multi-bot, `/relay`.
 
-See [PLAN.md](../PLAN.md) for the full roadmap.

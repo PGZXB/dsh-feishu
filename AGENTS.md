@@ -22,10 +22,8 @@ maps to a Feishu card).
 It is built as a dsh **bundle** (an npm package whose manifest declares
 `dsh.bundle.patch`) that rides on `@deepseek-ai/dsh-base`.
 
-The development roadmap lives in `PLAN.md` (currently the bilingual planning
-artifact; shipped docs are English only). Work proceeds in **iterations**:
-each iteration ships a coherent slice of functionality with unit tests and
-docs, and lands on `main`.
+Work proceeds in **iterations**: each iteration ships a coherent slice of
+functionality with unit tests and docs, and lands on `main`.
 
 ## Non-negotiable conventions
 
@@ -33,6 +31,14 @@ docs, and lands on `main`.
   README, `docs/`, `AGENTS.md`, and the CHANGELOG are written in English.
   Chinese documentation is provided later as separate files (e.g.
   `README.zh-CN.md`); never mix languages in one file.
+- **No machine-specific details in tracked docs.** Everything git tracks
+  becomes public once the repository is open-sourced. Never commit absolute
+  developer-machine paths (`/home/<user>/…`), ambient environment values
+  observed on one machine (e.g. a harness-exported `DSH_HOME`), or other
+  local-only state into README, `docs/`, `AGENTS.md`, or the CHANGELOG.
+  Path examples are `$(pwd)`-anchored (`_dev/…` is git-ignored local state)
+  or generic placeholders; environment anecdotes are phrased so any
+  contributor's machine applies.
 - **Every feature module ships unit tests.** A new module in `src/` must come
   with a co-located test in `tests/` covering its behavior. Fixing a bug
   first adds a failing test. No untested feature lands.
@@ -103,7 +109,6 @@ tests/                # unit + integration tests (vitest)
 docs/                 # English documentation (development, setup, architecture)
 examples/             # runnable examples (profiles, configs)
 scripts/              # repo tooling (release, verification)
-PLAN.md               # the development plan (bilingual planning artifact)
 ```
 
 - `src/` modules are small and single-purpose; each owns its behavior and
@@ -126,7 +131,8 @@ PLAN.md               # the development plan (bilingual planning artifact)
 
 ## Iterating
 
-1. Pick the next item from `PLAN.md` (current iteration).
+1. Pick the next item to work on (open issues, or as assigned by the
+   maintainer).
 2. **Spec first, then implement.** Before building a UX feature, study the
    reference implementation — botmux (`_tmp/botmux`: `im/lark/card-builder.ts`,
    `card-handler.ts`, `event-dispatcher.ts`, `services/project-scanner.ts`) and

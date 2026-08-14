@@ -12,7 +12,7 @@
  * Iteration 1: the private-chat loop — inbound messages create a per-chat
  * session, stream back as one live card per turn, and deliver the final
  * answer as a fresh message. Slash commands, group-chat mention routing,
- * approvals, and questions land in later iterations (see PLAN.md).
+ * approvals, and questions land in later iterations.
  */
 
 import { homedir } from 'node:os';

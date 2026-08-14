@@ -31,21 +31,21 @@ pnpm install
 
 ### Local toolchain
 
-On this machine `pnpm` is not on `PATH`. Use the local install and point every
-pnpm invocation — including the profile's spawned `pnpm`, since `dsh plugin`
-forwards to it — at writable store/cache paths under `_dev/`:
+If `pnpm` is not on your `PATH`, use a local install and point every pnpm
+invocation — including the profile's spawned `pnpm`, since `dsh plugin`
+forwards to it — at writable store/cache paths under the repo's `_dev/`:
 
 ```sh
-export PATH="/home/zhangmm23/dsh-feishu/_dev/pnpm/node_modules/.bin:$PATH"
-export npm_config_store_dir="/home/zhangmm23/dsh-feishu/_dev/pnpm-store"
-export npm_config_cache_dir="/home/zhangmm23/dsh-feishu/_dev/pnpm-cache"
-export XDG_CACHE_HOME="/home/zhangmm23/dsh-feishu/_dev/xdg-cache"  # node-gyp builds
+export PATH="$(pwd)/_dev/pnpm/node_modules/.bin:$PATH"
+export npm_config_store_dir="$(pwd)/_dev/pnpm-store"
+export npm_config_cache_dir="$(pwd)/_dev/pnpm-cache"
+export XDG_CACHE_HOME="$(pwd)/_dev/xdg-cache"  # node-gyp builds
 ```
 
 `npm_config_*` env vars override project config, so `dsh plugin`'s inner
 `pnpm add` uses the same store without editing the profile. `XDG_CACHE_HOME`
-redirects node-gyp's header cache (the default `~/.cache/node-gyp` sits on a
-read-only mount here) — without it native modules such as node-pty fail to
+redirects node-gyp's header cache (the default `~/.cache/node-gyp` may sit on
+a read-only mount) — without it native modules such as node-pty fail to
 build.
 
 ## Gates
@@ -250,7 +250,7 @@ workflow" for the end-to-end practice.
 
 Publishing is tag-driven: `node scripts/release.mjs <major|minor|patch>`
 bumps `package.json`, runs the CI gates, commits and tags `v*`; the
-[Release workflow](.github/workflows/release.yml) then publishes to npm
+[Release workflow](../.github/workflows/release.yml) then publishes to npm
 (`NODE_AUTH_TOKEN` — the same registry-token pattern the DeepSeek Harness
 release workflow uses) and creates a GitHub Release. Before the first
 public release, rotate the Feishu app secret (see `SECURITY.md`).

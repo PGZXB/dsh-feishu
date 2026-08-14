@@ -161,6 +161,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `toLarkCardMarkdown` / `splitTranscriptParts` helpers, and their tests are
   deleted; the restart-durability integration test now proves continuity via
   `/export` after the restart.
+- **`PLAN.md` (the bilingual planning artifact).** Retired — every planned
+  iteration has shipped, and the design content lives on in
+  `docs/architecture.md` / `docs/ux-specification.md`. References rewired
+  (`AGENTS.md`, the `src/index.ts` header comment, the architecture guides);
+  `docs/development.zh.md`'s publishing section is synced with the English
+  tag-driven release flow.
 
 ### Fixed
 

@@ -81,4 +81,3 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 - 迭代 4：健壮性——折叠、权限、重连、可观测性。
 - 迭代 5：定时任务/webhooks、多 bot、`/relay`。
 
-完整路线图见 [PLAN.md](../PLAN.md)。
