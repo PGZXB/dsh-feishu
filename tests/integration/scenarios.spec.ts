@@ -228,8 +228,17 @@ describe.skipIf(!integrationReady)('scenario integration (real process)', () => 
   /** Fail a test with the child's captured logs attached. */
   function failWithLogs(error: unknown): never {
     const tail = readOutbox()
-      .slice(-6)
-      .map((r) => `${r.seq} ${r.kind} ${r.text ?? ''} ${r.messageId ?? ''}`)
+      .slice(-8)
+      .map((r) => {
+        const card = r.card;
+        const title = card?.header?.title?.content ?? '';
+        const tpl = card?.header?.template ?? '';
+        const text = (r.text ?? '').slice(0, 80);
+        const mds = (card?.elements ?? [])
+          .filter((el): el is { tag: 'markdown'; content: string } => el.tag === 'markdown')
+          .map((el) => el.content.slice(0, 80));
+        return `${r.seq} ${r.kind} [${title}|${tpl}] ${text} ${mds.join(' ⏹ ')}`;
+      })
       .join('\n');
     throw new Error(
       `${String(error)}\n--- completions: ${mock?.completionRequests() ?? 'n/a'}\n--- outbox tail ---\n${tail}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
@@ -853,6 +862,104 @@ describe.skipIf(!integrationReady)('scenario integration (real process)', () => 
             JSON.stringify(r.card.elements).includes('Which p2p?'),
         )?.card;
       expect(JSON.stringify(p2pCard?.elements)).not.toContain('<at id=');
+    } catch (error) {
+      failWithLogs(error);
+    }
+  }, 240_000);
+
+  /** dsh-schedule end to end: the agent creates an `every` (turn 1) and an
+   *  `after` (turn 2) reminder in chat; the `after` fires ~2s later and its
+   *  turn renders as a fresh '⏰ Reminder' card; /schedule lists the
+   *  still-active `every`. The first-turn scripts are duplicated because the
+   *  per-session title-generation completion consumes one script at an
+   *  unpredictable point — the duplicated tool calls guarantee the creates. */
+  it('schedule reminders: agent-created, fires to a Reminder card, /schedule lists', async () => {
+    try {
+      mock?.setScripts([
+        [
+          {
+            toolCall: {
+              index: 0,
+              id: 'call-sched-every-1',
+              name: 'schedule_create',
+              arguments: '{"prompt":"status ping","every_seconds":300}',
+            },
+          },
+        ],
+        [
+          {
+            toolCall: {
+              index: 0,
+              id: 'call-sched-every-2',
+              name: 'schedule_create',
+              arguments: '{"prompt":"status ping","every_seconds":300}',
+            },
+          },
+        ],
+        [{ content: 'Recurring set.' }],
+        [
+          {
+            toolCall: {
+              index: 0,
+              id: 'call-sched-after-1',
+              name: 'schedule_create',
+              arguments: '{"prompt":"quick check","after_seconds":2}',
+            },
+          },
+        ],
+        [{ content: 'Quick set.' }],
+        [{ content: 'Reminder fired answer.' }],
+      ]);
+      await spawnBridge();
+      const chatId = `oc_sched_${Date.now()}`;
+      await pinWorkingDir(chatId);
+      sendMessage(chatId, 'set up a recurring reminder');
+      await waitFor(
+        'the recurring-reminder green card',
+        () =>
+          readOutbox().some(
+            (r) =>
+              r.kind === 'patch' &&
+              r.card?.header?.template === 'green' &&
+              JSON.stringify(r.card.elements).includes('Recurring set.'),
+          ),
+        90_000,
+      );
+      sendMessage(chatId, 'and a quick one');
+      await waitFor(
+        'the quick-reminder green card',
+        () =>
+          readOutbox().some(
+            (r) =>
+              r.kind === 'patch' &&
+              r.card?.header?.template === 'green' &&
+              JSON.stringify(r.card.elements).includes('Quick set.'),
+          ),
+        90_000,
+      );
+      // The after reminder fires and the agent's response streams into a
+      // fresh '⏰ Reminder' card (agent-initiated turn rendering).
+      await waitFor(
+        'the Reminder card with the fired answer',
+        () =>
+          readOutbox().some(
+            (r) =>
+              r.kind === 'patch' &&
+              r.card?.header?.title.content === '⏰ Reminder' &&
+              JSON.stringify(r.card.elements).includes('Reminder fired answer.'),
+          ),
+        60_000,
+      );
+      // /schedule lists the still-active recurring reminder.
+      sendMessage(chatId, '/schedule');
+      await waitFor(
+        'the schedule listing text',
+        () =>
+          readOutbox().some(
+            (r) => r.kind === 'text' && r.text?.includes('every 300s · status ping (scheduled)'),
+          ),
+        30_000,
+      );
     } catch (error) {
       failWithLogs(error);
     }

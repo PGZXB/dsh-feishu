@@ -692,6 +692,7 @@ export class Bridge {
     'help',
     'status',
     'feishu-status',
+    'schedule',
     'sessions',
     'cancel',
     'group',
@@ -1348,8 +1349,39 @@ export class Bridge {
   async handleEvent(sessionId: string, event: SessionEvent): Promise<void> {
     const chatId = this.options.sessionMap.chatFor(sessionId);
     if (chatId === undefined) return;
-    const state = this.cardStates.get(chatId);
-    if (state === undefined || state.status !== 'working') return;
+    let state = this.cardStates.get(chatId);
+    if (state === undefined || state.status !== 'working') {
+      // Agent-initiated turn (e.g. a fired schedule reminder): the agent
+      // injected a user message whose source is a plugin. User-initiated
+      // turns always carry a working card state already (set by deliverTurn
+      // before any event), so a card-less chat receiving a plugin-sourced
+      // user message is the surface's cue to open a fresh card — otherwise
+      // the reminder's response would render nowhere.
+      if (
+        event.type === 'user/message' &&
+        event.data.source?.kind === 'plugin' &&
+        typeof event.data.source.plugin === 'string'
+      ) {
+        const plugin = event.data.source.plugin;
+        const title = plugin === 'schedule' ? '⏰ Reminder' : `⏰ ${plugin} notification`;
+        this.cardStates.set(chatId, {
+          title,
+          content: '',
+          rows: [],
+          openThinkId: undefined,
+          status: 'working',
+          collapsed: true,
+          stopRequested: false,
+        });
+        try {
+          await this.options.cards.open(chatId, title);
+        } catch (error: unknown) {
+          this.options.logger.warn(`agent-initiated card unavailable: ${String(error)}`);
+        }
+        state = this.cardStates.get(chatId);
+      }
+      if (state === undefined || state.status !== 'working') return;
+    }
     switch (event.type) {
       case 'assistant/chunk': {
         const chunk = event.data.chunk;
@@ -2078,6 +2110,58 @@ export class Bridge {
           }),
         );
         return { kind: 'success', text: '' };
+      },
+    });
+    // /schedule: list this chat's active reminders. The dsh-schedule package
+    // is optional at runtime — dynamic import + loud degradation (the agent
+    // itself can list reminders through its schedule tools when the surface
+    // cannot).
+    this.commands.register({
+      name: 'schedule',
+      description: 'List active reminders for this chat',
+      category: 'system',
+      buttonLabel: '⏰ Reminders',
+      handler: async (invocation) => {
+        const sessionId = options.sessionMap.get(invocation.chatId);
+        if (sessionId === undefined) {
+          return { kind: 'error', text: 'no session yet — send a message first.' };
+        }
+        if (options.readSession === undefined) {
+          return {
+            kind: 'error',
+            text: 'schedule listing unavailable — the session query service is not mounted.',
+          };
+        }
+        try {
+          const { foldScheduleEvents, scheduleView } = await import('@deepseek-ai/dsh-schedule');
+          const log = await options.readSession(sessionId);
+          const folded = foldScheduleEvents(log.events as never);
+          if (folded.active.length === 0) {
+            return {
+              kind: 'success',
+              text: 'No active reminders — ask the agent to create one (e.g. “remind me in 5 minutes”).',
+            };
+          }
+          const now = Date.now();
+          const lines = folded.active.map((record) => {
+            const view = scheduleView(record, now);
+            const prompt = record.prompt === '' ? '(no prompt)' : record.prompt;
+            const rule =
+              record.kind === 'after'
+                ? `after ${record.afterSeconds}s`
+                : record.kind === 'at'
+                  ? `at ${record.scheduledAt}`
+                  : `every ${record.everySeconds}s`;
+            return `${rule} · ${prompt} (${view.state})`;
+          });
+          return { kind: 'success', text: `Active reminders:\n${lines.join('\n')}` };
+        } catch (error: unknown) {
+          this.options.logger.warn(`schedule listing unavailable: ${String(error)}`);
+          return {
+            kind: 'error',
+            text: 'schedule listing unavailable — ask the agent to list reminders instead.',
+          };
+        }
       },
     });
     this.commands.register({

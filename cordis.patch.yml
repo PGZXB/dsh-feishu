@@ -19,3 +19,10 @@
     # needs `tools` + `userQuestions`, both mounted by dsh-base above.
     - id: tool-ask-user
       name: '@deepseek-ai/dsh-tool-ask-user'
+
+    # Agent-scoped durable reminders (after / at / every): the model creates
+    # them in chat ("remind me in 5 minutes"), and a fired reminder wakes the
+    # agent, whose response the surface renders as an '⏰ Reminder' card
+    # (agent-initiated turn path in the bridge). dsh-base does not mount it.
+    - id: schedule
+      name: '@deepseek-ai/dsh-schedule'

@@ -53,6 +53,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tracked by the transport; `🧪 memory` for the test transport), session
   count, and last inbound activity. Read-only, allowed while a turn runs.
 
+- **Scheduled reminders (dsh-schedule).** The bundle mounts
+  `@deepseek-ai/dsh-schedule` (a cordis row, like tool-ask-user): the agent
+  gains `schedule_create` / `schedule_delete` / `schedule_list` tools, so
+  the user configures reminders in chat ("remind me in 5 minutes"). A fired
+  reminder wakes the agent, whose turn the bridge now renders as a fresh
+  `⏰ Reminder` card (agent-initiated turn: the surface opens a card when a
+  card-less chat receives a plugin-sourced user message; resume never
+  replays). `/schedule` (read-only) lists active reminders by folding the
+  session log. Integration test covers the full loop: agent-created every +
+  after reminders, the after firing to a Reminder card, and /schedule
+  listing the active every.
+
 ### Removed
 
 - **`/history` card replay (user decision).** The command duplicated

@@ -271,7 +271,7 @@ rounds 1–5.
 
 ## 8. Command surface
 
-### 8.1 Command set (19 commands: 14 surface + 5 web wrappers)
+### 8.1 Command set (20 commands: 15 surface + 5 web wrappers)
 
 Every command is a `SurfaceCommand`: one handler shared by the slash line
 and the panel button (button = command, botmux `/list-slash-command`
@@ -287,6 +287,7 @@ palette idea). `category` groups the panel palette.
 | `/group [<name>]` | chat | create a group with the bot and sender |
 | `/sessions` | session | session list card (title/id/cwd/age/live/saved), paginated, per-row Resume buttons |
 | `/feishu-status` | system | **surface diagnostic card**: app id, live long-connection state (`✅ ready` / `⚠️ reconnecting` / `❌ error`, `🧪 memory` for the test transport), session count, last inbound activity. Read-only (allowed while a turn runs) |
+| `/schedule` | system | list this chat's **active reminders** (folding the session log with the dsh-schedule pure functions; degraded to a hint when the package is absent). Reminders are created in chat by the agent through its `schedule_create`/`schedule_delete`/`schedule_list` tools — no surface command needed |
 | `/model` | system | **model picker card** (catalog from `ctx.llm` `listProviders` × `listModels`, current preselected); a pick sets the default for new sessions. `/model <provider>/<model>` sets it directly. Surface-native — the web `/model` is a client popup with no host command |
 | `/export` | system | send this chat's session log as a **file message** (`session-<id>.md` markdown transcript from `ctx.sessionQuery.readSession`) — the Feishu equivalent of the web's browser-download `/export` |
 | `/panel` | system | open the control panel card from any chat (slash line only — its palette button is hidden, since a palette button that opens the panel would be the panel launching itself) |
@@ -362,7 +363,7 @@ repo before DSH works there (user requirement). `requireWorkingDir`
 ### 8.4 Working-state gate (state-machine rule)
 
 While a turn is running (`cardStates[chatId].status === 'working'`), only
-read-only commands may run: `/help`, `/status`, `/feishu-status`, `/sessions`
+read-only commands may run: `/help`, `/status`, `/feishu-status`, `/schedule`, `/sessions`
 (read state), `/cancel` (the stop itself), `/group` (separate chat),
 `/model` (picker — picks are refused mid-turn, but opening it is fine),
 `/panel` (the panel carries Stop). Every other command —
@@ -515,3 +516,29 @@ failed` notice, an approval card, or a question card — the post carries an
 `@`-mention of that requester: `<at user_id="…"></at>` in text messages,
 `<at id="…"></at>` in card markdown (botmux-proven syntaxes). p2p chats get
 no mention (single-user; noise). Unknown requester → no mention, gracefully.
+
+## 11. Scheduled reminders (dsh-schedule)
+
+Reference: `@deepseek-ai/dsh-schedule` (agent-scoped durable reminders over
+the session event log). dsh-base does not mount it — the bundle adds the
+`schedule` cordis row, so the agent gets the `schedule_create` /
+`schedule_delete` / `schedule_list` tools.
+
+### 11.1 Chat-native configuration
+
+"Remind me in 5 minutes" / "remind me at 9:00 daily" — the user asks in
+chat and the agent calls the schedule tools; no surface command is needed.
+`every` reminders have a 5-minute floor; `after`/`at` are one-shot. Tools
+are installed for root agents created after the plugin loads, so existing
+chats gain them on a fresh session (/clear or a new chat).
+
+### 11.2 Agent-initiated turns render as cards
+
+A fired reminder wakes the agent, which injects a `user/message` whose
+`source.kind` is `'plugin'` (`plugin: 'schedule'`). The bridge keys on
+that marker: a card-less chat receiving a plugin-sourced user message is
+an **agent-initiated turn** — the surface opens a fresh `⏰ Reminder` card
+and renders the response to completion (green). User-initiated turns are
+untouched (their working card state exists before any event); a resume
+never replays history (historical user messages carry `source.kind:
+'user'`). `/schedule` lists active reminders by folding the session log.

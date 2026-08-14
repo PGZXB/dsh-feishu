@@ -52,7 +52,8 @@
     "@deepseek-ai/dsh-credentials": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-session": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-user-approval": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-user-questions": "^0.1.0-rc.6"
+    "@deepseek-ai/dsh-user-questions": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-schedule": "^0.1.0-rc.6"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.7",
@@ -70,7 +71,8 @@
     "@types/node": "^22.15.0",
     "@types/qrcode-terminal": "^0.12.2",
     "typescript": "^5.9.3",
-    "vitest": "^3.2.7"
+    "vitest": "^3.2.7",
+    "@deepseek-ai/dsh-schedule": "^0.1.0-rc.6"
   },
   "dsh": {
     "bundle": {
