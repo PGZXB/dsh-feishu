@@ -176,3 +176,16 @@ The harness sandbox (and this checkout's environment) has specific rules:
 - Each mock completion request must consume the script exactly once —
   consuming in both the error check and the stream writer doubles
   consumption and silently shifts every subsequent scripted response.
+
+## Commit hygiene: local "green" vs CI green
+
+- `pnpm run lint` runs `biome check src tests` — the exact CI command.
+  `biome check --write` (the local convenience) applies only SAFE fixes;
+  unsafe diagnostics (`lint/style/useTemplate`, `lint/complexity/useIndexOf`)
+  stay in the tree and make plain `check` fail. If local work used
+  `--write`, still run `pnpm run lint` and check the exit code before
+  committing — a CI failure shipped here because the final gate only read
+  the last output line (`Found 3 infos.`) instead of the exit status.
+- Rule: before every commit, run `pnpm run lint`, `pnpm run typecheck`,
+  `pnpm run test`, `pnpm run build` and confirm each exits 0 — never trust
+  an output tail or a `--write` run as the lint verdict.

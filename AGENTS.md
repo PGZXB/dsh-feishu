@@ -143,7 +143,58 @@ PLAN.md               # the development plan (bilingual planning artifact)
    hand the user a checklist of what to confirm, not a debugging session. The
    developer absorbs the iteration cost, not the user.
 6. Update the relevant `docs/` page and the CHANGELOG.
-7. Run all gates; commit with a Conventional Commit message.
+7. **Run all gates exactly as CI does and check every exit code.**
+   `pnpm run lint` IS `biome check src tests` — the CI command — not
+   `biome check --write`; `--write` only applies safe fixes and silently
+   leaves unsafe ones (useTemplate, useIndexOf, …) as CI errors. Piping
+   output or reading only the tail can mask a non-zero exit: run
+   `pnpm run lint`, `pnpm run typecheck`, `pnpm run test`,
+   `pnpm run build` and confirm each returns 0 before committing with a
+   Conventional Commit message.
+
+## Lessons learned (field-proven on real devices)
+
+These rules came from real bugs; each has a regression test and a
+`docs/pitfalls.md` entry. Follow them in new code.
+
+- **Service seams are structural and match the REAL service shape.** We do
+  not depend on harness packages at runtime (`ctx.get(name)`), but the seam
+  must mirror the actual surface — getters vs methods matter
+  (`ctx.permissionPresets.names` is a GETTER, not `names()`; `current`
+  takes `events`, `set` takes `session`). Wrong shapes typecheck fine and
+  blow up at runtime ("events is not iterable", "names is not a function").
+  Read the installed `.d.ts` before writing the seam.
+- **Some web commands have no host implementation.** `/export` and `/model`
+  are client-side contributions (a browser download observer, a
+  `commandUi.popupSelect`). Check the harness source for "Web-only" before
+  promising a command; implement a surface-native equivalent instead
+  (`/model` with a picker card from `ctx.llm.listModels`).
+- **A button that only passes through is a broken button.** Commands with a
+  choice or toggle dimension must be state-aware: `/permission` opens a
+  preset picker (dropdown, `initial_option` preselected), bare `/plan`
+  toggles through `ctx.planMode`, `/model` opens a model picker. Empty
+  rawInput must never be the only behavior a button offers.
+- **Working-directory availability is an explicit product state.** A chat
+  with no pinned cwd (/repo or /cd) refuses turns with guidance —
+  `defaultCwd` is a fallback, never an implicit choice. New features that
+  change chat state (resume!) must adopt the working directory or they get
+  stuck behind the gate.
+- **One gate, not patches.** If a guard is unreachable through the surface,
+  don't duplicate it (`retry` cannot fire unpinned — the deliverTurn gate
+  is the single source of truth).
+- **Test-side state is part of the test.** Integration tests share the
+  real profile; a test that writes settings (`/model` save, /permission)
+  must restore them. Message-id collisions (`Date.now()` as an id) and
+  waitFor predicates that match ANY chat's reply are real bugs that
+  produce flaky, confusing failures — unique ids, filter by chatId.
+- **Every new session fires a title-generation completion.** Don't assert
+  exact LLM completion counts per turn; assert card contents instead.
+- **A local "green" is not CI green.** `biome check --write` auto-fixes
+  only safe diagnostics; unsafe ones (template literals, `indexOf` over
+  `findIndex`) remain and fail plain `biome check` — which is exactly what
+  `pnpm run lint` and CI run. Always run the exact CI commands and verify
+  their exit codes, not the output tail (a real CI failure shipped because
+  the last local gate only looked at the last output line).
 
 When in doubt about a dsh API, read the installed package's `lib/types/*.d.ts`
 in the dsh installation, or the upstream source under a checkout of
