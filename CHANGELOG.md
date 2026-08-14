@@ -81,23 +81,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **README overhaul.** Rebuilt around the finalized positioning — *The Feishu
-  UI for DeepSeek Harness (dsh)*: a "Why DSH-native" narrative (no bridge/no
-  capture, full transparency, everything-is-a-card), a Mermaid surface-model
-  diagram (dsh-base ← patch layer → browser surface (web) / Feishu surface
-  (this)) with web-parity evidence (the same `ctx.permissionPresets` /
-  `ctx.planMode` services), a verified section (installable via `dsh plugin
-  add`, 346 unit + 47 real-process integration tests, CI never skips
-  integration), a "See it work" wall with concrete selling points (the
-  answer finalizes in place on the card — no second bubble; tap Allow once
-  to continue; one QR scan creates + configures + publishes the app), a
-  5-minute quickstart, a feature table, and Contributing/security links.
-  The gallery is semantically complete as text (every interaction is
-  described in words) with screenshot slots as placeholders awaiting real
-  user-captured Feishu client screenshots (see `_dev/readme-briefing.md`);
-  no test-rendered mockups and no broken image links. Badges: license and
-  Node (static, always render), CI (renders once the repository is public).
-  `package.json` gains a description and keywords for npm discoverability.
+- **README overhaul.** Rebuilt around the finalized positioning — *The
+  Feishu UI for DeepSeek Harness (dsh)* — and kept deliberately minimal:
+  hero + one-line web-parity evidence (the same `ctx.permissionPresets` /
+  `ctx.planMode` / `ctx.agentDefaultModel` services as the web UI), a
+  4-step quickstart (install → one-QR setup wizard, which writes the
+  credentials itself — no manual env vars needed for new apps; env vars
+  documented for existing apps), a compact feature list, and a one-line
+  test note (346 unit + 47 real-process integration, CI never skips).
+  Badges: license and Node (static), CI (renders once the repository is
+  public). `package.json` gains a description and keywords. Screenshots
+  are deferred — `docs/screenshot-checklist.md` + `docs/assets/` stage the
+  eleven planned captures for a gallery added once real shots exist; no
+  test-rendered mockups, no broken image links.
 
 ### Removed
 

@@ -1,11 +1,12 @@
 # Screenshot checklist (README gallery)
 
-The README's "See it work" section has eleven image slots. Each shot must be
-a **real capture of the real bot in the real Feishu client** — never a
-test-rendered mockup (this is a hard rule for the project's public material).
-When a shot is ready, drop it into `docs/assets/` with the exact file name
-below and replace the matching `<!-- docs/assets/… -->` comment in
-`README.md` with a markdown image; verify the file exists before committing.
+The README currently stays text-only and minimal. Once these shots exist,
+a compact "See it work" gallery section is added to the README (each shot
+below maps to one caption). Each capture must be a **real shot of the real
+bot in the real Feishu client** — never a test-rendered mockup (a hard rule
+for the project's public material). Drop files into `docs/assets/` with the
+exact names below, insert the markdown images, and verify every referenced
+file exists before committing.
 
 ## Checklist
 
