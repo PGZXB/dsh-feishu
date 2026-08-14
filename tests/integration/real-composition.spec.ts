@@ -18,7 +18,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { MemoryOutboxRecord } from '../../src/memory-transport.js';
 import { type MockLlmServer, startMockLlmServer } from './mock-llm-server.js';
 
@@ -79,6 +79,16 @@ async function waitFor(
 const dshBin = resolveDshBin();
 const profileReady = existsSync(join(PROFILE_DIR, 'package.json'));
 const built = existsSync(join(REPO_ROOT, 'lib', 'index.js'));
+const ACTIONS_DIR = join(MEMORY_DIR, 'actions');
+
+/** Write one card action into the actions channel for the spawned process. */
+function writeAction(action: unknown): void {
+  writeFileSync(
+    join(ACTIONS_DIR, `act-${Date.now()}-${Math.random().toString(36).slice(2)}.json`),
+    JSON.stringify(action),
+    'utf8',
+  );
+}
 
 describe.skipIf(!dshBin || !profileReady || !built)('real-composition integration', () => {
   let mock: MockLlmServer | undefined;
@@ -87,17 +97,23 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
   let stderr = '';
   let bridgeReady = false;
 
-  beforeAll(async () => {
+  beforeEach(async () => {
+    if (mock !== undefined) await mock.close();
+    if (child !== undefined && child.exitCode === null) child.kill('SIGTERM');
     rmSync(MEMORY_DIR, { recursive: true, force: true });
     mkdirSync(INBOX_DIR, { recursive: true });
+    mkdirSync(ACTIONS_DIR, { recursive: true });
     mkdirSync(OUTBOX_DIR, { recursive: true });
     mock = await startMockLlmServer();
+    child = undefined;
+    bridgeReady = false;
+    stdout = '';
+    stderr = '';
   });
 
-  afterAll(async () => {
+  afterEach(async () => {
     if (child !== undefined && child.exitCode === null) child.kill('SIGTERM');
     if (mock !== undefined) await mock.close();
-    rmSync(MEMORY_DIR, { recursive: true, force: true });
   });
 
   it('runs one full private-chat turn: card posted, patched, final answer delivered', async () => {
@@ -168,4 +184,152 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
       );
     }
   }, 150_000);
+
+  it('automated UX state machine: tool rows, collapse toggle, details, reassert', async () => {
+    const bin = dshBin;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    const server = mock;
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      // Scripted tool-calling turn: reasoning delta opens a think row, a bash
+      // tool call opens a tool row, then the post-tool request answers.
+      server.setScripts([
+        [
+          { reasoning: 'Let me check the files.' },
+          {
+            toolCall: { index: 0, id: 'call-ux-1', name: 'bash', arguments: '{"command":"ls"}' },
+          },
+        ],
+        [{ content: 'Final UX answer.' }],
+      ]);
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_ux_${Date.now()}`;
+      writeFileSync(
+        join(INBOX_DIR, `om-ux-1.json`),
+        JSON.stringify({
+          messageId: `om-ux-${Date.now()}`,
+          chatId,
+          chatType: 'p2p',
+          senderOpenId: 'ou_mock',
+          text: 'run the UX automation check',
+          createdAt: Date.now(),
+        }),
+        'utf8',
+      );
+
+      // Turn completes: final card patch is green.
+      await waitFor(
+        'the green final card patch',
+        () => readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'green'),
+        90_000,
+      );
+
+      // The streaming card is the first card sent (message id mem-1).
+      // Collapsed by default → the sequence line 'think -> bash'.
+      const patches = readOutbox().filter((r) => r.kind === 'patch');
+      const finalCard = patches.at(-1)?.card;
+      expect(
+        finalCard?.elements.some(
+          (el) => el.tag === 'markdown' && 'content' in el && el.content === 'think -> bash',
+        ),
+      ).toBe(true);
+
+      // Expand → full rows visible (column_set row elements).
+      const patchCountBeforeExpand = readOutbox().filter((r) => r.kind === 'patch').length;
+      writeAction({
+        messageId: 'mem-1',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'toggle-rows' },
+      });
+      await waitFor(
+        'the expanded card patch',
+        () => {
+          const all = readOutbox().filter((r) => r.kind === 'patch');
+          const last = all.at(-1)?.card;
+          return (
+            all.length > patchCountBeforeExpand &&
+            last?.elements.some((el) => el.tag === 'column_set') === true
+          );
+        },
+        30_000,
+      );
+
+      // Open row details → details card sent (a separate sendCard) and the
+      // streaming card is re-asserted (still expanded — not collapsed).
+      const cardsBeforeDetails = readOutbox().filter((r) => r.kind === 'card').length;
+      writeAction({
+        messageId: 'mem-1',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'row-details', id: 'call-ux-1' },
+      });
+      await waitFor(
+        'the details card',
+        () => readOutbox().filter((r) => r.kind === 'card').length > cardsBeforeDetails,
+        30_000,
+      );
+      // The reassert patch keeps the card expanded (column_set present).
+      await waitFor(
+        'the reasserted expanded card',
+        () => {
+          const all = readOutbox().filter((r) => r.kind === 'patch');
+          const last = all.at(-1)?.card;
+          return last?.elements.some((el) => el.tag === 'column_set') === true;
+        },
+        30_000,
+      );
+      const detailCard = readOutbox()
+        .filter((r) => r.kind === 'card')
+        .at(-1)?.card;
+      expect(JSON.stringify(detailCard?.elements)).toContain('IN');
+      expect(JSON.stringify(detailCard?.elements)).toContain('OUT');
+
+      // Collapse again → back to the sequence line.
+      writeAction({
+        messageId: 'mem-1',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'toggle-rows' },
+      });
+      await waitFor(
+        'the collapsed card patch',
+        () => {
+          const all = readOutbox().filter((r) => r.kind === 'patch');
+          const last = all.at(-1)?.card;
+          return (
+            last?.elements.some(
+              (el) => el.tag === 'markdown' && 'content' in el && el.content === 'think -> bash',
+            ) === true
+          );
+        },
+        30_000,
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 180_000);
 });

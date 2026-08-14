@@ -4,13 +4,28 @@
  * The real dsh agent loop talks to the DeepSeek adapter, which resolves its
  * endpoint from `$DEEPSEEK_BASE_URL`. Pointing that at this server lets a
  * real agent turn run end to end with only the external LLM API mocked (the
- * policy allows mocking external/nondeterministic services). The server
- * answers a canned SSE completion stream and a minimal model catalog.
+ * policy allows mocking external/nondeterministic services).
+ *
+ * The default response is a canned text completion. A scripted
+ * tool-calling script (set via `setScript`) emits OpenAI-compatible
+ * `reasoning_content` + `tool_calls` SSE deltas so the adapter produces
+ * reasoning blocks and tool-call chunks — the wire input that makes the
+ * surface render think rows and tool rows on the streaming card.
  *
  * @module tests/integration/mock-llm-server
  */
 
-import { createServer, type Server } from 'node:http';
+import { createServer, type Server, type ServerResponse } from 'node:http';
+
+/** One SSE chunk of a scripted response. */
+export interface MockScriptChunk {
+  /** `reasoning_content` delta (think rows). */
+  reasoning?: string;
+  /** `content` delta (visible text). */
+  content?: string;
+  /** `tool_calls` delta fragments. */
+  toolCall?: { index: number; id: string; name: string; arguments: string };
+}
 
 /** A running mock server. */
 export interface MockLlmServer {
@@ -20,10 +35,16 @@ export interface MockLlmServer {
   close(): Promise<void>;
   /** Number of /chat/completions requests served (for assertions). */
   completionRequests(): number;
+  /**
+   * Serve one scripted response per completion request, in order. The agent
+   * loop issues a new completion request after each tool result, so a
+   * tool-calling turn needs two entries (tool call, then final answer).
+   */
+  setScripts(scripts: readonly (readonly MockScriptChunk[])[]): void;
 }
 
-function sseChunk(content: string, finish = false): string {
-  const delta = finish ? {} : { content };
+function sseChunk(delta: Record<string, unknown>, finish = false): string {
+  const body = finish ? {} : delta;
   return (
     'data: ' +
     JSON.stringify({
@@ -31,15 +52,61 @@ function sseChunk(content: string, finish = false): string {
       object: 'chat.completion.chunk',
       created: 0,
       model: 'deepseek-v4-flash',
-      choices: [{ index: 0, delta, finish_reason: finish ? 'stop' : null }],
+      choices: [{ index: 0, delta: body, finish_reason: finish ? 'stop' : null }],
     }) +
     '\n\n'
   );
 }
 
+function sseToolCallDelta(index: number, id: string, name: string, argumentsDelta: string): string {
+  return sseChunk({
+    tool_calls: [{ index, id, type: 'function', function: { name, arguments: argumentsDelta } }],
+  });
+}
+
 /** Start a mock DeepSeek API server on a random local port. */
 export async function startMockLlmServer(): Promise<MockLlmServer> {
   let completions = 0;
+  let scripts: readonly (readonly MockScriptChunk[])[] | undefined;
+
+  /** Stream one scripted response: reasoning, a tool call, then the answer. */
+  function writeScripted(res: ServerResponse): void {
+    const script = scripts?.[0];
+    if (scripts !== undefined && scripts.length > 1) scripts = scripts.slice(1);
+    if (script === undefined || script.length === 0) {
+      res.write(sseChunk({ content: 'Hello from mock LLM ' }));
+      res.write(sseChunk({ content: '— integration ok' }, true));
+      return;
+    }
+    const parts = [...script];
+    const firstReasoning = { seen: false };
+    for (const part of parts) {
+      if (part.reasoning !== undefined) {
+        // The adapter treats the first reasoning delta specially (empty
+        // string opens the block); emit an opening marker once.
+        if (!firstReasoning.seen) {
+          res.write(sseChunk({ reasoning_content: '' }));
+          firstReasoning.seen = true;
+        }
+        res.write(sseChunk({ reasoning_content: part.reasoning }));
+      }
+      if (part.content !== undefined) {
+        res.write(sseChunk({ content: part.content }));
+      }
+      if (part.toolCall !== undefined) {
+        res.write(
+          sseToolCallDelta(
+            part.toolCall.index,
+            part.toolCall.id,
+            part.toolCall.name,
+            part.toolCall.arguments,
+          ),
+        );
+      }
+    }
+    res.write(sseChunk({}, true));
+  }
+
   const server: Server = createServer((req, res) => {
     const url = req.url ?? '';
     if (req.method === 'POST' && url === '/chat/completions') {
@@ -51,8 +118,7 @@ export async function startMockLlmServer(): Promise<MockLlmServer> {
         'cache-control': 'no-cache',
         connection: 'keep-alive',
       });
-      res.write(sseChunk('Hello from mock LLM '));
-      res.write(sseChunk('— integration ok', true));
+      writeScripted(res);
       res.end('data: [DONE]\n\n');
       return;
     }
@@ -79,5 +145,8 @@ export async function startMockLlmServer(): Promise<MockLlmServer> {
         server.close(() => resolve());
       }),
     completionRequests: () => completions,
+    setScripts: (next) => {
+      scripts = next;
+    },
   };
 }

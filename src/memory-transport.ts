@@ -8,6 +8,10 @@
  *
  * - `inbox/` — drop `<messageId>.json` files here; each is delivered to the
  *   bridge as one {@link FeishuMessage} (file removed after delivery).
+ * - `actions/` — drop `<actionId>.json` files here; each is delivered to the
+ *   bridge as one {@link CardAction} (file removed after delivery). This
+ *   lets an integration test drive card buttons (toggle, details, stop)
+ *   against the real spawned process, not just same-process.
  * - `outbox/` — every send/update is recorded as `<seq>.json` in
  *   {@link MemoryOutboxRecord} shape, oldest first.
  *
@@ -63,11 +67,13 @@ export class MemoryTransport implements FeishuTransport {
   private readonly stats: ChatStats | undefined;
   private seq = 0;
   private readonly inboxDir: string;
+  private readonly actionsDir: string;
   private readonly outboxDir: string;
   private readonly pollIntervalMs: number;
 
   constructor(options: MemoryTransportOptions) {
     this.inboxDir = join(options.dir, 'inbox');
+    this.actionsDir = join(options.dir, 'actions');
     this.outboxDir = join(options.dir, 'outbox');
     this.pollIntervalMs = options.pollIntervalMs ?? 200;
     this.botOpenId = options.botOpenId;
@@ -89,11 +95,15 @@ export class MemoryTransport implements FeishuTransport {
     return { chatId: `oc_group_${name.replace(/[^a-z0-9_-]/gi, '')}` };
   }
 
-  /** Create the directories and begin polling the inbox. */
+  /** Create the directories and begin polling the inbox and actions. */
   async start(): Promise<void> {
     mkdirSync(this.inboxDir, { recursive: true });
+    mkdirSync(this.actionsDir, { recursive: true });
     mkdirSync(this.outboxDir, { recursive: true });
-    this.timer = setInterval(() => this.drainInbox(), this.pollIntervalMs);
+    this.timer = setInterval(() => {
+      this.drainInbox();
+      this.drainActions();
+    }, this.pollIntervalMs);
   }
 
   /** Stop polling the inbox. */
@@ -174,6 +184,27 @@ export class MemoryTransport implements FeishuTransport {
         this.handler?.(message);
       } catch {
         // Malformed inbox file: drop it rather than redelivering forever.
+      } finally {
+        rmSync(path, { force: true });
+      }
+    }
+  }
+
+  /** Deliver every pending action file to the handler, then remove it. */
+  private drainActions(): void {
+    let files: string[];
+    try {
+      files = readdirSync(this.actionsDir).filter((file) => file.endsWith('.json'));
+    } catch {
+      return;
+    }
+    for (const file of files) {
+      const path = join(this.actionsDir, file);
+      try {
+        const action = JSON.parse(readFileSync(path, 'utf8')) as CardAction;
+        this.actionHandler?.(action);
+      } catch {
+        // Malformed action file: drop it rather than redelivering forever.
       } finally {
         rmSync(path, { force: true });
       }

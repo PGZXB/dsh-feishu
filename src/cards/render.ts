@@ -344,14 +344,12 @@ export function rowLine(row: TurnRow): string {
 
 /**
  * The minimal collapsed sequence for a turn: row names joined with
- * ` -> ` (`think -> bash -> read -> …`). Think rows read "think", tool
- * rows read their tool name; the sequence is capped for a single line.
+ * ` -> ` (`think -> bash -> read`). Think rows read "think", tool rows read
+ * their tool name. The full sequence is shown — no truncation.
  */
-export function collapseSequence(rows: readonly TurnRow[], max = 12): string {
+export function collapseSequence(rows: readonly TurnRow[]): string {
   const names = rows.map((row) => stripAngleBrackets(row.kind === 'think' ? 'think' : row.name));
-  const shown = names.slice(0, max);
-  const suffix = names.length > max ? ' …' : '';
-  return shown.join(' -> ') + suffix;
+  return names.join(' -> ');
 }
 
 /** One card row: the line text plus its expand button (opens row details). */

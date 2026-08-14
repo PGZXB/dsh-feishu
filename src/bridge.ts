@@ -682,6 +682,10 @@ export class Bridge {
           break;
         }
         await this.options.transport.sendCard(action.chatId, buildRowDetailsCard(row));
+        // Re-assert the streaming card after the callback (botmux rule):
+        // Lark can restore the pre-click card when the callback completes,
+        // which would otherwise drop the user's expanded view.
+        this.reassertStreamingCard(action.chatId);
         break;
       }
       case 'toggle-rows': {
@@ -698,14 +702,17 @@ export class Bridge {
         const snapshot = this.lastSnapshots.get(action.chatId);
         const messageId = this.options.cards.lastMessageId(action.chatId);
         if (snapshot !== undefined && messageId !== undefined) {
-          try {
-            await this.options.transport.updateCard(
-              messageId,
-              buildCard({ ...snapshot, collapsed }),
-            );
-          } catch (error: unknown) {
-            this.options.logger.warn(`rows toggle update failed: ${String(error)}`);
-          }
+          // Defer the patch out of the card callback (botmux rule): Lark
+          // applies the callback completion AFTER an awaited message.patch
+          // and can restore the pre-click card, making the toggle flash and
+          // disappear. A macrotask lets the ACK land first.
+          setTimeout(() => {
+            void this.options.transport
+              .updateCard(messageId, buildCard({ ...snapshot, collapsed }))
+              .catch((error: unknown) => {
+                this.options.logger.warn(`rows toggle update failed: ${String(error)}`);
+              });
+          }, 0);
         }
         break;
       }
@@ -871,5 +878,24 @@ export class Bridge {
       status: turn.status,
     };
     this.options.cards.patch(chatId, snapshot);
+  }
+
+  /**
+   * Re-assert the streaming card's current snapshot after a card action
+   * (botmux rule): Lark applies the callback completion after the action and
+   * can restore the pre-click card, dropping user state like an expanded row
+   * view. Deferred via a macrotask so the callback ACK lands first.
+   */
+  private reassertStreamingCard(chatId: string): void {
+    const snapshot = this.lastSnapshots.get(chatId);
+    const messageId = this.options.cards.lastMessageId(chatId);
+    if (snapshot === undefined || messageId === undefined) return;
+    setTimeout(() => {
+      void this.options.transport
+        .updateCard(messageId, buildCard({ ...snapshot, collapsed: this.collapsed(chatId) }))
+        .catch((error: unknown) => {
+          this.options.logger.warn(`streaming card reassert failed: ${String(error)}`);
+        });
+    }, 0);
   }
 }

@@ -360,6 +360,7 @@ describe('Bridge', () => {
       operatorOpenId: 'ou_user',
       value: { kind: 'toggle-rows' },
     });
+    await new Promise((resolve) => setTimeout(resolve, 0));
     const expanded = h.transport.updatedCards.at(-1);
     const row = expanded?.elements.find((el) => el.tag === 'column_set');
     const text = row?.tag === 'column_set' ? row.columns[0]?.elements[0] : undefined;
@@ -485,6 +486,7 @@ describe('Bridge', () => {
       operatorOpenId: 'ou_user',
       value: { kind: 'toggle-rows' },
     });
+    await new Promise((resolve) => setTimeout(resolve, 0));
     const expanded = h.transport.updatedCards.at(-1);
     expect(h.transport.updatedCards.length).toBe(before + 1);
     expect(expanded?.elements.some((el) => el.tag === 'column_set')).toBe(true);
@@ -495,6 +497,7 @@ describe('Bridge', () => {
       operatorOpenId: 'ou_user',
       value: { kind: 'toggle-rows' },
     });
+    await new Promise((resolve) => setTimeout(resolve, 0));
     const collapsed = h.transport.updatedCards.at(-1);
     expect(
       collapsed?.elements.some(
@@ -812,5 +815,107 @@ describe('working directory commands', () => {
     } else {
       expect.fail('expected a dropdown picker card');
     }
+  });
+});
+
+describe('UX state machine (bug 2 regression)', () => {
+  it('opening row details in expanded state must not collapse the streaming card', async () => {
+    const h = makeHarness({ throttleMs: 0 });
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleEvent('feishu-session-1', {
+      type: 'tool/call',
+      seq: 1,
+      time: 0,
+      data: { turn: 0, step: 0, callId: 'call-1', name: 'bash', arguments: '{"command":"ls"}' },
+    } as unknown as SessionEvent);
+    await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Expand the finished card.
+    await h.bridge.handleCardAction({
+      messageId: 'msg-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'toggle-rows' },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const expanded = h.transport.updatedCards.at(-1);
+    expect(expanded?.elements.some((el) => el.tag === 'column_set')).toBe(true);
+    // Open details of the tool row — the streaming card is re-asserted
+    // (deferred) so the callback-completion restore cannot collapse it.
+    const beforeDetails = h.transport.updatedCards.length;
+    await h.bridge.handleCardAction({
+      messageId: 'msg-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'row-details', id: 'call-1' },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const detailSent = h.transport.sentCards.find((c) => c.header?.title.content.startsWith('🔧'));
+    expect(detailSent).toBeDefined();
+    const afterDetails = h.transport.updatedCards.at(-1);
+    expect(h.transport.updatedCards.length).toBe(beforeDetails + 1);
+    // The reasserted streaming card is still the EXPANDED one.
+    expect(afterDetails?.elements.some((el) => el.tag === 'column_set')).toBe(true);
+    expect(
+      afterDetails?.elements.some(
+        (el) => el.tag === 'markdown' && 'content' in el && el.content === 'bash',
+      ),
+    ).toBe(false);
+  });
+
+  it('toggle-rows round-trips collapsed -> expanded -> collapsed without re-rendering on row-details', async () => {
+    const h = makeHarness({ throttleMs: 0 });
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleEvent('feishu-session-1', {
+      type: 'tool/call',
+      seq: 1,
+      time: 0,
+      data: { turn: 0, step: 0, callId: 'call-1', name: 'bash', arguments: '{"command":"ls"}' },
+    } as unknown as SessionEvent);
+    await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Collapsed by default.
+    expect(
+      h.transport.updatedCards
+        .at(-1)
+        ?.elements.some((el) => el.tag === 'markdown' && 'content' in el && el.content === 'bash'),
+    ).toBe(true);
+    // Expand.
+    await h.bridge.handleCardAction({
+      messageId: 'msg-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'toggle-rows' },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.transport.updatedCards.at(-1)?.elements.some((el) => el.tag === 'column_set')).toBe(
+      true,
+    );
+    // Details click re-asserts the streaming card (expanded stays expanded).
+    const beforeDetails = h.transport.updatedCards.length;
+    await h.bridge.handleCardAction({
+      messageId: 'msg-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'row-details', id: 'call-1' },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.transport.updatedCards.length).toBe(beforeDetails + 1);
+    expect(h.transport.updatedCards.at(-1)?.elements.some((el) => el.tag === 'column_set')).toBe(
+      true,
+    );
+    // Collapse again.
+    await h.bridge.handleCardAction({
+      messageId: 'msg-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'toggle-rows' },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(
+      h.transport.updatedCards
+        .at(-1)
+        ?.elements.some((el) => el.tag === 'markdown' && 'content' in el && el.content === 'bash'),
+    ).toBe(true);
   });
 });

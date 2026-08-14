@@ -140,7 +140,7 @@ describe('collapseSequence', () => {
     expect(collapseSequence(rows)).toBe('think -> bash -> read');
   });
 
-  it('caps long sequences with an ellipsis', () => {
+  it('shows the full sequence — no truncation (feedback)', () => {
     const rows = Array.from({ length: 15 }, (_, i) => ({
       kind: 'tool' as const,
       id: `c${i}`,
@@ -150,8 +150,10 @@ describe('collapseSequence', () => {
       args: '',
       result: '',
     }));
-    const seq = collapseSequence(rows, 3);
-    expect(seq).toBe('t0 -> t1 -> t2 …');
+    const seq = collapseSequence(rows);
+    expect(seq).toBe(
+      't0 -> t1 -> t2 -> t3 -> t4 -> t5 -> t6 -> t7 -> t8 -> t9 -> t10 -> t11 -> t12 -> t13 -> t14',
+    );
   });
 });
 
