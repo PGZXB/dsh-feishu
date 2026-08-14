@@ -46,6 +46,14 @@ jobs:
           DSH_HOME: ${{ github.workspace }}/_dev/dsh-home
         run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
 
+      # The scenario suite (tests/integration/scenarios.spec.ts) boots its
+      # own dsh home so it never races the primary suite's session map while
+      # vitest runs the two integration files in parallel.
+      - name: Prepare scenario integration-test profile
+        env:
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-scenarios
+        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
+
       # FEISHU_INT_REQUIRED turns a missing prerequisite (dsh CLI, profile,
       # build) into a hard failure instead of the local graceful skip.
       - name: Test (unit + integration)
