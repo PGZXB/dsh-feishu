@@ -208,3 +208,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     drives the full UX state machine against a real spawned dsh process —
     no Feishu app, no manual screenshots.
   - 145 tests total.
+- UX audit round — state-aware controls + full interaction matrix:
+  - Stop is now state-aware: running → cancel + `⏹ Stopping…`; idle →
+    `No active turn to stop — the last turn already finished.` (the
+    user-reported hang: done → panel → Stop current → "Stopping…" then
+    nothing — agent.cancel on an idle agent is a documented no-op);
+    no session → restart hint.
+  - Panel shows the Stop button only while a turn is running; the status
+    line reflects Running / Ready / Idle.
+  - Copy/retry with nothing to act on explain instead of silently no-op.
+  - Unknown card actions are logged and ignored without crashing.
+  - Lifecycle: a second message during a running turn opens a fresh card;
+    stop mid-turn then a new message recovers.
+  - Tests: card-action interaction matrix (idle stop, empty copy/retry,
+    running vs idle panel, unknown kind, no-session panel, mid-turn
+    second message, stop-then-recover) + integration assertion that a
+    stop on a finished real turn yields the explanation and never
+    "Stopping…". 155 unit + 2 real-composition integration tests.
