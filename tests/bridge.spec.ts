@@ -552,8 +552,8 @@ describe('Bridge', () => {
     // The chat is rebound to a fresh session id so the next message starts clean.
     expect(h.sessionMap.get('oc_chat')).toBe('feishu-session-2');
   });
-  it('stop action cancels the live agent and acknowledges', async () => {
-    const h = makeHarness();
+  it('stop action cancels the live agent and marks the card Stopping', async () => {
+    const h = makeHarness({ throttleMs: 0 });
     await h.bridge.handleMessage(message());
     await h.bridge.handleCardAction({
       messageId: 'mem-1',
@@ -562,7 +562,17 @@ describe('Bridge', () => {
       value: { kind: 'stop' },
     });
     expect(h.agentStore.cancels).toEqual(['feishu-session-1']);
-    expect(h.transport.sentTexts.some((t) => t.text.includes('Stopping'))).toBe(true);
+    // The card shows the in-progress Stopping state — no standalone text
+    // bubble (user report: the '⏹ Stopping…' message was unnecessary).
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.transport.sentTexts.some((t) => t.text.includes('Stopping'))).toBe(false);
+    expect(
+      h.transport.updatedCards
+        .at(-1)
+        ?.elements.some(
+          (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('Stopping'),
+        ),
+    ).toBe(true);
   });
 
   it('stop on a stale card (no live agent) explains instead of silently ignoring', async () => {
@@ -722,7 +732,16 @@ describe('Bridge', () => {
         operatorOpenId: 'ou_user',
         value: { kind: 'stop' },
       });
-      expect(h.transport.sentTexts.some((t) => t.text.includes('Stopping'))).toBe(true);
+      // The card shows the in-progress Stopping state (no text bubble).
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(h.transport.sentTexts.some((t) => t.text.includes('Stopping'))).toBe(false);
+      expect(
+        h.transport.updatedCards
+          .at(-1)
+          ?.elements.some(
+            (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('Stopping'),
+          ),
+      ).toBe(true);
       // The agent aborts → turn/end with kind 'aborted'.
       await h.bridge.handleEvent(
         'feishu-session-1',
@@ -864,8 +883,8 @@ describe('Bridge', () => {
       await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: 'again' }));
       expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(2);
     });
-    it('stop while running still cancels and acknowledges', async () => {
-      const h = makeHarness();
+    it('stop while running still cancels and marks the card Stopping', async () => {
+      const h = makeHarness({ throttleMs: 0 });
       await h.bridge.handleMessage(message());
       h.agentStore.setStatus('feishu-session-1', 'running');
       await h.bridge.handleCardAction({
@@ -875,7 +894,15 @@ describe('Bridge', () => {
         value: { kind: 'stop' },
       });
       expect(h.agentStore.cancels).toEqual(['feishu-session-1']);
-      expect(h.transport.sentTexts.some((t) => t.text.includes('Stopping'))).toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(h.transport.sentTexts.some((t) => t.text.includes('Stopping'))).toBe(false);
+      expect(
+        h.transport.updatedCards
+          .at(-1)
+          ?.elements.some(
+            (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('Stopping'),
+          ),
+      ).toBe(true);
     });
   });
   describe('full card state machine matrix (state × action)', () => {

@@ -590,7 +590,10 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
         30_000,
       );
 
-      // Stop while running → cancel + '⏹ Stopping…' text.
+      // Stop while running → cancel. The card settles to the terminal
+      // Stopped state (orange); the intermediate 'Stopping' may flash or be
+      // skipped depending on how fast the abort converges (unit-tested).
+      // There must be NO standalone '⏹ Stopping…' text bubble (user report).
       writeAction({
         messageId: 'mem-1',
         chatId,
@@ -598,9 +601,15 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
         value: { kind: 'stop' },
       });
       await waitFor(
-        'the Stopping acknowledgement',
-        () => readOutbox().some((r) => r.kind === 'text' && r.text?.includes('Stopping')),
+        'the stopped (orange) card',
+        () =>
+          readOutbox()
+            .filter((r) => r.kind === 'patch')
+            .some((r) => r.card?.header?.template === 'orange'),
         30_000,
+      );
+      expect(readOutbox().some((r) => r.kind === 'text' && r.text?.includes('Stopping'))).toBe(
+        false,
       );
 
       // Release the held response. The aborted turn may or may not emit a

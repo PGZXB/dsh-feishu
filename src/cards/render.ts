@@ -66,6 +66,8 @@ export interface CardSnapshot {
   readonly cwd?: string;
   /** Collapse the row sequence to one `think -> tool -> …` line. */
   readonly collapsed?: boolean;
+  /** The user pressed Stop; show an in-progress Stopping state. */
+  readonly stopRequested?: boolean;
   readonly status: CardStatus;
 }
 
@@ -413,7 +415,8 @@ export function buildCard(snapshot: CardSnapshot): CardJson {
   if (body !== '') {
     elements.push(...markdownToElements(body));
   }
-  if (snapshot.status !== 'working' || elements.length === 0) {
+  const stopping = snapshot.stopRequested === true && snapshot.status === 'working';
+  if (snapshot.status !== 'working' || stopping || elements.length === 0) {
     elements.push({ tag: 'hr' });
     const statusLine =
       snapshot.status === 'error'
@@ -422,7 +425,9 @@ export function buildCard(snapshot: CardSnapshot): CardJson {
           ? '**⏹ Stopped**'
           : snapshot.status === 'done'
             ? '**✅ Done**'
-            : '**… working**';
+            : stopping
+              ? '**⏹ Stopping…**'
+              : '**… working**';
     elements.push({ tag: 'markdown', content: statusLine });
   }
   elements.push(statusButtons(snapshot.status, snapshot.rows.length > 0, collapsed));

@@ -131,6 +131,9 @@ interface ChatCardState {
   status: CardStatus;
   /** Collapsed row sequence (per-chat; flips via toggle-rows). */
   collapsed: boolean;
+  /** The user pressed Stop; the card shows an in-progress Stopping state
+   *  until turn/end(aborted) settles it to `stopped`. */
+  stopRequested: boolean;
 }
 
 const MAX_TITLE_CHARS = 40;
@@ -328,6 +331,7 @@ export class Bridge {
       openThinkId: undefined,
       status: 'working',
       collapsed: true,
+      stopRequested: false,
     });
     // A failed card post must not block the turn: the final answer message
     // is the text fallback (patches simply no-op without an active card).
@@ -533,11 +537,16 @@ export class Bridge {
           this.options.logger.info(`turn completed for chat ${chatId}`);
         }
         settleOpenThink(state);
-        // working → done|error: the state stays in the map (the card keeps
-        // its rows/content for the ⋯ buttons and re-sync); only status moves.
+        // working → done|stopped|error: the state stays in the map (the
+        // card keeps its rows/content for the ⋯ buttons and re-sync); only
+        // status moves.
         state.status = status;
-        // finalize flushes the pending working snapshot with the terminal
-        // status — the single terminal render of the state machine.
+        state.stopRequested = false;
+        // Stage the terminal snapshot from the authoritative state, then
+        // finalize flushes it. (finalize alone only renders when a pending
+        // snapshot exists — after the last working patch was flushed there
+        // is none, and the card would keep the stale working render.)
+        this.options.cards.patch(chatId, this.snapshot(chatId, state));
         await this.options.cards.finalize(chatId, status);
         const finalText = state.content.trim();
         if (finalText !== '') this.lastOutputs.set(chatId, finalText);
@@ -596,8 +605,14 @@ export class Bridge {
         // turn/driver. keepInbox preserves queued work for the next turn.
         agent.cancel({ kind: 'user' }, { keepInbox: true });
         this.options.logger.info(`stop requested for chat ${action.chatId}`);
-        // Visible acknowledgment — a silent stop reads as "not working".
-        await this.options.transport.sendText(action.chatId, '⏹ Stopping…');
+        // The card carries the acknowledgment: mark it Stopping and
+        // re-render — no separate text bubble (user report: the standalone
+        // '⏹ Stopping…' message was unnecessary).
+        const state = this.cardStates.get(action.chatId);
+        if (state !== undefined && state.status === 'working') {
+          state.stopRequested = true;
+          this.syncCard(action.chatId);
+        }
         break;
       }
       case 'copy': {
@@ -632,6 +647,7 @@ export class Bridge {
           openThinkId: undefined,
           status: 'working',
           collapsed: true,
+          stopRequested: false,
         });
         try {
           await this.options.cards.open(action.chatId, turnTitle(prompt));
@@ -924,6 +940,7 @@ export class Bridge {
       rows: state.rows,
       cwd: this.options.sessionMap.cwdFor(chatId) ?? this.options.defaultCwd,
       collapsed: state.collapsed,
+      stopRequested: state.stopRequested,
       status: state.status,
     };
   }
