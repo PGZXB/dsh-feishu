@@ -18,10 +18,12 @@
 import {
   Client,
   EventDispatcher,
+  type HttpInstance,
   type RawCardActionEvent,
   type RawMessageEvent,
   WSClient,
 } from '@larksuiteoapi/node-sdk';
+import axios from 'axios';
 import type {
   CardAction,
   CardJson,
@@ -30,6 +32,39 @@ import type {
   FeishuTransport,
   SentCard,
 } from './feishu/types.js';
+
+/**
+ * The HTTP instance the SDK's `Client` and `WSClient` use for every Feishu
+ * call (REST + WS endpoint discovery).
+ *
+ * Two things the SDK's own `defaultHttpInstance` does that a bare axios
+ * instance does not:
+ * - its response interceptor unwraps `resp.data` (the JSON body) so
+ *   `request()` resolves to `{code, data, msg}` — the SDK's callers
+ *   destructure those fields directly (WS endpoint discovery fails with
+ *   `code: undefined` otherwise); and
+ * - the proxy: the default instance honors `http_proxy`/`https_proxy` env
+ *   vars, which breaks both flows behind a proxy — follow-redirects dies
+ *   with `Protocol "https:" not supported. Expected "http:"` (user report).
+ *   Feishu is reached directly, so the proxy is disabled here.
+ *
+ * Both are mirrored below so this instance is a drop-in replacement.
+ */
+export const FEISHU_HTTP = axios.create({ proxy: false });
+FEISHU_HTTP.interceptors.request.use(
+  (req) => {
+    if (req.headers && !req.headers['User-Agent']) req.headers['User-Agent'] = 'dsh-feishu';
+    return req;
+  },
+  undefined,
+  { synchronous: true },
+);
+FEISHU_HTTP.interceptors.response.use((resp) => {
+  if ((resp.config as unknown as { $return_headers?: boolean })['$return_headers']) {
+    return { data: resp.data, headers: resp.headers };
+  }
+  return resp.data;
+});
 
 /** Minimal logger surface the transport needs. */
 export interface TransportLogger {
@@ -156,12 +191,17 @@ export class LarkTransport implements FeishuTransport {
   constructor(options: LarkTransportOptions) {
     const { appId, appSecret } = options.credentials;
     this.logger = options.logger;
-    this.client = new Client({ appId, appSecret });
+    // axios's overloaded `request` doesn't satisfy the SDK's structural
+    // `HttpInstance` statically (the SDK's own default is an AxiosInstance,
+    // so the cast is safe at runtime).
+    const httpInstance = FEISHU_HTTP as unknown as HttpInstance;
+    this.client = new Client({ appId, appSecret, httpInstance });
     this.ws = new WSClient({
       appId,
       appSecret,
       autoReconnect: true,
       handshakeTimeoutMs: 15_000,
+      httpInstance,
       onReady: () => {
         this.connectionStateValue = 'ready';
         this.logger?.info('feishu long connection ready');

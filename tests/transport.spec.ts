@@ -6,7 +6,12 @@
 
 import type { RawMessageEvent } from '@larksuiteoapi/node-sdk';
 import { describe, expect, it } from 'vitest';
-import { FeishuApiError, normalizeCardAction, normalizeMessageEvent } from '../src/transport.js';
+import {
+  FEISHU_HTTP,
+  FeishuApiError,
+  normalizeCardAction,
+  normalizeMessageEvent,
+} from '../src/transport.js';
 
 /** A minimal raw event with the fields the normalizer reads. */
 function rawEvent(
@@ -133,5 +138,32 @@ describe('FeishuApiError', () => {
     expect(error.name).toBe('FeishuApiError');
     expect(error.code).toBe(23);
     expect(error.message).toContain('rate limited');
+  });
+});
+
+describe('FEISHU_HTTP (SDK http instance)', () => {
+  it('disables the proxy (regression: env proxies broke SDK calls)', () => {
+    // The SDK's default axios instance honors http(s)_proxy env vars, which
+    // crashes follow-redirects with "Protocol https: not supported" behind a
+    // proxy (user report: WS endpoint discovery failed). The shared Feishu
+    // instance must have the proxy disabled.
+    expect(FEISHU_HTTP.defaults.proxy).toBe(false);
+  });
+
+  it('unwraps the response body like the SDK default (regression: code: undefined)', () => {
+    // The SDK's callers destructure {code, data, msg} straight off
+    // httpInstance.request(); a bare axios instance resolves to the
+    // AxiosResponse wrapper and the WS endpoint discovery fails with
+    // code=undefined. The response interceptor must return resp.data.
+    const unwrap = FEISHU_HTTP.interceptors.response.handlers?.[0]?.fulfilled as (resp: {
+      data: unknown;
+      headers?: unknown;
+      config: { $return_headers?: boolean };
+    }) => unknown;
+    expect(unwrap({ data: { code: 0, msg: 'ok' }, config: {} })).toEqual({ code: 0, msg: 'ok' });
+    // The $return_headers passthrough the SDK relies on for downloads.
+    expect(
+      unwrap({ data: 'file', headers: { h: '1' }, config: { $return_headers: true } }),
+    ).toEqual({ data: 'file', headers: { h: '1' } });
   });
 });

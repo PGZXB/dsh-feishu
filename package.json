@@ -43,7 +43,8 @@
     "@larksuiteoapi/node-sdk": "^1.73.0",
     "js-yaml": "^5.2.3",
     "markdown-it": "^15.0.0",
-    "qrcode-terminal": "^0.12.0"
+    "qrcode-terminal": "^0.12.0",
+    "axios": "^1.7.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
