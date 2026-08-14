@@ -110,6 +110,29 @@ export type CardElement =
       readonly actions: readonly (ButtonAction | SelectAction)[];
     }
   | {
+      readonly tag: 'table';
+      /** Max data rows per page; Feishu supports [1, 10], default 5. */
+      readonly page_size?: number;
+      readonly row_height?: 'low' | 'medium' | 'high';
+      readonly header_style?: {
+        readonly text_align?: 'left' | 'center' | 'right';
+        readonly text_size?: 'normal' | 'notation_small' | 'notation' | 'paragraph';
+        readonly background_style?: 'none' | 'grey' | 'blue' | 'green' | 'red' | 'yellow';
+        readonly text_color?: 'default' | 'grey' | 'blue' | 'green' | 'red' | 'yellow';
+        readonly bold?: boolean;
+        readonly lines?: number;
+      };
+      /** Column definitions; at most 50 columns are rendered. */
+      readonly columns: readonly {
+        readonly name: string;
+        readonly display_name: string;
+        readonly width?: 'auto' | 'default' | number;
+        readonly data_type?: 'text' | 'lark_md';
+      }[];
+      /** Data rows; each maps column names to cell content. */
+      readonly rows: readonly Record<string, string>[];
+    }
+  | {
       readonly tag: 'note';
       readonly elements: readonly { readonly tag: 'plain_text'; readonly content: string }[];
     }

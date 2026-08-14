@@ -191,11 +191,14 @@ Feishu lark_md supports a subset of CommonMark. Our converter:
   would leak as text);
 - fenced code blocks → preserved (blank-line normalized);
 - `---` → `hr` element;
-- tables → fall back to source lines (a native table widget is deferred);
+- GFM tables → native Feishu `table` element (botmux
+  `buildTableFromTokens`; the v1 root-elements layout supports `table` —
+  root-level only, matching our card shape; lark_md cells keep inline code
+  and bold). Raw `| … |` source text never leaks;
 - HTML → stripped (`html: false`).
 
 This is why final answers render (feedback round 1: raw `###` text on the
-card was the bug).
+card was the bug; round 8: tables showed raw pipe text).
 
 ---
 

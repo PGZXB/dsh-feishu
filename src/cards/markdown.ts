@@ -6,8 +6,9 @@
  * NOT supported — they leak through as literal raw text (the exact bug
  * reported on the streaming card's final output). This module parses with
  * markdown-it and re-emits the content as card elements: headings become
- * bold lines, fences stay fenced, `hr` becomes an `hr` element, and tables
- * fall back to their source lines. Semantics mirror botmux's
+ * bold lines, fences stay fenced, `hr` becomes an `hr` element, and GFM
+ * tables become native Feishu `table` elements (v1 layout supports them —
+ * root-level only, matching our card shape). Semantics mirror botmux's
  * `buildMarkdownElements` (markdown-it based, blank-line-normalized so
  * fences adjacent to prose still render).
  *
@@ -19,6 +20,91 @@ import MarkdownIt from 'markdown-it';
 import type { CardElement } from '../feishu/types.js';
 
 const md = new MarkdownIt({ html: false, linkify: false, breaks: false });
+
+/** Build a Feishu native `table` element from a GFM table token slice
+ *  (botmux `buildTableFromTokens`): the header row defines columns, body
+ *  rows map column names to cell text (lark_md cells so inline code/bold
+ *  render). Returns `undefined` when the table has no header.
+ */
+function buildTableFromTokens(tokens: readonly Token[]): CardElement | undefined {
+  const headerCells: string[] = [];
+  const bodyRows: string[][] = [];
+  let inHead = false;
+  let inBody = false;
+  let currentRow: string[] | null = null;
+  let inCell = false;
+
+  for (const token of tokens) {
+    switch (token.type) {
+      case 'thead_open':
+        inHead = true;
+        break;
+      case 'thead_close':
+        inHead = false;
+        break;
+      case 'tbody_open':
+        inBody = true;
+        break;
+      case 'tbody_close':
+        inBody = false;
+        break;
+      case 'tr_open':
+        currentRow = [];
+        break;
+      case 'tr_close':
+        if (inBody && currentRow !== null) bodyRows.push(currentRow);
+        currentRow = null;
+        break;
+      case 'th_open':
+      case 'td_open':
+        inCell = true;
+        break;
+      case 'th_close':
+      case 'td_close':
+        inCell = false;
+        break;
+      case 'inline':
+        if (inCell && currentRow !== null) {
+          if (inHead) headerCells.push(token.content);
+          else currentRow.push(token.content);
+        }
+        break;
+      default:
+        break;
+    }
+  }
+
+  if (headerCells.length === 0) return undefined;
+
+  const columns = headerCells.map((header, index) => ({
+    name: `c${index}`,
+    display_name: header || ' ',
+    data_type: 'lark_md' as const,
+    width: 'auto' as const,
+  }));
+  const rows = bodyRows.map((row) => {
+    const record: Record<string, string> = {};
+    for (let i = 0; i < headerCells.length; i += 1) {
+      record[`c${i}`] = row[i] ?? '';
+    }
+    return record;
+  });
+  return {
+    tag: 'table' as const,
+    page_size: Math.min(10, Math.max(1, rows.length || 1)),
+    row_height: 'low' as const,
+    header_style: {
+      text_align: 'left' as const,
+      text_size: 'normal' as const,
+      background_style: 'grey' as const,
+      text_color: 'default' as const,
+      bold: true,
+      lines: 1,
+    },
+    columns,
+    rows,
+  };
+}
 
 /** Index of the token that closes the block opened at `openIndex`. */
 function findMatchingClose(tokens: readonly Token[], openIndex: number): number {
@@ -92,6 +178,15 @@ export function markdownToElements(input: string): CardElement[] {
       flushBuf();
       elements.push({ tag: 'hr' });
       i += 1;
+      continue;
+    }
+
+    if (token.type === 'table_open') {
+      flushBuf();
+      const close = findMatchingClose(tokens, i);
+      const table = buildTableFromTokens(tokens.slice(i, close + 1));
+      if (table !== undefined) elements.push(table);
+      i = close + 1;
       continue;
     }
 

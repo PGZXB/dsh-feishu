@@ -325,6 +325,30 @@ describe('markdownToElements', () => {
     expect(elements.some((el) => el.tag === 'hr')).toBe(true);
   });
 
+  it('renders GFM tables as native Feishu table elements, not raw pipes', () => {
+    // Regression: tables previously fell back to their source lines, so the
+    // final card showed raw '| 路径 | 内容 |' text (user report).
+    const table = `| 路径 | 内容 |
+|---|---|
+| \`Agent4AVR/\` | 主代码包 |
+| \`Agent4AVR/main.py\` | 入口：加载数据集 |
+| \`results/\` | Lite/Full 的 \`preds.json\` |`;
+    const elements = markdownToElements(table);
+    const tableElement = elements.find(
+      (el): el is Extract<CardElement, { tag: 'table' }> => el.tag === 'table',
+    );
+    expect(tableElement).toBeDefined();
+    expect(tableElement?.columns.map((c) => c.display_name)).toEqual(['路径', '内容']);
+    expect(tableElement?.rows).toHaveLength(3);
+    expect(tableElement?.rows[0]?.c0).toContain('Agent4AVR/');
+    expect(tableElement?.rows[2]?.c1).toContain('preds.json');
+    // No raw pipe text leaks into markdown elements.
+    const markdowns = elements.filter(
+      (el): el is Extract<CardElement, { tag: 'markdown' }> => el.tag === 'markdown',
+    );
+    expect(markdowns.every((el) => !el.content.includes('|'))).toBe(true);
+  });
+
   it('returns an empty array for empty input', () => {
     expect(markdownToElements('')).toEqual([]);
   });

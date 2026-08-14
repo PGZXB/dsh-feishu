@@ -459,6 +459,73 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
     }
   }, 180_000);
 
+  it('markdown tables render as native table elements on the streaming card', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      server.setScripts([
+        [{ content: '| 路径 | 内容 |\n|---|---|\n| `src/` | 源码 |\n| `docs/` | 文档 |' }],
+      ]);
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_table_${Date.now()}`;
+      sendMessage(chatId, 'show me a table');
+
+      // The final card patch carries a native table element, not raw pipes.
+      await waitFor(
+        'the table element on the card',
+        () =>
+          readOutbox()
+            .filter((r) => r.kind === 'patch')
+            .some((r) => {
+              const elements = r.card?.elements ?? [];
+              return elements.some((el) => el.tag === 'table');
+            }),
+        90_000,
+      );
+      const finalCard = readOutbox()
+        .filter((r) => r.kind === 'patch')
+        .at(-1)?.card;
+      const table = finalCard?.elements.find((el) => el.tag === 'table');
+      expect(table && 'columns' in table ? table.columns.map((c) => c.display_name) : []).toEqual([
+        '路径',
+        '内容',
+      ]);
+      expect(table && 'rows' in table ? table.rows : []).toHaveLength(2);
+      // No raw pipe text leaks into markdown elements.
+      const markdowns = (finalCard?.elements ?? []).filter(
+        (el): el is Extract<typeof el, { tag: 'markdown' }> => el.tag === 'markdown',
+      );
+      expect(markdowns.every((el) => !el.content.includes('|'))).toBe(true);
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 180_000);
+
   it('stop while running cancels; stop after finish explains; panel reflects state', async () => {
     const bin = dshBin;
     const server = mock;

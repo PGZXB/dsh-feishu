@@ -136,8 +136,9 @@ PLAN.md               # the development plan (bilingual planning artifact)
    with fakes for fast iteration AND (b) a real-composition integration test
    (`tests/integration/real-composition.spec.ts`: real dsh process, memory
    transport, mock LLM) — fakes prove our logic, the real process proves the
-   agent's actual state transitions. Fixing a bug first adds a failing test at
-   the layer that exposed it.
+   agent's actual state transitions. **Every user-reported issue fix adds a
+   regression test** (at the layer that exposed it — unit, integration, or
+   both) before the fix is committed; a fix without a new test is incomplete.
 5. **Verify before asking the user to verify.** Run the full matrix yourself;
    hand the user a checklist of what to confirm, not a debugging session. The
    developer absorbs the iteration cost, not the user.
