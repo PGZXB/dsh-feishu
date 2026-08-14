@@ -13,6 +13,9 @@
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
+  "bin": {
+    "dsh-feishu-setup": "lib/setup/cli.js"
+  },
   "files": [
     "lib",
     "cordis.patch.yml",
@@ -31,13 +34,16 @@
     "format": "biome format --write src tests",
     "test": "vitest run",
     "test:watch": "vitest",
+    "setup:feishu": "node scripts/setup-feishu.mjs",
     "prepublishOnly": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build"
   },
   "dependencies": {
     "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
     "@deepseek-ai/schemastery": "^3.18.1",
     "@larksuiteoapi/node-sdk": "^1.73.0",
-    "markdown-it": "^15.0.0"
+    "js-yaml": "^5.2.3",
+    "markdown-it": "^15.0.0",
+    "qrcode-terminal": "^0.12.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
@@ -59,8 +65,10 @@
     "@deepseek-ai/dsh-session": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-user-approval": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-user-questions": "^0.1.0-rc.6",
+    "@types/js-yaml": "^4.0.9",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^22.15.0",
+    "@types/qrcode-terminal": "^0.12.2",
     "typescript": "^5.9.3",
     "vitest": "^3.2.7"
   },

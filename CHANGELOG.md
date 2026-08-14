@@ -15,7 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`session-<id>.md`) built from `ctx.sessionQuery.readSession` via
   `im.v1.file.create` → `msg_type: 'file'`. `FeishuTransport` gains
   `sendFile`; the memory transport records `kind: 'file'` outbox entries.
-  No truncation — the file is not bound by the card cap.
+  No truncation — the file is not bound by the card cap. (New scope
+  `im:resource` — see the permissions manifest below.)
 - **`ask_user_question` tool mounted (web parity).** The web surface
   exposes the standard `@deepseek-ai/dsh-tool-ask-user` tool through its
   standard/code agent presets; this bundle now inserts the same tool row
@@ -27,6 +28,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ask_user_question` posts a question card and an option tap feeds the
   answer back into the turn. Tests: 308 (was 299).
 
+- **Feishu quick setup (botmux-style Open Platform automation).** One QR scan
+  now creates/configures the app end to end: `pnpm run setup:feishu` drives
+  the console over a reusable Web session (`src/setup/*`, entry
+  `scripts/setup-feishu.mjs` + `dsh-feishu-setup` bin) — creates a
+  企业自建应用, enables the bot, subscribes `im.message.receive_v1` +
+  `card.action.trigger` in long-connection mode (read-back verified,
+  fail-closed), grants the scopes listed in
+  `src/setup/feishu-manifest.json` (currently `im:message`,
+  `im:message:send_as_bot`, `im:chat`, `im:resource` — the single source of
+  truth for the automation, the manual fallback, and the setup docs),
+  publishes a "visible to me only" version (instant approval), and writes
+  `appId`/`appSecret` into the profile's `cordis.patch.yml` (backed up).
+  `--no-open-platform-auto` keeps the manual paste-credentials path; the
+  credentials are validated against the Feishu API first. 34 unit tests cover
+  the cookie jar, session file, QR helpers, payload builders, response
+  extractors, the fail-closed verification, the profile writer, and the
+  configure flow driven through a fake fetcher.
 
 - **Agent workflow documentation.** `AGENTS.md` gains a "Worktree + PR
   workflow" section (work in a git worktree under `_dev/`, verify gates with
