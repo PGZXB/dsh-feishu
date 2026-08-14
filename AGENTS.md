@@ -39,6 +39,13 @@ docs, and lands on `main`.
 - **Write docs promptly after a feature.** Completing a feature updates the
   relevant `docs/` page(s) and the CHANGELOG in the same change. No feature
   lands without its documentation.
+- **Feishu permissions manifest, kept in sync in the same change.** Any
+  feature that needs a new Feishu scope, event, or card callback updates
+  `src/setup/feishu-manifest.json` — the single source of truth for the
+  quick-setup automation (`pnpm run setup:feishu`), its manual fallback, and
+  `docs/feishu-setup.md` — IN THE SAME change. The setup tool grants exactly
+  what that file lists; an unlisted scope is a bot that silently cannot do
+  the feature. Example: `/export` (file messages) added `im:resource`.
 - **Registrations are effects.** Every contribution goes through `ctx.on()` /
   `ctx.effect()`; a registry's `register()` returns a disposer, and tests
   verify disposal where a registry is involved.

@@ -129,6 +129,10 @@ inject a fake message by writing a JSON file into
 The bundle must mount into a real dsh profile. Use an isolated `DSH_HOME` so
 the verification never touches a production profile:
 
+> For creating/configuring the Feishu app itself — one QR scan, no
+> web-console work — see `docs/feishu-setup.md` → "Quick setup"
+> (`pnpm run setup:feishu`).
+
 ```sh
 # From the checkout root:
 export DSH_HOME="$(pwd)/_dev/dsh-home"   # git-ignored
