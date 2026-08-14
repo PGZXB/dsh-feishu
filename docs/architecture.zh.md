@@ -48,14 +48,14 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 | `src/cards/session-list.ts` | `/sessions` 选择器卡片：带每行 Resume 按钮的分页行（纯渲染）。 |
 | `src/cards/streaming.ts` | 每轮一张卡片：打开时 POST，节流/合并的 `message.patch` 更新，终态 finalize。 |
 | `src/cards/interactions.ts` | 由审批和提问共享的 pending-interaction 注册表：仅解析一次、超时、过期回调拒绝、中止、释放。 |
-| `src/bridge.ts` | 编排器：消息 → session → `agent.followup`；`session/event` → 卡片 patch；回合结束 → 就地 finalize。agent 解析阶梯：live → 恢复已映射 session → 新建 → 冲突时重绑新 id。拥有 surface 命令注册表（17 个已注册，16 个在调色板中——`/panel` 隐藏）、卡片状态机（`ChatCardState` + 单一 `syncCard` 路径）、工作状态和工作目录 gate、session 生命周期（`/sessions /resume /clear`），以及交互式审批/提问流程（渲染在 `render.ts`，结算经由 `interactions.ts`）。 |
+| `src/bridge.ts` | 编排器：消息 → session → `agent.followup`；`session/event` → 卡片 patch；回合结束 → 就地 finalize。agent 解析阶梯：live → 恢复已映射 session → 新建 → 冲突时重绑新 id。拥有 surface 命令注册表（20 个已注册，19 个在调色板中——`/panel` 隐藏）、卡片状态机（`ChatCardState` + 单一 `syncCard` 路径）、工作状态和工作目录 gate、session 生命周期（`/sessions /resume /clear`），以及交互式审批/提问流程（渲染在 `render.ts`，结算经由 `interactions.ts`）。 |
 | `src/index.ts` | 插件入口：配置、凭据解析、agent 选项（配置或 `agentDefaultModel`）、接线、`feishu-status` 命令。 |
 
 ## 关键行为
 
-- **带按钮对等的斜杠命令。** 所有 surface 命令（`/help /status /cancel /cd /repo /group /sessions /resume /clear /new /model`，外加五个 dsh web 包装 `/plan /goal /compact /feedback /permission`，以及 `/panel`——仅斜杠，其调色板按钮隐藏）在斜杠行和面板调色板按钮之间共享同一个处理器。`ctx.commands.execute` 透传处理其余任何命令；`/export` 被排除在外（仅 web 的浏览器下载）。`/model` 是 surface 原生的（web 的 `/model` 是一个没有宿主命令的客户端弹窗）。
+- **带按钮对等的斜杠命令。** 所有 surface 命令（`/help /status /cancel /cd /repo /group /sessions /resume /clear /new /export /model /feishu-status /schedule`，外加五个 dsh web 包装 `/plan /goal /compact /feedback /permission`，以及 `/panel`——仅斜杠，其调色板按钮隐藏）在斜杠行和面板调色板按钮之间共享同一个处理器。`ctx.commands.execute` 透传处理其余任何命令。`/export` 以文件消息发送会话日志，`/model` 是 surface 原生的（web 的 `/model` 是一个没有宿主命令的客户端弹窗）。
 - **Session 生命周期。** `/sessions` 通过 `ctx.sessionQuery.listSessions()` + 批量 `readTitleSnapshots()` 列出持久化语料（当服务缺失时退化为 bound-sessions 兜底）。当没有 live agent 时，`/resume <id>` 和选择器的 Resume 按钮会重绑该聊天（`SessionMap.set`——1:1 模型）并 `agents.resume`；正在运行的目标会被拒绝；resume 会重置卡片状态（不重放历史）。`/clear`/`/new` 非破坏性地重新铸造一个新 session（旧 session 保持已保存且可恢复）。
-- **工作状态 gate。** 回合运行期间，只有只读命令可以执行（`/help /status /sessions /cancel /group`）；变更类命令会带着解释被拒绝，以保持状态机一致（见 ux-spec §8.4）。
+- **工作状态 gate。** 回合运行期间，只有只读命令可以执行（`/help /status /feishu-status /schedule /sessions /cancel /group /model /panel`）；变更类命令会带着解释被拒绝，以保持状态机一致（见 ux-spec §8.4）。
 - **工作目录 gate。** 没有显式固定 cwd（/repo 或 /cd）的聊天会带着指引拒绝回合——不创建 session/卡片，消息也不会被记住；`defaultCwd` 永远不会是隐式选择（`requireWorkingDir`，默认为 true）。`/clear` 保留固定；`/resume` 采用被恢复 session 的 cwd（选择器按钮值，或 session-list 查找），使恢复后的聊天保持可用（见 ux-spec §8.3）。
 - **交互式审批。** `ctx.on('approval/request')` 发布一张审批卡片（工具 + 原因，Allow once / Reject），并通过共享的 `InteractionRegistry` 结算——来自卡片回调的 `'allowed-once'` / `'rejected'`，信号中止或超时时的 `'cancelled'`，当聊天未知或卡片失败时 fail-closed 的 `'unavailable'`。已决定的卡片是一张静态的无按钮卡片。
 - **交互式提问。** `ctx.userQuestions.registerProvider` 通过提问卡片回答问题：单选点击即答，多选开关 + Submit，自由文本捕获下一条聊天消息。特性检测：缺失的审批/提问服务会被大声记录日志，且不会挂载任何东西（见 ux-spec §9）。

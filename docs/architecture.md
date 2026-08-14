@@ -57,19 +57,20 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 | `src/cards/session-list.ts` | The `/sessions` picker card: paginated rows with per-row Resume buttons (pure rendering). |
 | `src/cards/streaming.ts` | One card per turn: POST on open, throttled/coalesced `message.patch` updates, terminal finalize. |
 | `src/cards/interactions.ts` | Pending-interaction registry shared by approvals and questions: resolve-once, timeout, stale-callback rejection, abort, disposal. |
-| `src/bridge.ts` | Orchestrator: message → session → `agent.followup`; `session/event` → card patches; turn end → finalize in place. Agent resolution ladder: live → resume mapped session → create → rebind fresh id on collision. Owns the surface command registry (17 registered, 16 in the palette — `/panel` is hidden), the card state machine (`ChatCardState` + one `syncCard` path), the working-state and working-directory gates, the session lifecycle (`/sessions /resume /clear`), and the interactive approval/question flows (rendering in `render.ts`, settlement through `interactions.ts`). |
+| `src/bridge.ts` | Orchestrator: message → session → `agent.followup`; `session/event` → card patches; turn end → finalize in place. Agent resolution ladder: live → resume mapped session → create → rebind fresh id on collision. Owns the surface command registry (20 registered, 19 in the palette — `/panel` is hidden), the card state machine (`ChatCardState` + one `syncCard` path), the working-state and working-directory gates, the session lifecycle (`/sessions /resume /clear`), and the interactive approval/question flows (rendering in `render.ts`, settlement through `interactions.ts`). |
 | `src/index.ts` | Plugin entry: config, credential resolution, agent options (config or `agentDefaultModel`), wiring, `feishu-status` command. |
 
 ## Key behaviors
 
 - **Slash commands with button parity.** All surface commands
   (`/help /status /cancel /cd /repo /group /sessions /resume /clear /new
-  /model` plus the five dsh web wrappers `/plan /goal /compact /feedback
-  /permission`, and `/panel` — slash-only, its palette button is hidden)
-  share one handler between the slash line and the panel palette button.
-  `ctx.commands.execute` passthrough handles anything else; `/export` is
-  excluded (web-only browser download). `/model` is surface-native (the
-  web `/model` is a client popup with no host command).
+  /export /model /feishu-status /schedule` plus the five dsh web wrappers
+  `/plan /goal /compact /feedback /permission`, and `/panel` — slash-only,
+  its palette button is hidden) share one handler between the slash line
+  and the panel palette button. `ctx.commands.execute` passthrough handles
+  anything else. `/export` ships the session log as a file message and
+  `/model` is surface-native (the web `/model` is a client popup with no
+  host command).
 - **Session lifecycle.** `/sessions` lists the persisted corpus through
   `ctx.sessionQuery.listSessions()` + batch `readTitleSnapshots()` (degraded
   bound-sessions fallback when the service is absent). `/resume <id>` and
@@ -79,7 +80,8 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
   `/clear`/`/new` remint a fresh session non-destructively (the old session
   stays saved and resumable).
 - **Working-state gate.** While a turn runs, only read-only commands run
-  (`/help /status /sessions /cancel /group`); mutating commands refuse with
+  (`/help /status /feishu-status /schedule /sessions /cancel /group /model /panel`);
+  mutating commands refuse with
   an explanation, keeping the state machine coherent (see ux-spec §8.4).
 - **Working-directory gate.** A chat with no explicitly pinned cwd (/repo
   or /cd) refuses turns with guidance — no session/card is created and the
