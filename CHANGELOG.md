@@ -129,6 +129,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`dsh-feishu-setup` exited silently through its npm bin link** (user
+  report): the direct-execution entry check compared `process.argv[1]` —
+  the bin SYMLINK path when invoked via `node_modules/.bin` — against the
+  real module URL, so `main()` never ran and the CLI produced no output.
+  The entry check now `realpathSync`s the argv path first. Verified end to
+  end through a packed tarball's bin link.
+
 - **`dsh plugin add` failed under pnpm ≥ 11** (user report): pnpm 11
   blocks dependency build scripts by default, so installing the plugin
   into a profile failed with `ERR_PNPM_IGNORED_BUILDS` (the lark SDK's

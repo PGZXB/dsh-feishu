@@ -12,7 +12,7 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
@@ -454,6 +454,10 @@ export async function main(argv: readonly string[]): Promise<void> {
 }
 
 // Direct execution (bin entry): run main; imported launchers call main() themselves.
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+// `process.argv[1]` is the SYMLINK path when the bin link is executed, so
+// realpath it before comparing — otherwise the entry check silently skips
+// main() and the CLI exits with no output (user report: setup did nothing).
+const entryPath = process.argv[1] === undefined ? undefined : realpathSync(process.argv[1]);
+if (entryPath !== undefined && import.meta.url === pathToFileURL(entryPath).href) {
   void main(process.argv.slice(2));
 }
