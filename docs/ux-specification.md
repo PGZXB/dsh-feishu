@@ -38,25 +38,41 @@ The card is **collapsed by default**: the row sequence is replaced by one
 line `think -> bash -> read -> …` (full sequence, never truncated — user
 directive), and the button area gains `▸ Expand`.
 
-### 1.2 Collapsed / expanded state machine
+### 1.2 Card state machine (single authoritative state)
 
-Reference: user feedback rounds 4–5 (collapsed default, details click must
-not collapse, streaming must continue while collapsed).
+Reference: user feedback rounds 4–6 (collapsed default, details click must
+not collapse, streaming must continue while collapsed, "card reverted to
+working after panel" — the design that replaced ad-hoc per-action patches).
 
-- State is **per chat**, not per card: `collapsedRows[chatId]`, default
-  `true` (collapsed).
-- `▸ Expand` / `▾ Collapse` toggles the bit and re-renders the card.
-- While collapsed, the sequence line **streams**: every patch recomputes it
-  from the current rows, so new think/tool rows append live.
-- **Card actions never reset the collapsed bit.** Opening row details,
-  retry, panel, or stop must leave the collapsed state untouched.
-- **Card-action re-assertion (botmux rule):** Lark applies the callback
-  completion *after* the action and can restore the pre-click card. Any
-  action that changes the streaming card (toggle, or an action that must
-  leave it in a known state) must defer its `message.patch` out of the
-  callback via a macrotask (`setTimeout 0`), so the ACK lands first.
-  `row-details` re-asserts the streaming card after opening the details
-  card for the same reason.
+One `ChatCardState` per chat is the **single authoritative source** for the
+streaming card: `title`, `content`, `rows`, `openThinkId`, `status`
+(working/done/error), `collapsed`. The bridge renders the card from this
+state and nothing else.
+
+```
+(none)  --message/retry-->  working  --turn/end-->  done | error
+working --stop------------>  (unchanged until turn/end aborts it)
+done|error --any action--->  done|error (state unchanged; card re-synced)
+```
+
+- **Entering working**: message or retry sets a fresh state (collapsed by
+  default) and opens a new card.
+- **Streaming**: session events mutate the working state and call
+  `syncCard` (through the streaming manager).
+- **turn/end**: status moves to done/error; `finalize` flushes the terminal
+  render. The state stays in the map (rows/content survive for the ⋯
+  buttons and later re-sync).
+- **Card actions** mutate the state (toggle flips `collapsed`) or not, then
+  **always** call `syncCard` — the single render path. A finished card is
+  re-patched in place, deferred via a macrotask so the callback ACK lands
+  first (botmux rule: Lark can otherwise restore the pre-click card — the
+  root of the "reverts to working" bugs).
+- **Collapsed**: `collapsed` is part of the state; `▸ Expand`/`▾ Collapse`
+  flips it. While collapsed, the sequence line streams (recomputed from
+  rows on every sync). A new turn resets to collapsed.
+- **No action can leave the card in a stale state**: panel, stop, retry,
+  copy, row-details all end with `syncCard`, so the on-screen card always
+  reflects the authoritative state.
 
 ### 1.3 Streaming mechanics
 

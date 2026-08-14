@@ -109,8 +109,19 @@ export interface BridgeOptions {
   readonly repoRoots?: readonly string[];
 }
 
-/** One turn's card state, owned by the bridge. */
-interface TurnState {
+/**
+ * One chat's streaming-card state — the single authoritative source for the
+ * card. The bridge renders the card from THIS state and nothing else; card
+ * actions mutate it (or not) and then always call {@link Bridge.syncCard},
+ * which re-renders the card from it. This is the state machine the UX is
+ * built on: no ad-hoc per-action reasserts.
+ *
+ * Status transitions:
+ *   (none)  --message/retry-->  working  --turn/end-->  done | error
+ *   working --stop------------>  (unchanged until turn/end aborts it)
+ *   done|error --any action--->  done|error (state unchanged; card re-synced)
+ */
+interface ChatCardState {
   readonly title: string;
   content: string;
   /** Chronological think/tool rows (all of them — DSH web layout). */
@@ -118,6 +129,8 @@ interface TurnState {
   /** The open think row receiving reasoning deltas, or undefined. */
   openThinkId: string | undefined;
   status: CardStatus;
+  /** Collapsed row sequence (per-chat; flips via toggle-rows). */
+  collapsed: boolean;
 }
 
 const MAX_TITLE_CHARS = 40;
@@ -140,27 +153,27 @@ export function turnTitle(text: string): string {
 }
 
 /** Append a row, or update it in place when it already exists (by id). */
-function upsertRow(turn: TurnState, row: TurnRow): void {
-  const index = turn.rows.findIndex((existing) => existing.id === row.id);
-  if (index >= 0) turn.rows[index] = row;
-  else turn.rows.push(row);
+function upsertRow(state: ChatCardState, row: TurnRow): void {
+  const index = state.rows.findIndex((existing) => existing.id === row.id);
+  if (index >= 0) state.rows[index] = row;
+  else state.rows.push(row);
 }
 
 /** Open a think row if reasoning is streaming and none is open. */
-function ensureThinkRow(turn: TurnState, id: string): void {
-  if (turn.openThinkId !== undefined) return;
-  turn.openThinkId = id;
-  upsertRow(turn, { kind: 'think', id, text: '', settled: false });
+function ensureThinkRow(state: ChatCardState, id: string): void {
+  if (state.openThinkId !== undefined) return;
+  state.openThinkId = id;
+  upsertRow(state, { kind: 'think', id, text: '', settled: false });
 }
 
 /** Settle the open think row (reasoning for this block ended). */
-function settleOpenThink(turn: TurnState): void {
-  if (turn.openThinkId === undefined) return;
-  const id = turn.openThinkId;
-  turn.openThinkId = undefined;
-  const index = turn.rows.findIndex((row) => row.id === id);
-  if (index >= 0 && turn.rows[index]?.kind === 'think') {
-    turn.rows[index] = { ...turn.rows[index], settled: true } as ThinkRow;
+function settleOpenThink(state: ChatCardState): void {
+  if (state.openThinkId === undefined) return;
+  const id = state.openThinkId;
+  state.openThinkId = undefined;
+  const index = state.rows.findIndex((row) => row.id === id);
+  if (index >= 0 && state.rows[index]?.kind === 'think') {
+    state.rows[index] = { ...state.rows[index], settled: true } as ThinkRow;
   }
 }
 
@@ -197,29 +210,18 @@ async function listProjects(roots: readonly string[]): Promise<ProjectInfo[]> {
 
 export class Bridge {
   private readonly dedup = new MessageDeduplicator();
-  private readonly turns = new Map<string, TurnState>();
+  /** The authoritative streaming-card state per chat (the state machine). */
+  private readonly cardStates = new Map<string, ChatCardState>();
   private readonly lastPrompts = new Map<string, string>();
   private readonly lastOutputs = new Map<string, string>();
-  /** Last completed turn's rows per chat (for the ⋯ row expand buttons). */
-  private readonly lastRows = new Map<string, readonly TurnRow[]>();
-  /** Per-chat collapsed state of the think/tool row sequence. Cards start
-   *  collapsed (feedback); an explicit expand flips the state. */
-  private readonly collapsedRows = new Map<string, boolean>();
-
-  /** Whether a chat's row sequence is collapsed (default: collapsed). */
-  private collapsed(chatId: string): boolean {
-    return this.collapsedRows.get(chatId) ?? true;
-  }
+  /** Active repo-picker card message id per chat; a pick consumes it. */
+  private readonly pickerMessageIds = new Map<string, string>();
 
   /** The live agent for a chat, or `undefined` (no session or not attached). */
   private liveAgent(chatId: string): Agent | undefined {
     const sessionId = this.options.sessionMap.get(chatId);
     return sessionId === undefined ? undefined : this.options.agentStore.get(sessionId);
   }
-  /** Last card snapshot per chat (finished card, for the collapse toggle). */
-  private readonly lastSnapshots = new Map<string, CardSnapshot>();
-  /** Active repo-picker card message id per chat; a pick consumes it. */
-  private readonly pickerMessageIds = new Map<string, string>();
   private readonly disposeEvents: () => void;
   private readonly commands = new CommandRegistry();
 
@@ -318,12 +320,14 @@ export class Bridge {
     const sessionId = this.options.sessionMap.ensure(message.chatId);
     const cwd = this.options.sessionMap.cwdFor(message.chatId) ?? this.options.defaultCwd;
     const agent = await this.resolveAgent(message.chatId, sessionId, cwd);
-    this.turns.set(message.chatId, {
+    // Enter the working state: a fresh card, collapsed by default.
+    this.cardStates.set(message.chatId, {
       title: turnTitle(message.text),
       content: '',
       rows: [],
       openThinkId: undefined,
       status: 'working',
+      collapsed: true,
     });
     // A failed card post must not block the turn: the final answer message
     // is the text fallback (patches simply no-op without an active card).
@@ -430,34 +434,34 @@ export class Bridge {
   async handleEvent(sessionId: string, event: SessionEvent): Promise<void> {
     const chatId = this.options.sessionMap.chatFor(sessionId);
     if (chatId === undefined) return;
-    const turn = this.turns.get(chatId);
-    if (turn === undefined) return;
+    const state = this.cardStates.get(chatId);
+    if (state === undefined || state.status !== 'working') return;
     switch (event.type) {
       case 'assistant/chunk': {
         const chunk = event.data.chunk;
         if (chunk.type === 'text-delta') {
-          turn.content += chunk.text;
-          this.patch(chatId, turn);
+          state.content += chunk.text;
+          this.syncCard(chatId);
         } else if (chunk.type === 'reasoning-delta') {
           // One think row per reasoning block; deltas append to the open row.
-          if (turn.openThinkId === undefined) {
+          if (state.openThinkId === undefined) {
             thinkRowSeq += 1;
-            ensureThinkRow(turn, `think-${thinkRowSeq}`);
+            ensureThinkRow(state, `think-${thinkRowSeq}`);
           }
-          const id = turn.openThinkId;
-          const index = turn.rows.findIndex((row) => row.id === id);
-          if (index >= 0 && turn.rows[index]?.kind === 'think') {
-            const row = turn.rows[index] as ThinkRow;
-            turn.rows[index] = { ...row, text: row.text + chunk.text };
+          const id = state.openThinkId;
+          const index = state.rows.findIndex((row) => row.id === id);
+          if (index >= 0 && state.rows[index]?.kind === 'think') {
+            const row = state.rows[index] as ThinkRow;
+            state.rows[index] = { ...row, text: row.text + chunk.text };
           }
-          this.patch(chatId, turn);
+          this.syncCard(chatId);
         }
         break;
       }
       case 'tool/call': {
-        settleOpenThink(turn);
+        settleOpenThink(state);
         const cwd = this.options.sessionMap.cwdFor(chatId) ?? this.options.defaultCwd;
-        upsertRow(turn, {
+        upsertRow(state, {
           kind: 'tool',
           id: event.data.callId,
           name: event.data.name,
@@ -468,13 +472,13 @@ export class Bridge {
           args: event.data.arguments,
           result: '',
         } satisfies ToolRow);
-        this.patch(chatId, turn);
+        this.syncCard(chatId);
         break;
       }
       case 'tool/result': {
         const resultText = assistantText(event.data.message.content[0]?.content ?? []);
         const status = event.data.error !== undefined ? 'error' : 'done';
-        const index = turn.rows.findIndex(
+        const index = state.rows.findIndex(
           (row): row is ToolRow =>
             row.kind === 'tool' && row.id === event.data.message.content[0]?.toolCallId,
         );
@@ -484,27 +488,27 @@ export class Bridge {
             : (() => {
                 // Fall back to the last running tool row when the result does
                 // not carry a correlating call id.
-                for (let i = turn.rows.length - 1; i >= 0; i -= 1) {
-                  const row = turn.rows[i];
+                for (let i = state.rows.length - 1; i >= 0; i -= 1) {
+                  const row = state.rows[i];
                   if (row?.kind === 'tool' && row.status === 'running') return i;
                 }
                 return -1;
               })();
-        if (target >= 0 && turn.rows[target]?.kind === 'tool') {
-          const row = turn.rows[target] as ToolRow;
-          turn.rows[target] = {
+        if (target >= 0 && state.rows[target]?.kind === 'tool') {
+          const row = state.rows[target] as ToolRow;
+          state.rows[target] = {
             ...row,
             status,
             result: resultText,
           };
         }
-        this.patch(chatId, turn);
+        this.syncCard(chatId);
         break;
       }
       case 'assistant/message': {
-        settleOpenThink(turn);
-        turn.content = assistantText(event.data.message.content);
-        this.patch(chatId, turn);
+        settleOpenThink(state);
+        state.content = assistantText(event.data.message.content);
+        this.syncCard(chatId);
         break;
       }
       case 'turn/end': {
@@ -523,23 +527,15 @@ export class Bridge {
         } else {
           this.options.logger.info(`turn completed for chat ${chatId}`);
         }
-        settleOpenThink(turn);
-        turn.status = status;
-        const finalSnapshot: CardSnapshot = {
-          title: turn.title,
-          content: turn.content,
-          rows: turn.rows,
-          cwd: this.options.sessionMap.cwdFor(chatId) ?? this.options.defaultCwd,
-          collapsed: this.collapsed(chatId),
-          status,
-        };
-        this.patch(chatId, turn);
+        settleOpenThink(state);
+        // working → done|error: the state stays in the map (the card keeps
+        // its rows/content for the ⋯ buttons and re-sync); only status moves.
+        state.status = status;
+        // finalize flushes the pending working snapshot with the terminal
+        // status — the single terminal render of the state machine.
         await this.options.cards.finalize(chatId, status);
-        const finalText = turn.content.trim();
+        const finalText = state.content.trim();
         if (finalText !== '') this.lastOutputs.set(chatId, finalText);
-        if (turn.rows.length > 0) this.lastRows.set(chatId, turn.rows);
-        this.lastSnapshots.set(chatId, finalSnapshot);
-        this.turns.delete(chatId);
         // The card holds the full answer and finalizes green in place; the
         // initial card send already notified, so a completed turn sends no
         // second bubble. Failures keep a notice — a broken turn must not go
@@ -623,12 +619,13 @@ export class Bridge {
         const sessionId = this.options.sessionMap.ensure(action.chatId);
         const cwd = this.options.sessionMap.cwdFor(action.chatId) ?? this.options.defaultCwd;
         const agent = await this.resolveAgent(action.chatId, sessionId, cwd);
-        this.turns.set(action.chatId, {
+        this.cardStates.set(action.chatId, {
           title: turnTitle(prompt),
           content: '',
           rows: [],
           openThinkId: undefined,
           status: 'working',
+          collapsed: true,
         });
         try {
           await this.options.cards.open(action.chatId, turnTitle(prompt));
@@ -703,44 +700,28 @@ export class Bridge {
         break;
       }
       case 'row-details': {
+        const state = this.cardStates.get(action.chatId);
         const id = action.value.id;
-        const row = (this.lastRows.get(action.chatId) ?? []).find((r) => r.id === id);
+        const row = (state?.rows ?? []).find((r) => r.id === id);
         if (row === undefined) {
           this.options.logger.warn(`row details for unknown id ${id}`);
           break;
         }
         await this.options.transport.sendCard(action.chatId, buildRowDetailsCard(row));
-        // Re-assert the streaming card after the callback (botmux rule):
-        // Lark can restore the pre-click card when the callback completes,
-        // which would otherwise drop the user's expanded view.
-        this.reassertStreamingCard(action.chatId);
+        // The state machine's single render path re-asserts the streaming
+        // card after the callback (botmux rule: Lark can restore the
+        // pre-click card, dropping the expanded view).
+        this.syncCard(action.chatId);
         break;
       }
       case 'toggle-rows': {
-        // Flip the per-chat collapsed state, then re-render: a live turn
-        // re-patches through the streaming manager; a finished card is
-        // updated in place from the stored final snapshot.
-        const collapsed = !this.collapsed(action.chatId);
-        this.collapsedRows.set(action.chatId, collapsed);
-        const turn = this.turns.get(action.chatId);
-        if (turn !== undefined) {
-          this.patch(action.chatId, turn);
-          break;
-        }
-        const snapshot = this.lastSnapshots.get(action.chatId);
-        const messageId = this.options.cards.lastMessageId(action.chatId);
-        if (snapshot !== undefined && messageId !== undefined) {
-          // Defer the patch out of the card callback (botmux rule): Lark
-          // applies the callback completion AFTER an awaited message.patch
-          // and can restore the pre-click card, making the toggle flash and
-          // disappear. A macrotask lets the ACK land first.
-          setTimeout(() => {
-            void this.options.transport
-              .updateCard(messageId, buildCard({ ...snapshot, collapsed }))
-              .catch((error: unknown) => {
-                this.options.logger.warn(`rows toggle update failed: ${String(error)}`);
-              });
-          }, 0);
+        // Flip the collapsed bit on the authoritative state, then re-render
+        // through the single path. Whether the turn is live or finished is
+        // syncCard's concern — no per-case patching.
+        const state = this.cardStates.get(action.chatId);
+        if (state !== undefined) {
+          state.collapsed = !state.collapsed;
+          this.syncCard(action.chatId);
         }
         break;
       }
@@ -754,6 +735,7 @@ export class Bridge {
             ? '**Idle** — send a message to start a turn.'
             : '**Ready** — the last answer is in the card above; copy or retry it.';
         await this.options.transport.sendCard(action.chatId, buildPanelCard(statusLine, running));
+        this.syncCard(action.chatId);
         break;
       }
       default: {
@@ -898,35 +880,41 @@ export class Bridge {
     });
   }
 
-  /** Stage the turn's snapshot on the streaming card. */
-  private patch(chatId: string, turn: TurnState): void {
-    const snapshot: CardSnapshot = {
-      title: turn.title,
-      content: turn.content,
-      rows: turn.rows,
-      cwd: this.options.sessionMap.cwdFor(chatId) ?? this.options.defaultCwd,
-      collapsed: this.collapsed(chatId),
-      status: turn.status,
-    };
-    this.options.cards.patch(chatId, snapshot);
+  /**
+   * The single render path of the card state machine: render the chat's
+   * authoritative {@link ChatCardState} into the streaming card. A live
+   * (working) card goes through the streaming manager; a finished (done /
+   * error) card is re-patched in place. Deferred via a macrotask so the
+   * card-callback ACK lands first — Lark can otherwise restore the
+   * pre-click card (botmux rule), which is the root of the "card reverts
+   * to working after any action" bugs.
+   */
+  private syncCard(chatId: string): void {
+    const state = this.cardStates.get(chatId);
+    if (state === undefined) return;
+    if (state.status === 'working') {
+      this.options.cards.patch(chatId, this.snapshot(chatId, state));
+      return;
+    }
+    const messageId = this.options.cards.lastMessageId(chatId);
+    if (messageId === undefined) return;
+    const card = buildCard(this.snapshot(chatId, state));
+    setTimeout(() => {
+      void this.options.transport.updateCard(messageId, card).catch((error: unknown) => {
+        this.options.logger.warn(`streaming card sync failed: ${String(error)}`);
+      });
+    }, 0);
   }
 
-  /**
-   * Re-assert the streaming card's current snapshot after a card action
-   * (botmux rule): Lark applies the callback completion after the action and
-   * can restore the pre-click card, dropping user state like an expanded row
-   * view. Deferred via a macrotask so the callback ACK lands first.
-   */
-  private reassertStreamingCard(chatId: string): void {
-    const snapshot = this.lastSnapshots.get(chatId);
-    const messageId = this.options.cards.lastMessageId(chatId);
-    if (snapshot === undefined || messageId === undefined) return;
-    setTimeout(() => {
-      void this.options.transport
-        .updateCard(messageId, buildCard({ ...snapshot, collapsed: this.collapsed(chatId) }))
-        .catch((error: unknown) => {
-          this.options.logger.warn(`streaming card reassert failed: ${String(error)}`);
-        });
-    }, 0);
+  /** Build the render snapshot from the authoritative state. */
+  private snapshot(chatId: string, state: ChatCardState): CardSnapshot {
+    return {
+      title: state.title,
+      content: state.content,
+      rows: state.rows,
+      cwd: this.options.sessionMap.cwdFor(chatId) ?? this.options.defaultCwd,
+      collapsed: state.collapsed,
+      status: state.status,
+    };
   }
 }

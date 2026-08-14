@@ -235,3 +235,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     explains and never emits a second 'Stopping…'; empty copy / empty
     retry explain.
   - 156 tests total (unit + 3 real-composition integration).
+- State-machine refactor (replaces ad-hoc per-action card patches — the
+  user's directive: design the machine once, not patch with if/else):
+  - One authoritative `ChatCardState` per chat (title/content/rows/
+    openThinkId/status/collapsed); the bridge renders the card from it and
+    nothing else. Five parallel maps (`turns`, `lastRows`,
+    `lastSnapshots`, `collapsedRows`, …) consolidated into one.
+  - `syncCard` is the single render path: live cards patch through the
+    streaming manager; finished cards re-patch in place, deferred out of
+    the callback (botmux rule) so Lark cannot restore the pre-click card.
+    Every card action (panel/stop/retry/copy/row-details/toggle) ends with
+    it — no more per-case reasserts, so "done → panel → card reverts to
+    working" cannot recur.
+  - docs/ux-specification.md §1.2 documents the machine (states,
+    transitions, collapsed, syncCard contract).
+  - Regression tests at both layers: unit (panel after done keeps the
+    green card, no Stop) and real-composition integration (same scenario
+    against the real dsh process). 158 tests total.

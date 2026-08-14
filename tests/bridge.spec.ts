@@ -709,6 +709,42 @@ describe('Bridge', () => {
       expect(idleLabels).toEqual(['🔁 Retry last', '📋 Copy last']);
     });
 
+    it('panel after done does not reset the streaming card to working', async () => {
+      // The user-reported regression: done → panel → the streaming card
+      // reverted to the non-done state. The state machine's single syncCard
+      // path must keep re-rendering from the authoritative done state.
+      const h = makeHarness({ throttleMs: 0 });
+      await h.bridge.handleMessage(message());
+      await h.bridge.handleEvent('feishu-session-1', chunkEvent('answer'));
+      await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const doneCard = h.transport.updatedCards.at(-1);
+      expect(doneCard?.header?.template).toBe('green');
+      // Open the panel; the streaming card is re-synced from the done state.
+      const before = h.transport.updatedCards.length;
+      await h.bridge.handleCardAction({
+        messageId: 'msg-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'panel' },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const after = h.transport.updatedCards.at(-1);
+      expect(h.transport.updatedCards.length).toBe(before + 1); // the re-sync
+      expect(after?.header?.template).toBe('green');
+      // The status line is still Done, not working.
+      const statusLine = after?.elements.find(
+        (el): el is Extract<CardElement, { tag: 'markdown' }> =>
+          el.tag === 'markdown' && 'content' in el && el.content.includes('Done'),
+      );
+      expect(statusLine).toBeDefined();
+      const action = after?.elements.find((el) => el.tag === 'action');
+      const labels =
+        action && 'actions' in action
+          ? action.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
+          : [];
+      expect(labels).not.toContain('⏹ Stop');
+    });
     it('unknown card action kind is logged and ignored without crashing', async () => {
       const h = makeHarness();
       await h.bridge.handleMessage(message());

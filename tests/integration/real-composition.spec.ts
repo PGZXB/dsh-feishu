@@ -372,6 +372,93 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
    * drives card actions through the memory transport, asserting the exact
    * outbox reaction — the abnormal-operation coverage the user asked for.
    */
+  it('panel after done keeps the streaming card done (state machine)', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_paneldone_${Date.now()}`;
+      sendMessage(chatId, 'check panel after done');
+
+      // Wait for the green final card (turn completed).
+      await waitFor(
+        'the green final card patch',
+        () => readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'green'),
+        90_000,
+      );
+
+      // Open the panel. The streaming card must be re-synced to the SAME
+      // done state — not reverted to working (the reported bug).
+      const patchesBefore = readOutbox().filter((r) => r.kind === 'patch').length;
+      writeAction({
+        messageId: 'mem-1',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'panel' },
+      });
+      await waitFor(
+        'the panel card',
+        () =>
+          readOutbox()
+            .filter((r) => r.kind === 'card')
+            .some((c) => c.card?.header?.title.content === '⚙️ dsh-feishu panel'),
+        30_000,
+      );
+      await waitFor(
+        'the done streaming card re-sync',
+        () => {
+          const all = readOutbox().filter((r) => r.kind === 'patch');
+          const last = all.at(-1)?.card;
+          return (
+            all.length > patchesBefore &&
+            last?.header?.template === 'green' &&
+            last?.elements.some(
+              (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('Done'),
+            ) === true
+          );
+        },
+        30_000,
+      );
+      // The re-synced card must NOT carry a Stop button (done state).
+      const lastPatch = readOutbox()
+        .filter((r) => r.kind === 'patch')
+        .at(-1)?.card;
+      const action = lastPatch?.elements.find((el) => el.tag === 'action');
+      const labels =
+        action && 'actions' in action
+          ? action.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
+          : [];
+      expect(labels).not.toContain('⏹ Stop');
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 180_000);
+
   it('stop while running cancels; stop after finish explains; panel reflects state', async () => {
     const bin = dshBin;
     const server = mock;
