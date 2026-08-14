@@ -51,13 +51,28 @@ harness 沙箱（以及本 checkout 的环境）有一些特定规则：
 - **`~/.dsh`、`~/.npm`、`~/.modlens` 是只读挂载**，除非 shell 拥有
   `danger-full-access`。所有开发状态都位于仓库的 `_dev/` 下（home 目录、
   bin、corepack、dsh-home）。
-- **harness 导出了环境变量 `DSH_HOME=/home/zhangmm23/.dsh`** —— 集成测试
+- **harness 导出的环境变量 `DSH_HOME` 指向它自己的 home** —— 集成测试
   必须指向它们自己的 `FEISHU_INT_DSH_HOME`（或 `_dev/dsh-home`），绝不要
   使用环境中的值。
 - **`kill $!` 杀死的是 bash 包装器，而不是子进程** —— `nohup` 子进程
   存活下来，并堆积出并发的 dsh 进程（曾发生过会话损坏事件）。始终使用
   `pkill -f "dsh --profile feishu-d[e]v"`，并在重启前后验证确实只有一个
   进程。
+
+## Feishu SDK（lark-oapi）与开放平台 API
+
+- **SDK 默认的 axios 实例会遵循 `http(s)_proxy` 环境变量。** 启用代理时，
+  WS 端点发现和 REST 调用会因 follow-redirects 而崩出
+  `Protocol "https:" not supported. Expected "http:"` 错误。向 `Client`
+  和 `WSClient` 都注入共享的 `proxy: false` axios 实例（`FEISHU_HTTP`）。
+- **自定义 `httpInstance` 必须复刻 SDK 默认实例的响应拦截器。** 默认实例
+  会解包 `resp.data`；没有它，`request()` 返回的是 AxiosResponse 包装，
+  SDK 的 `{code, data:{URL}, msg}` 解构得到 undefined（`code: undefined`）。
+  同时还要复刻 `$return_headers` 的透传。
+- **QR 登录 init 必须带 `x-locale` 和 `x-terminal-type` 头。**
+  `POST accounts.feishu.cn/accounts/qrlogin/init` 缺少它们会返回 4401
+  "请求无效"——`{"unit":"eu_nc"}` 之类的响应体是障眼法，别被误导。发送
+  `x-locale: zh-CN` + `x-terminal-type: 2`。
 
 ## Gemini / modlens
 
@@ -77,6 +92,14 @@ harness 沙箱（以及本 checkout 的环境）有一些特定规则：
   `minimumReleaseAgeExclude: ['@liustack/modlens@3.11.0']` 修复。
 - 默认 store 目录位于只读文件系统上 —— 将 `store-dir` 固定到仓库内
   （`_dev/pnpm-store`）。
+- **pnpm ≥ 11 默认 `minimumReleaseAge` 为 1440 分钟（24 小时）。** 新生成的
+  lockfile 可能包含 24 小时内发布的传递依赖；pnpm ≥ 11 会以
+  `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` 拒绝整个安装。在
+  `pnpm-workspace.yaml` 中显式设置 `minimumReleaseAge: 0`（`allowBuilds`
+  白名单——供应链安全控制——保持不变）。
+- **pnpm ≥ 11 会把 `pnpm run <script> -- <args>` 中的 `--` 原样转发。**
+  脚本收到 `-- --new …`，把 `--` 当作未知选项拒绝。CLI 参数解析必须跳过
+  开头的 `--` 运行参数分隔符。
 
 ## 提及门禁（mention gate）
 

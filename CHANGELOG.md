@@ -94,6 +94,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keywords; `README.zh.md` is kept in sync. Screenshots are deferred —
   `docs/screenshot-checklist.md` + `docs/assets/` stage eleven planned
   captures for a gallery added once real shots exist.
+- **`docs/pitfalls.md` (+ zh) covers the setup/transport failures.** New
+  entries for the pnpm 11 `minimumReleaseAge` default, the `--` run-argument
+  separator, the QR-init `x-locale` / `x-terminal-type` headers, the SDK's
+  proxy-honoring default axios instance, and the custom-`httpInstance`
+  response-unwrap contract.
 
 ### Fixed
 

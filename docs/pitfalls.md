@@ -58,13 +58,30 @@ The harness sandbox (and this checkout's environment) has specific rules:
 - **`~/.dsh`, `~/.npm`, `~/.modlens` are read-only mounts** unless the
   shell has `danger-full-access`. All dev state lives under the repo's
   `_dev/` (home dir, bin, corepack, dsh-home).
-- **Ambient `DSH_HOME=/home/zhangmm23/.dsh` is exported by the harness** —
+- **An ambient `DSH_HOME` exported by the harness points at its own home** —
   integration tests must point at their own `FEISHU_INT_DSH_HOME` (or
   `_dev/dsh-home`), never the ambient value.
 - **`kill $!` kills the bash wrapper, not the child** — `nohup` children
   survive and pile up concurrent dsh processes (a corrupt-session
   incident). Always `pkill -f "dsh --profile feishu-d[e]v"` and verify
   exactly one process before/after restarts.
+
+## Feishu SDK (lark-oapi) and Open Platform API
+
+- **The SDK's default axios instance honors `http(s)_proxy` env vars.**
+  Behind a proxy, WS endpoint discovery and REST calls crash with
+  follow-redirects `Protocol "https:" not supported. Expected "http:"`.
+  Inject a shared `proxy: false` axios instance into both `Client` and
+  `WSClient` (the `FEISHU_HTTP` instance).
+- **A custom `httpInstance` must mirror the SDK default's response
+  interceptor.** The default unwraps `resp.data`; without it, `request()`
+  resolves to the AxiosResponse wrapper and the SDK's `{code, data:{URL},
+  msg}` destructure comes back undefined (`code: undefined`). Mirror the
+  unwrap and the `$return_headers` passthrough.
+- **QR login init requires `x-locale` and `x-terminal-type` headers.**
+  `POST accounts.feishu.cn/accounts/qrlogin/init` without them fails with
+  4401 "请求无效" — a body like `{"unit":"eu_nc"}` is a red herring. Send
+  `x-locale: zh-CN` + `x-terminal-type: 2`.
 
 ## Gemini / modlens
 
@@ -84,6 +101,15 @@ The harness sandbox (and this checkout's environment) has specific rules:
   `minimumReleaseAgeExclude: ['@liustack/modlens@3.11.0']`.
 - The default store directory sits on a read-only fs — pin `store-dir`
   under the repo (`_dev/pnpm-store`).
+- **pnpm ≥ 11 defaults `minimumReleaseAge` to 1440 minutes (24 h).** A
+  freshly generated lockfile can contain transitive deps published within
+  the last day; pnpm ≥ 11 then refuses the whole install with
+  `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`. Set `minimumReleaseAge: 0`
+  explicitly in `pnpm-workspace.yaml` (the `allowBuilds` allowlist — the
+  supply-chain control — stays).
+- **`pnpm run <script> -- <args>` forwards the `--` verbatim on pnpm ≥ 11.**
+  The script receives `-- --new …` and rejects `--` as an unknown option.
+  CLI arg parsers must skip a leading `--` run-argument separator.
 
 ## Mention gate
 
