@@ -166,3 +166,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Repo picker labels always show the repoRoot-relative path (not the
     bare basename — generic names like `source` need their parent path).
   - 133 tests total.
+- UX feedback round 3 — think icon, code-block details, rows collapse:
+  - Think rows lead with a cloud emoji (`☁️ Think · Thinking`) like the
+    tool rows and always read `Thinking` (no first-line swap on settle).
+  - Tool details: IN shows pretty-printed JSON in a `json` code block, OUT
+    in a code block; think details render the full reasoning in a code
+    block (`fencedCode` auto-lengthens the fence past embedded backticks).
+  - Persistent rows toggle button (like Stop) on every card with rows:
+    `▾ Collapse` → one minimal line (`think -> bash -> read -> …`),
+    `▸ Expand` restores; works on live turns and finished cards (in-place
+    re-render of the stored final snapshot via lastMessageId).
+  - 138 tests total.
