@@ -274,3 +274,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   StreamingCardManager.flush also logs a failed patch and continues with
   the newest snapshot instead of killing the stream. Regression tests at
   both layers. 174 tests total.
+- Stopped status for aborted turns: `turn/end` reason `aborted` (user
+  Stop) now finalizes the card as **stopped** (orange, `**⏹ Stopped**`),
+  distinct from done — a stopped turn never reads Done (DSH web
+  message.stopped). Panel reflects the stopped state. Unit regression
+  test; the aborted→stopped mapping is unit-proven. 175 tests total.
