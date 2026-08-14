@@ -149,3 +149,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Dropdown labels disambiguate duplicate basenames with a path suffix
     relative to the common scan prefix (`repoOptionLabel`).
   - Adds `markdown-it` dependency; 131 tests total.
+- UX feedback round 2 — DSH-web row layout + relative repo labels:
+  - Live card renders a chronological sequence of one-line rows (think /
+    tool, DSH web style: `Think · …`, `✅ Bash · ls -la`), no truncation,
+    then the complete output at the bottom, then status + buttons.
+  - `src/cards/tool-summary.ts` ports the harness's tool-call-model: per-
+    variant titles and arg-derived summaries (bash → description/command,
+    read → path, search → query, …), paths relativized to the session cwd.
+  - Think rows show `Thinking…` while streaming, the first line once
+    settled; every row has a ⋯ button opening a details card (think →
+    full reasoning; tool → IN/OUT). The separate 🔧 Tools button is
+    removed until the command palette is decided.
+  - Rows render as v1 `column_set` rows (div lark_md + button) — the
+    layout botmux proves in v1 cards; `CardElement` gains column_set /
+    column / div.
+  - Repo picker labels always show the repoRoot-relative path (not the
+    bare basename — generic names like `source` need their parent path).
+  - 133 tests total.
