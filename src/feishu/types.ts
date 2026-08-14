@@ -71,6 +71,9 @@ export interface ButtonAction {
 export interface SelectAction {
   readonly tag: 'select_static';
   readonly placeholder: { readonly tag: 'plain_text'; readonly content: string };
+  /** The option value preselected on first render (must match an option
+   *  `value`; omit to show the placeholder). */
+  readonly initial_option?: string;
   readonly options: readonly {
     readonly text: { readonly tag: 'plain_text'; readonly content: string };
     readonly value: string;

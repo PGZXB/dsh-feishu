@@ -398,13 +398,15 @@ describe('Bridge', () => {
     const row = expanded?.elements.find((el) => el.tag === 'column_set');
     const text = row?.tag === 'column_set' ? row.columns[0]?.elements[0] : undefined;
     expect(text?.tag === 'div' ? text.text.content : '').toContain('✅ Bash · ls');
-    // The done card keeps the plain action row — no separate Tools button.
-    const doneAction = expanded?.elements.find((el) => el.tag === 'action');
-    const doneLabels =
-      doneAction && 'actions' in doneAction
-        ? doneAction.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
+    // Row 1 = state actions, row 2 = the view toggle (no separate Tools
+    // button).
+    const doneActions = expanded?.elements.filter((el) => el.tag === 'action') ?? [];
+    const doneLabels = (index: number): string[] =>
+      doneActions[index] && 'actions' in doneActions[index]
+        ? doneActions[index].actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
         : [];
-    expect(doneLabels).toEqual(['📋 Copy', '🔁 Retry', '⚙️ Panel', '▾ Collapse']);
+    expect(doneLabels(0)).toEqual(['📋 Copy', '🔁 Retry', '⚙️ Panel']);
+    expect(doneLabels(1)).toEqual(['▾ Collapse']);
   });
 
   it('streams the collapsed sequence as rows arrive', async () => {
@@ -767,12 +769,13 @@ describe('Bridge', () => {
       expect(card?.header?.template).toBe('orange');
       expect(
         card?.elements.some(
-          (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('Stopped'),
+          (el) =>
+            el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('Stopped'),
         ),
       ).toBe(true);
       expect(
         card?.elements.some(
-          (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('Done'),
+          (el) => el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('Done'),
         ),
       ).toBe(false);
       // Stopped is terminal: Retry/Panel buttons, no Stop.
@@ -820,12 +823,12 @@ describe('Bridge', () => {
       const after = h.transport.updatedCards.at(-1);
       expect(h.transport.updatedCards.length).toBe(before + 1); // the re-sync
       expect(after?.header?.template).toBe('green');
-      // The status line is still Done, not working.
-      const statusLine = after?.elements.find(
-        (el): el is Extract<CardElement, { tag: 'markdown' }> =>
-          el.tag === 'markdown' && 'content' in el && el.content.includes('Done'),
+      // The terminal status note is still Done, not working.
+      const statusNote = after?.elements.find(
+        (el): el is Extract<CardElement, { tag: 'note' }> =>
+          el.tag === 'note' && el.elements[0]?.content.includes('Done') === true,
       );
-      expect(statusLine).toBeDefined();
+      expect(statusNote).toBeDefined();
       const action = after?.elements.find((el) => el.tag === 'action');
       const labels =
         action && 'actions' in action
@@ -1151,7 +1154,7 @@ describe('Bridge', () => {
         value: { kind: 'retry' },
       });
       expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(2);
-      expect(h.transport.sentCards.at(-1)?.header?.template).toBe('blue');
+      expect(h.transport.sentCards.at(-1)?.header?.template).toBe('wathet');
     });
 
     it('done → new message → working (fresh card) → second done: cross-turn integrity', async () => {
@@ -1626,7 +1629,8 @@ describe('session commands (/sessions /resume /clear /new)', () => {
     const card = h.transport.sentCards.at(-1);
     expect(
       card?.elements.some(
-        (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('page 1/3'),
+        (el) =>
+          el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 1/3'),
       ),
     ).toBe(true);
     await h.bridge.handleCardAction({
@@ -1639,7 +1643,8 @@ describe('session commands (/sessions /resume /clear /new)', () => {
       h.transport.sentCards
         .at(-1)
         ?.elements.some(
-          (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('page 2/3'),
+          (el) =>
+            el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 2/3'),
         ),
     ).toBe(true);
   });
@@ -1817,9 +1822,9 @@ describe('panel command palette', () => {
     // Page 1 holds the session group (7) plus chat (1) — 8 buttons; the
     // system group (help/status + the dsh web wrappers) is on page 2.
     expect(labels).toContain('🗂️ Sessions');
-    expect(labels).toContain('🧹 Fresh start');
+    expect(labels).toContain('✨ Fresh start');
     expect(labels).toContain('➕ New chat');
-    expect(labels).toContain('🔁 Resume session');
+    expect(labels).toContain('↩️ Resume session');
     await h.bridge.handleCardAction({
       messageId: 'mem-1',
       chatId: 'oc_chat',
@@ -1849,7 +1854,8 @@ describe('panel command palette', () => {
     const panel = h.transport.sentCards.at(-1);
     expect(
       panel?.elements.some(
-        (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('page 1/2'),
+        (el) =>
+          el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 1/2'),
       ),
     ).toBe(true);
     const navLabels = (card: CardJson | undefined): string[] =>
@@ -1874,7 +1880,8 @@ describe('panel command palette', () => {
     const panel2 = h.transport.sentCards.at(-1);
     expect(
       panel2?.elements.some(
-        (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('page 2/2'),
+        (el) =>
+          el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 2/2'),
       ),
     ).toBe(true);
     expect(navLabels(panel2)).toEqual(['◀️ Prev']);
@@ -2040,28 +2047,29 @@ describe('stateful web wrappers (/permission picker, /plan toggle)', () => {
     await h.bridge.handleMessage(message({ text: '/permission' }));
     const card = h.transport.sentCards.at(-1);
     expect(card?.header?.title.content).toBe('🔐 Permission presets');
-    // The current preset row is marked; the others carry Select buttons.
-    const rows = (card?.elements ?? []).filter((el) => el.tag === 'column_set');
-    expect(rows).toHaveLength(3);
-    const selectPayloads = rows.flatMap((el) =>
-      'columns' in el
-        ? el.columns.flatMap((column) =>
-            column.elements
-              .filter((element) => element.tag === 'button')
-              .map((button) => button.value),
-          )
-        : [],
+    // A dropdown (repo-picker pattern) lists every preset; the current one
+    // is preselected and spelled out in a note.
+    const action = card?.elements.find((el) => el.tag === 'action');
+    const select =
+      action && 'actions' in action
+        ? action.actions.find((a) => a.tag === 'select_static')
+        : undefined;
+    expect(select && 'options' in select ? select.options.map((o) => o.value) : []).toEqual([
+      'read-only',
+      'workspace-write',
+      'danger-full-access',
+    ]);
+    expect(select && 'initial_option' in select ? select.initial_option : undefined).toBe(
+      'workspace-write',
     );
-    expect(selectPayloads).toContainEqual({
-      kind: 'permission-pick',
-      preset: 'read-only',
-    });
-    expect(selectPayloads).toContainEqual({
-      kind: 'permission-pick',
-      preset: 'danger-full-access',
-    });
-    // workspace-write is current → no Select button, marked ★.
-    expect(selectPayloads.some((v) => v.preset === 'workspace-write')).toBe(false);
+    expect(
+      card?.elements.some(
+        (el) =>
+          el.tag === 'note' &&
+          'elements' in el &&
+          el.elements[0]?.content.includes('★ current: workspace-write'),
+      ),
+    ).toBe(true);
   });
 
   it('a permission pick applies the preset through the service and replies', async () => {
@@ -2072,7 +2080,9 @@ describe('stateful web wrappers (/permission picker, /plan toggle)', () => {
       messageId: lastCardId(h),
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
-      value: { kind: 'permission-pick', preset: 'read-only' },
+      // Dropdown selection: the marker payload + the preset in `option`.
+      value: { kind: 'permission-pick' },
+      option: 'read-only',
     });
     expect(service.applied).toEqual(['read-only']);
     expect(h.transport.sentTexts.some((t) => t.text.includes('switched to read-only'))).toBe(true);
@@ -2086,7 +2096,8 @@ describe('stateful web wrappers (/permission picker, /plan toggle)', () => {
       messageId: 'msg-0',
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
-      value: { kind: 'permission-pick', preset: 'read-only' },
+      value: { kind: 'permission-pick' },
+      option: 'read-only',
     });
     expect(service.applied).toHaveLength(0);
   });
@@ -2104,7 +2115,8 @@ describe('stateful web wrappers (/permission picker, /plan toggle)', () => {
       messageId: pickerId,
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
-      value: { kind: 'permission-pick', preset: 'read-only' },
+      value: { kind: 'permission-pick' },
+      option: 'read-only',
     });
     expect(h.transport.sentTexts.some((t) => t.text.includes('a turn is running'))).toBe(true);
     expect(service.applied).toHaveLength(0);

@@ -30,9 +30,12 @@ user feedback rounds 2–5.
      Section 2.
 2. **The complete answer** — the turn's final output, markdown-rendered
    (Section 4), at the bottom.
-3. **Execution status line** — `**… working**` / `**✅ Done**` /
-   `**⏹ Stopped**` (user-interrupted) / `**⚠️ Turn ended with an error**`.
-4. **Button area** — Section 3.
+3. **Execution status** — while working, a markdown line `**… working**` /
+   `**⏹ Stopping…**` (visible progress); in a terminal state, a quiet
+   `note` (`✅ Done` / `⏹ Stopped` / `⚠️ Turn ended with an error`) — the
+   header template color already carries the semantic (see 1.4).
+4. **Button area** — two rows (Section 3.1): state actions, then the row
+   view toggle.
 
 The card is **collapsed by default**: the row sequence is replaced by one
 line `think -> bash -> read -> …` (full sequence, never truncated — user
@@ -91,7 +94,14 @@ Reference: botmux streaming card; our `StreamingCardManager`.
 - Card body cap: Feishu ~109 KB. Our `MAX_CARD_CHARS = 60_000` truncation
   is **pending user confirmation** per the no-truncation rule.
 
-### 1.4 Turn lifecycle
+### 1.4 Visual language
+
+- Header template per status: `wathet` (soft blue) working, `green` done,
+  `red` error, `orange` stopped.
+- Terminal status is a quiet `note` (not a bold line); in-progress stays a
+  markdown line.
+
+### 1.5 Turn lifecycle
 
 | Event | Card behavior |
 | --- | --- |
@@ -149,10 +159,14 @@ Reference: user feedback rounds 1–5; botmux control cards.
 
 ### 3.1 Status button area (bottom of streaming card)
 
-- **working**: `⏹ Stop`.
-- **done**: `📋 Copy`, `🔁 Retry`, `⚙️ Panel`, and the rows toggle
-  (`▾ Collapse` / `▸ Expand` when rows exist).
-- **error**: `🔁 Retry`, `⚙️ Panel`, rows toggle.
+Two action rows keep each short on mobile:
+
+- **Row 1 — state actions**
+  - **working**: `⏹ Stop`.
+  - **done**: `📋 Copy`, `🔁 Retry`, `⚙️ Panel`.
+  - **error**: `🔁 Retry`, `⚙️ Panel`.
+- **Row 2 — view toggle** (only when rows exist): `▾ Collapse` /
+  `▸ Expand`.
 
 ### 3.2 Row ⋯ buttons
 
@@ -293,14 +307,17 @@ args only reports the current preset. A button press must be able to switch
 
 - **`/permission` (no args, or the panel button)** opens a **preset picker
   card** built from the real `ctx.permissionPresets` service (mounted by
-  dsh-base): one row per switchable preset (`names` + `optionOf` labels and
-  descriptions), the current preset marked ★ with no button, each other row
-  a `Select` button (`{kind:'permission-pick', preset}`). A pick applies
-  through `service.set(agent.session, preset)` and replies "switched to …".
-  Stale picks from a superseded picker card are rejected; picks while a turn
-  runs are refused (working-state gate). Typed `/permission <preset>`
-  passes through to the harness command. Without the service the wrapper
-  degrades to the harness report text (loud log).
+  dsh-base): a `select_static` **dropdown** (repo-picker pattern — inside an
+  `action` container, never a `form`) listing every switchable preset
+  (`names` + `optionOf` labels), with `initial_option` preselecting the
+  current preset (omitted when the effective state is `custom` — no table
+  option). A quiet note spells out the current preset (`★ current: …`).
+  Choosing applies through `service.set(agent.session, preset)` — the
+  callback's `option` field carries the preset — and replies
+  "switched to …". Stale picks from a superseded picker card are rejected;
+  picks while a turn runs are refused (working-state gate). Typed
+  `/permission <preset>` passes through to the harness command. Without the
+  service the wrapper degrades to the harness report text (loud log).
 - **`/plan` (no args, or the panel button)** **toggles** plan mode through
   `ctx.planMode`: reads `get(agent)` and `set(agent, !active)`, mirroring
   the harness outcome wording ("Plan mode on…" / "Plan mode off.",
@@ -320,6 +337,9 @@ session rebind/remint can never corrupt the live card.
 
 ### 8.4 Session lifecycle commands
 
+- `/sessions` rows are two lines: line 1 = `**title** · age · badges`
+  (the ★ current marker inline), line 2 = `` `id` · cwd `` (quiet identity);
+  page indicator is a `note`.
 - `/sessions` + `/resume` data: `ctx.sessionQuery` (mounted by dsh-base's
   `session-query-sqlite`), `listSessions()` newest-first + batch
   `readTitleSnapshots()` for titles. When the service is absent the surface
@@ -341,12 +361,15 @@ session rebind/remint can never corrupt the live card.
 
 `buildPanelCard(statusLine, running, commands, page)`: the core row
 (Stop while running / Retry / Copy) stays first; below it the full command
-palette — all 15 commands as buttons, grouped by category
-(session → chat → system) with category headers, `PANEL_PAGE_SIZE = 8`
-buttons per page and ◀️/▶️ nav hidden at the bounds. Each button stamps
-`{kind:'command', name}` and executes the same handler as the slash line.
-The panel is stateless: every open/pager posts a fresh card built from the
-current authoritative state (no stale-guard needed).
+palette — all 15 commands as buttons, grouped by category with emoji
+headers (`🧩 Session` / `💬 Chat` / `⚙️ System`), `PANEL_PAGE_SIZE = 8`
+buttons per page, a quiet `note` page indicator (`Commands · page 1/2`),
+and ◀️/▶️ nav hidden at the bounds. Each button stamps `{kind:'command',
+name}` and executes the same handler as the slash line. The status line
+carries the chat's session context (`session `id` · `cwd``) so a tap
+always shows what the buttons act on. The panel is stateless: every
+open/pager posts a fresh card built from the current authoritative state
+(no stale-guard needed).
 
 ### 8.6 State-machine matrix for the new actions
 

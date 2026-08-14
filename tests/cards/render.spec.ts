@@ -168,7 +168,7 @@ describe('buildCard', () => {
     // interactive action buttons (schema 2.0 rejects the action tag).
     expect(card.schema).toBeUndefined();
     expect(card.header?.title.content).toBe('T');
-    expect(card.header?.template).toBe('blue');
+    expect(card.header?.template).toBe('wathet');
   });
 
   it('uses green for done and red for error', () => {
@@ -250,8 +250,8 @@ describe('buildCard', () => {
     );
     expect(sequence?.content).toBe('think -> bash -> read');
     expect(card.elements.filter((el) => el.tag === 'column_set')).toHaveLength(0);
-    const action = card.elements.find((el) => el.tag === 'action');
-    expect(buttonLabels(action)).toContain('▸ Expand');
+    const actions = card.elements.filter((el) => el.tag === 'action');
+    expect(buttonLabels(actions[1])).toContain('▸ Expand');
   });
 
   it('expanded mode shows the collapse toggle when rows exist', () => {
@@ -271,8 +271,8 @@ describe('buildCard', () => {
       ],
       status: 'done',
     });
-    const action = card.elements.find((el) => el.tag === 'action');
-    expect(buttonLabels(action)).toContain('▾ Collapse');
+    const actions = card.elements.filter((el) => el.tag === 'action');
+    expect(buttonLabels(actions[1])).toContain('▾ Collapse');
   });
 
   it('renders the complete output at the bottom as markdown', () => {
@@ -308,8 +308,9 @@ describe('buildCard', () => {
       ],
       status: 'done',
     });
-    const action = card.elements.find((el) => el.tag === 'action');
-    expect(buttonLabels(action)).toEqual(['📋 Copy', '🔁 Retry', '⚙️ Panel', '▾ Collapse']);
+    const actions = card.elements.filter((el) => el.tag === 'action');
+    expect(buttonLabels(actions[0])).toEqual(['📋 Copy', '🔁 Retry', '⚙️ Panel']);
+    expect(buttonLabels(actions[1])).toEqual(['▾ Collapse']);
   });
 });
 
@@ -624,14 +625,17 @@ describe('buildPanelCard palette', () => {
     expect(page1).toHaveLength(PANEL_PAGE_SIZE);
     expect(page1[0]).toBe('⏹ Stop');
     expect(page1).toContain('👥 New group');
-    // Category headers render as markdown lines.
+    // Category headers render as emoji-tagged markdown lines.
     const markdowns = card.elements.filter(
       (el): el is Extract<CardElement, { tag: 'markdown' }> => el.tag === 'markdown',
     );
-    expect(markdowns.some((m) => m.content === '**Session**')).toBe(true);
-    expect(markdowns.some((m) => m.content === '**Chat**')).toBe(true);
-    // Page header line.
-    expect(markdowns.some((m) => m.content.includes('page 1/2'))).toBe(true);
+    expect(markdowns.some((m) => m.content === '**🧩 Session**')).toBe(true);
+    expect(markdowns.some((m) => m.content === '**💬 Chat**')).toBe(true);
+    // The page indicator is a quiet note, not a bold line.
+    const notes = card.elements.filter(
+      (el): el is Extract<CardElement, { tag: 'note' }> => el.tag === 'note',
+    );
+    expect(notes.some((n) => n.elements[0]?.content.includes('page 1/2'))).toBe(true);
   });
 
   it('stamps command payloads on palette buttons', () => {
@@ -689,61 +693,42 @@ describe('buildPermissionPickerCard', () => {
     },
   ];
 
-  it('renders one row per preset with Select buttons except the current', () => {
+  it('renders a select_static dropdown with all presets as options', () => {
     const card = buildPermissionPickerCard(presets);
-    const rows = card.elements.filter((el) => el.tag === 'column_set');
-    expect(rows).toHaveLength(3);
-    const selectValues = rows.flatMap((el) =>
-      'columns' in el
-        ? el.columns.flatMap((column) =>
-            column.elements
-              .filter((element) => element.tag === 'button')
-              .map((button) => button.value),
-          )
-        : [],
-    );
-    expect(selectValues).toEqual([
-      { kind: 'permission-pick', preset: 'read-only' },
-      { kind: 'permission-pick', preset: 'danger-full-access' },
+    const action = card.elements.find((el) => el.tag === 'action');
+    const select = selectOf(action);
+    expect(select).toBeDefined();
+    expect(select?.options.map((o) => o.value)).toEqual([
+      'read-only',
+      'workspace-write',
+      'danger-full-access',
     ]);
+    // The select is the repo-picker pattern: a marker payload, with the
+    // chosen preset arriving in the callback's `option` field.
+    expect(select?.value).toEqual({ kind: 'permission-pick' });
+    expect(card.elements.filter((el) => el.tag === 'column_set')).toHaveLength(0);
   });
 
-  it('marks the current preset and hides its Select button', () => {
+  it('preselects the current preset via initial_option', () => {
     const card = buildPermissionPickerCard(presets);
-    const currentRow = card.elements.find(
-      (el): el is Extract<CardElement, { tag: 'column_set' }> =>
-        el.tag === 'column_set' &&
-        el.columns.some((c) =>
-          c.elements.some((e) => e.tag === 'div' && e.text.content.includes('★ current')),
-        ),
+    const select = selectOf(card.elements.find((el) => el.tag === 'action'));
+    expect(select?.initial_option).toBe('workspace-write');
+    // The current preset is also spelled out in a quiet note.
+    const note = card.elements.find((el) => el.tag === 'note');
+    expect(note && 'elements' in note ? note.elements[0]?.content : '').toContain(
+      '★ current: workspace-write',
     );
-    expect(currentRow).toBeDefined();
-    const currentButtons =
-      currentRow && 'columns' in currentRow
-        ? currentRow.columns.flatMap((column) =>
-            column.elements.filter((element) => element.tag === 'button'),
-          )
-        : [];
-    expect(currentButtons).toHaveLength(0);
   });
 
-  it('keeps the ★ current badge on the SAME line as the preset title (regression)', () => {
-    // User report: 'workspace-write' and '★ current' rendered on two rows.
-    const card = buildPermissionPickerCard(presets);
-    const currentRow = card.elements.find(
-      (el): el is Extract<CardElement, { tag: 'column_set' }> =>
-        el.tag === 'column_set' &&
-        el.columns.some((c) =>
-          c.elements.some((e) => e.tag === 'div' && e.text.content.includes('★ current')),
-        ),
+  it('omits initial_option when the effective state is not an option (custom)', () => {
+    const custom = presets.map((p) => ({ ...p, current: false }));
+    const card = buildPermissionPickerCard(custom);
+    const select = selectOf(card.elements.find((el) => el.tag === 'action'));
+    expect(select?.initial_option).toBeUndefined();
+    const note = card.elements.find((el) => el.tag === 'note');
+    expect(note && 'elements' in note ? note.elements[0]?.content : '').toContain(
+      'No preset selected yet',
     );
-    const content =
-      currentRow && 'columns' in currentRow
-        ? currentRow.columns[0]?.elements.find((e) => e.tag === 'div')?.text.content
-        : '';
-    // The badge is inline with the title, not on its own newline.
-    expect(content).toContain('**workspace-write** ★ current');
-    expect(content?.includes('\n★')).toBe(false);
   });
 
   it('shows the empty state with no presets', () => {

@@ -49,8 +49,9 @@ export function ageLabel(createdAt: number, now = Date.now()): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-/** The one-line row label: `**title** · \`id\` · cwd · age · badges`. */
-export function sessionRowLine(row: SessionRowView): string {
+/** Line 1 of a session row: `**title** · age · badges` (badges include the
+ *  ★ current marker, inline — not on its own line). */
+export function sessionTitleLine(row: SessionRowView): string {
   const title =
     row.title === undefined || row.title.trim() === '' ? '(untitled)' : row.title.trim();
   const badges = [
@@ -58,12 +59,23 @@ export function sessionRowLine(row: SessionRowView): string {
     row.live ? '● live' : undefined,
     row.persisted ? '💾 saved' : undefined,
   ].filter((badge): badge is string => badge !== undefined);
-  const parts = [`**${stripAngleBrackets(title)}**`, `\`${row.sessionId}\``];
-  if (row.cwd !== undefined) parts.push(row.cwd);
+  const parts = [`**${stripAngleBrackets(title)}**`];
   const age = ageLabel(row.createdAt);
   if (age !== '') parts.push(age);
   if (badges.length > 0) parts.push(badges.join(' '));
   return parts.join(' · ');
+}
+
+/** Line 2 of a session row: `\`id\`` · cwd (the stable identity, quiet). */
+export function sessionMetaLine(row: SessionRowView): string {
+  const parts = [`\`${row.sessionId}\``];
+  if (row.cwd !== undefined) parts.push(row.cwd);
+  return parts.join(' · ');
+}
+
+/** The single-line form (used by tests and compact contexts). */
+export function sessionRowLine(row: SessionRowView): string {
+  return `${sessionTitleLine(row)} · ${sessionMetaLine(row)}`;
 }
 
 /**
@@ -103,8 +115,12 @@ export function buildSessionsCard(sessions: readonly SessionRowView[], page = 0)
         tag: 'column',
         width: 'weighted',
         weight: 1,
-        vertical_align: 'center',
-        elements: [{ tag: 'div', text: { tag: 'lark_md', content: sessionRowLine(row) } }],
+        vertical_align: 'top',
+        // Two stacked lines: the title line, then the quiet id · cwd line.
+        elements: [
+          { tag: 'div', text: { tag: 'lark_md', content: sessionTitleLine(row) } },
+          { tag: 'div', text: { tag: 'lark_md', content: sessionMetaLine(row) } },
+        ],
       },
     ];
     if (!row.current) {
@@ -130,7 +146,10 @@ export function buildSessionsCard(sessions: readonly SessionRowView[], page = 0)
     });
   }
   if (total > 1) {
-    elements.push({ tag: 'markdown', content: `page ${index + 1}/${total}` });
+    elements.push({
+      tag: 'note',
+      elements: [{ tag: 'plain_text', content: `page ${index + 1}/${total}` }],
+    });
     const nav: Array<{
       readonly tag: 'button';
       readonly text: { readonly tag: 'plain_text'; readonly content: string };

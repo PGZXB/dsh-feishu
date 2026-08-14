@@ -619,16 +619,25 @@ export class Bridge {
         : output === undefined
           ? '**Idle** — send a message to start a turn.'
           : '**Ready** — the last answer is in the card above; copy or retry it.';
+    // The panel carries the chat's session context so a tap always shows
+    // which session the buttons act on.
+    const sessionId = this.options.sessionMap.get(chatId);
+    const cwd = this.options.sessionMap.cwdFor(chatId) ?? this.options.defaultCwd;
+    const contextLine =
+      sessionId === undefined
+        ? `No session yet · \`${cwd}\``
+        : `session \`${sessionId}\` · \`${cwd}\``;
     await this.options.transport.sendCard(
       chatId,
-      buildPanelCard(statusLine, running, this.panelCommands(), page),
+      buildPanelCard(`${statusLine}\n${contextLine}`, running, this.panelCommands(), page),
     );
     this.syncCard(chatId);
   }
 
   /**
-   * Post the /permission preset picker card: one Select button per switchable
-   * preset (from the mounted `permissionPresets` service), current marked.
+   * Post the /permission preset picker card: a dropdown of the switchable
+   * presets (from the mounted `permissionPresets` service) with the current
+   * preset preselected.
    * @param chatId - the chat.
    */
   private async openPermissionPicker(chatId: string): Promise<void> {
@@ -1179,7 +1188,9 @@ export class Bridge {
         break;
       }
       case 'permission-pick': {
-        const preset = action.value.preset;
+        // Dropdown selections arrive in `option`; the (legacy) button
+        // fallback stamps the preset in `value.preset`.
+        const preset = action.option ?? action.value.preset;
         if (preset === undefined || preset === '') break;
         // Only the active permission picker may select (stale-card guard).
         if (action.messageId !== this.permissionPickerMessageIds.get(action.chatId)) {
@@ -1373,7 +1384,7 @@ export class Bridge {
       name: 'resume',
       description: 'Resume a saved session (no id opens the session list)',
       category: 'session',
-      buttonLabel: '🔁 Resume session',
+      buttonLabel: '↩️ Resume session',
       handler: async (invocation) => {
         const target = invocation.rawInput.trim();
         if (target === '') {
@@ -1409,7 +1420,7 @@ export class Bridge {
       name: 'clear',
       description: 'Start a fresh conversation (previous session stays saved)',
       category: 'session',
-      buttonLabel: '🧹 Fresh start',
+      buttonLabel: '✨ Fresh start',
       handler: startFresh,
     });
     this.commands.register({

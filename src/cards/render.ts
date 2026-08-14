@@ -13,7 +13,7 @@
  */
 
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
-import type { CardElement, CardJson, ColumnContainer } from '../feishu/types.js';
+import type { CardElement, CardJson } from '../feishu/types.js';
 import type { ProjectInfo } from '../projects.js';
 import { markdownToElements } from './markdown.js';
 import { toolRowTitle } from './tool-summary.js';
@@ -74,7 +74,9 @@ export interface CardSnapshot {
 /** Header template color per status. `stopped` uses amber — the DSH web
  *  warning semantic for interrupted work (StateDot warning). */
 const STATUS_TEMPLATE: Record<CardStatus, string> = {
-  working: 'blue',
+  // wathet is Lark's soft default blue — prettier than the flat `blue`
+  // while staying "in progress"; the terminal colors stay semantic.
+  working: 'wathet',
   done: 'green',
   error: 'red',
   stopped: 'orange',
@@ -100,7 +102,9 @@ export type SurfaceAction =
   | { readonly kind: 'resume-session'; readonly sessionId: string }
   | { readonly kind: 'panel-page'; readonly page: string }
   | { readonly kind: 'sessions-page'; readonly page: string }
-  | { readonly kind: 'permission-pick'; readonly preset: string };
+  // `preset` is optional: the dropdown stamps the marker only (the choice
+  // arrives in the callback's `option`); the legacy button carried it.
+  | { readonly kind: 'permission-pick'; readonly preset?: string };
 
 /**
  * Projects per picker card page (the button-based fallback, used only when
@@ -259,10 +263,11 @@ export function actionValue(action: SurfaceAction): Record<string, string> {
   return value;
 }
 
-/** The button row appended by status: working → stop; done → copy/retry/panel;
- *  error → retry/panel. When the turn has rows, a persistent toggle button
- *  expands/collapses the think-tool sequence (always visible, like Stop). */
-function statusButtons(status: CardStatus, hasRows: boolean, collapsed: boolean): CardElement {
+/** The button rows appended by status: row 1 = state actions (working →
+ *  stop; done → copy/retry/panel; error → retry/panel), row 2 = the row
+ *  view toggle when the turn has rows. Two rows keep each action row short
+ *  on mobile. */
+function statusButtonRows(status: CardStatus, hasRows: boolean, collapsed: boolean): CardElement[] {
   const actions: Array<{
     readonly tag: 'button';
     readonly text: { readonly tag: 'plain_text'; readonly content: string };
@@ -295,15 +300,21 @@ function statusButtons(status: CardStatus, hasRows: boolean, collapsed: boolean)
       value: actionValue({ kind: 'panel' }),
     });
   }
+  const rows: CardElement[] = [{ tag: 'action', actions }];
   if (hasRows) {
-    actions.push({
-      tag: 'button',
-      text: { tag: 'plain_text', content: collapsed ? '▸ Expand' : '▾ Collapse' },
-      type: 'default',
-      value: actionValue({ kind: 'toggle-rows' }),
+    rows.push({
+      tag: 'action',
+      actions: [
+        {
+          tag: 'button',
+          text: { tag: 'plain_text', content: collapsed ? '▸ Expand' : '▾ Collapse' },
+          type: 'default',
+          value: actionValue({ kind: 'toggle-rows' }),
+        },
+      ],
     });
   }
-  return { tag: 'action', actions };
+  return rows;
 }
 
 /**
@@ -424,19 +435,27 @@ export function buildCard(snapshot: CardSnapshot): CardJson {
   const stopping = snapshot.stopRequested === true && snapshot.status === 'working';
   if (snapshot.status !== 'working' || stopping || elements.length === 0) {
     elements.push({ tag: 'hr' });
-    const statusLine =
-      snapshot.status === 'error'
-        ? '**⚠️ Turn ended with an error**'
-        : snapshot.status === 'stopped'
-          ? '**⏹ Stopped**'
-          : snapshot.status === 'done'
-            ? '**✅ Done**'
-            : stopping
-              ? '**⏹ Stopping…**'
-              : '**… working**';
-    elements.push({ tag: 'markdown', content: statusLine });
+    if (snapshot.status === 'working') {
+      // In-progress state stays a visible markdown line (the user is waiting
+      // on it); terminal states move to a quiet `note` — the header template
+      // color already carries the semantic.
+      elements.push({
+        tag: 'markdown',
+        content: stopping ? '**⏹ Stopping…**' : '**… working**',
+      });
+    } else {
+      const terminalNote =
+        snapshot.status === 'error'
+          ? '⚠️ Turn ended with an error'
+          : snapshot.status === 'stopped'
+            ? '⏹ Stopped'
+            : '✅ Done';
+      elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: terminalNote }] });
+    }
   }
-  elements.push(statusButtons(snapshot.status, snapshot.rows.length > 0, collapsed));
+  // Two button rows: row 1 = state actions (Stop / Copy·Retry·Panel), row 2
+  // = the row view toggle — one row of 4 wrapped awkwardly on mobile.
+  elements.push(...statusButtonRows(snapshot.status, snapshot.rows.length > 0, collapsed));
   return {
     config: { wide_screen_mode: true },
     header: {
@@ -584,9 +603,19 @@ export function panelPages(
   return pages;
 }
 
-/** Capitalize a category id for display ('session' → 'Session'). */
+/** Category icon per panel group, making sections scannable. */
+const CATEGORY_ICONS: Record<string, string> = {
+  session: '🧩',
+  chat: '💬',
+  system: '⚙️',
+};
+
+/** Capitalize a category id for display ('session' → '🧩 Session'). */
 function categoryLabel(category: string): string {
-  return category === '' ? category : `${category.charAt(0).toUpperCase()}${category.slice(1)}`;
+  const name =
+    category === '' ? category : `${category.charAt(0).toUpperCase()}${category.slice(1)}`;
+  const icon = CATEGORY_ICONS[category] ?? '';
+  return `${icon} ${name}`.trim();
 }
 
 /**
@@ -644,7 +673,11 @@ export function buildPanelCard(
     const total = pages.length;
     const index = Math.min(Math.max(page, 0), total - 1);
     const entries = pages[index] ?? [];
-    elements.push({ tag: 'markdown', content: `**Commands** — page ${index + 1}/${total}` });
+    // Quiet page indicator — a note, not another bold line.
+    elements.push({
+      tag: 'note',
+      elements: [{ tag: 'plain_text', content: `Commands · page ${index + 1}/${total}` }],
+    });
     const pageButtons: Array<{
       readonly tag: 'button';
       readonly text: { readonly tag: 'plain_text'; readonly content: string };
@@ -724,6 +757,7 @@ export function buildPermissionPickerCard(presets: readonly PermissionPresetView
     },
     { tag: 'hr' },
   ];
+  const current = presets.find((preset) => preset.current);
   if (presets.length === 0) {
     elements.push({ tag: 'markdown', content: 'No presets configured on this deployment.' });
     return {
@@ -735,54 +769,40 @@ export function buildPermissionPickerCard(presets: readonly PermissionPresetView
       elements,
     };
   }
-  for (const preset of presets) {
-    const title = stripAngleBrackets(preset.label);
-    const description =
-      preset.description === undefined || preset.description === ''
-        ? ''
-        : stripAngleBrackets(preset.description);
-    // The ★ current badge rides on the TITLE line — a separate line reads as
-    // two rows (user report).
-    const titleLine = `**${title}**${preset.current ? ' ★ current' : ''}`;
-    const columns: ColumnContainer[] = [
+  // A single-choice dropdown (repo-picker pattern: select_static DIRECTLY
+  // inside an `action` container — v1 cards drop it inside a `form`). The
+  // select's own `value` carries the {kind:'permission-pick'} marker and the
+  // chosen preset arrives in the callback's `option` field. `initial_option`
+  // preselects the current preset; a `custom` effective state (not in the
+  // table) cannot be preselected, so the placeholder shows instead.
+  const currentName = current?.name;
+  const optionValues = new Set(presets.map((preset) => preset.name));
+  const canPreselect = currentName !== undefined && optionValues.has(currentName);
+  elements.push({
+    tag: 'action',
+    actions: [
       {
-        tag: 'column',
-        width: 'weighted',
-        weight: 1,
-        vertical_align: 'center',
-        elements: [
-          {
-            tag: 'div',
-            text: {
-              tag: 'lark_md',
-              content: `${titleLine}${description === '' ? '' : `\n\n${description}`}`,
-            },
-          },
-        ],
+        tag: 'select_static',
+        placeholder: { tag: 'plain_text', content: 'Choose a preset…' },
+        ...(canPreselect ? { initial_option: currentName } : {}),
+        options: presets.map((preset) => ({
+          text: { tag: 'plain_text', content: preset.label },
+          value: preset.name,
+        })),
+        value: actionValue({ kind: 'permission-pick' }),
       },
-    ];
-    if (!preset.current) {
-      columns.push({
-        tag: 'column',
-        width: 'auto',
-        vertical_align: 'center',
-        elements: [
-          {
-            tag: 'button',
-            text: { tag: 'plain_text', content: 'Select' },
-            type: 'default',
-            value: actionValue({ kind: 'permission-pick', preset: preset.name }),
-          },
-        ],
-      });
-    }
-    elements.push({
-      tag: 'column_set',
-      flex_mode: 'flow',
-      horizontal_spacing: 'default',
-      columns,
-    });
-  }
+    ],
+  });
+  // The current preset stays visible even when it is `custom` (no option).
+  elements.push({
+    tag: 'note',
+    elements: [
+      {
+        tag: 'plain_text',
+        content: current === undefined ? 'No preset selected yet.' : `★ current: ${current.label}`,
+      },
+    ],
+  });
   return {
     config: { wide_screen_mode: true },
     header: { title: { tag: 'plain_text', content: '🔐 Permission presets' }, template: 'wathet' },

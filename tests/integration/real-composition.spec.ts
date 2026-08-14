@@ -436,7 +436,8 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
             all.length > patchesBefore &&
             last?.header?.template === 'green' &&
             last?.elements.some(
-              (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('Done'),
+              (el) =>
+                el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('Done'),
             ) === true
           );
         },
@@ -959,11 +960,24 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
           (r) => r.kind === 'card' && r.card?.header?.title.content === '🔐 Permission presets',
         );
       expect(pickerRecord?.messageId).toBeDefined();
+      // The picker renders a select_static dropdown with the current preset
+      // preselected.
+      const pickerCard = pickerRecord?.card;
+      const pickerAction = pickerCard?.elements.find((el) => el.tag === 'action');
+      const pickerSelect =
+        pickerAction && 'actions' in pickerAction
+          ? pickerAction.actions.find((a) => a.tag === 'select_static')
+          : undefined;
+      expect(
+        pickerSelect && 'initial_option' in pickerSelect ? pickerSelect.initial_option : undefined,
+      ).toBe('workspace-write');
+      // Dropdown selection: marker payload + preset in `option`.
       writeAction({
         messageId: pickerRecord?.messageId ?? '',
         chatId,
         operatorOpenId: 'ou_mock',
-        value: { kind: 'permission-pick', preset: 'read-only' },
+        value: { kind: 'permission-pick' },
+        option: 'read-only',
       });
       await waitFor(
         'the preset switch text',

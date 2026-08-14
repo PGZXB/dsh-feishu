@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **UX polish pass (visual + control language).** Streaming card: working
+  header template `blue` → `wathet` (soft default blue), terminal status
+  moved from a bold markdown line to a quiet `note` (header color already
+  carries the semantic), and the button area split into two rows — state
+  actions (Stop / Copy·Retry·Panel) then the row view toggle — so mobile
+  never shows a wrapped 4-button row. Panel: the status line now carries
+  the session context (`session `id` · `cwd``), the page indicator is a
+  `note`, category headers get icons (`🧩 Session` / `💬 Chat` /
+  `⚙️ System`), and the icon set is deduplicated (Resume ↩️, Fresh start ✨
+  — 🔁 and 🧹 are no longer reused). `/sessions` rows are two lines (title
+  · age · badges over `id` · cwd) with a note page indicator.
+- **Permission picker is now a dropdown.** `/permission` renders a
+  `select_static` (repo-picker pattern) listing every preset, with
+  `initial_option` preselecting the current preset (omitted for a `custom`
+  effective state) and a note spelling out `★ current`. Choosing applies
+  through the callback's `option` field; the legacy button path still
+  works. `SelectAction` gains the optional `initial_option` field.
+
+
 - **Full command surface (Iteration 2 completion).** Fifteen surface
   commands, each sharing one handler between the slash line and the control
   panel palette button: `/help /status /cancel /cd /repo /group /sessions

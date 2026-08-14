@@ -116,7 +116,8 @@ describe('buildSessionsCard', () => {
     const card = buildSessionsCard(many, 0);
     expect(
       card.elements.some(
-        (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('page 1/2'),
+        (el) =>
+          el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 1/2'),
       ),
     ).toBe(true);
     const nav = card.elements.flatMap((el) =>
@@ -136,7 +137,8 @@ describe('buildSessionsCard', () => {
     const clamped = buildSessionsCard(many, 99);
     expect(
       clamped.elements.some(
-        (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('page 2/2'),
+        (el) =>
+          el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 2/2'),
       ),
     ).toBe(true);
   });
