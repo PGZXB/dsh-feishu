@@ -25,6 +25,7 @@ import {
   buildApprovalCard,
   buildApprovalDecidedCard,
   buildCard,
+  buildHistoryCard,
   buildModelPickerCard,
   buildPanelCard,
   buildPermissionPickerCard,
@@ -50,7 +51,12 @@ import { CommandRegistry, type CommandResult, parseSlash } from './commands.js';
 import type { CardAction, FeishuMessage, FeishuTransport, SentCard } from './feishu/types.js';
 import { MessageDeduplicator } from './message-dedup.js';
 import { type ProjectInfo, scanMultipleProjects } from './projects.js';
-import { buildSessionExport, type SessionExportEvent } from './session-export.js';
+import {
+  buildSessionExport,
+  type SessionExportEvent,
+  splitTranscriptParts,
+  toLarkCardMarkdown,
+} from './session-export.js';
 import type { SessionMap } from './session-map.js';
 
 /** Minimal logger surface the bridge needs. */
@@ -212,6 +218,12 @@ export interface BridgeOptions {
    */
   readonly allowedChats?: readonly string[];
   /**
+   * User allowlist: when non-empty, only messages from these sender open ids
+   * are served (anything else is ignored — including in an allowed chat).
+   * Note `ou_` open ids are app-scoped. Empty means all users are served.
+   */
+  readonly allowedUsers?: readonly string[];
+  /**
    * DSH slash-command passthrough: execute `line` against the chat's live
    * agent through the dsh command registry. Absent, registry commands are
    * not available (every unknown slash line falls to the unknown policy).
@@ -265,6 +277,18 @@ export interface BridgeOptions {
    * defaultCwd fallback is never an implicit choice (user requirement).
    */
   readonly requireWorkingDir?: boolean;
+  /**
+   * Two-stage reaction ack emojis: `received` is added to an accepted turn
+   * message, then swapped for `done` / `error` / `stopped` when the turn
+   * settles. Defaults GoGoGo / DONE / WARN / WARN (botmux codes). Reaction
+   * failures only log — they never block the turn.
+   */
+  readonly reactions?: {
+    readonly received?: string;
+    readonly done?: string;
+    readonly error?: string;
+    readonly stopped?: string;
+  };
   /**
    * Policy for an unknown slash line: `error` replies with an unknown-command
    * notice (default); `passthrough` delivers the line to the model as a
@@ -479,6 +503,52 @@ export class Bridge {
   private readonly awaitingQuestionAnswers = new Map<string, { readonly requestId: string }>();
   /** Monotonic approval request counter (card callback correlation ids). */
   private approvalSeq = 0;
+  /** Pending two-stage ack reaction per chat (message id + reaction id). */
+  private readonly pendingReactions = new Map<
+    string,
+    { readonly messageId: string; readonly reactionId: string | undefined }
+  >();
+  /** Last user whose accepted message started a turn, per chat (proactive
+   *  @-mention target for error/approval/question posts in groups). */
+  private readonly requesterOpenIds = new Map<string, string>();
+  /** Chat type of the last accepted message per chat (`p2p` needs no @). */
+  private readonly chatTypes = new Map<string, 'p2p' | 'group'>();
+
+  /**
+   * The user to proactively @ for a chat: the last accepted sender, only in
+   * groups (a p2p chat is single-user; an @ there is noise). Returns the
+   * card-markdown mention prefix, or '' when none applies.
+   * @param chatId - the chat.
+   * @returns `<at id="…"></at> ` or ''.
+   */
+  private cardMentionFor(chatId: string): string {
+    if (this.chatTypes.get(chatId) !== 'group') return '';
+    const requester = this.requesterOpenIds.get(chatId);
+    return requester === undefined ? '' : `<at id="${requester}"></at> `;
+  }
+
+  /**
+   * The text-message mention prefix for proactive notices (same rules as
+   * {@link cardMentionFor}, but the text-channel `<at user_id="…">` form).
+   * @param chatId - the chat.
+   * @returns `<at user_id="…"></at> ` or ''.
+   */
+  private textMentionFor(chatId: string): string {
+    if (this.chatTypes.get(chatId) !== 'group') return '';
+    const requester = this.requesterOpenIds.get(chatId);
+    return requester === undefined ? '' : `<at user_id="${requester}"></at> `;
+  }
+
+  /** Resolved reaction emojis (config overrides, botmux defaults). */
+  private reactionEmojis(): { received: string; done: string; error: string; stopped: string } {
+    const reactions = this.options.reactions;
+    return {
+      received: reactions?.received ?? 'GoGoGo',
+      done: reactions?.done ?? 'DONE',
+      error: reactions?.error ?? 'WARN',
+      stopped: reactions?.stopped ?? 'WARN',
+    };
+  }
 
   /** The live agent for a chat, or `undefined` (no session or not attached). */
   private liveAgent(chatId: string): Agent | undefined {
@@ -613,6 +683,7 @@ export class Bridge {
     'help',
     'status',
     'sessions',
+    'history',
     'cancel',
     'group',
     'model',
@@ -625,6 +696,10 @@ export class Bridge {
     this.cardStates.delete(chatId);
     this.lastOutputs.delete(chatId);
     this.lastPrompts.delete(chatId);
+    // The pending ack reaction belongs to a turn that is being discarded;
+    // drop the tracking entry (the stale emoji may remain on the old
+    // message — cosmetic only).
+    this.pendingReactions.delete(chatId);
   }
 
   /**
@@ -870,7 +945,7 @@ export class Bridge {
     try {
       const sent = await this.options.transport.sendCard(
         chatId,
-        buildApprovalCard(request.toolName, request.reason, requestId),
+        buildApprovalCard(request.toolName, request.reason, requestId, this.cardMentionFor(chatId)),
       );
       messageId = sent.messageId;
     } catch (error: unknown) {
@@ -951,7 +1026,10 @@ export class Bridge {
       const view = viewOf(question);
       let sent: SentCard;
       try {
-        sent = await this.options.transport.sendCard(chatId, buildQuestionCard(view));
+        sent = await this.options.transport.sendCard(
+          chatId,
+          buildQuestionCard(view, [], this.cardMentionFor(chatId)),
+        );
       } catch (error: unknown) {
         this.options.logger.warn(`question card send failed: ${String(error)}`);
         settleOne({ id: question.id, selected: [] });
@@ -1121,6 +1199,20 @@ export class Bridge {
       return;
     }
     this.lastPrompts.set(message.chatId, message.text);
+    // Remember the accepted sender and chat type: proactive @-mentions in
+    // groups (error notices, approval cards, question cards) target the user
+    // who started this turn.
+    this.requesterOpenIds.set(message.chatId, message.senderOpenId);
+    this.chatTypes.set(message.chatId, message.chatType === 'group' ? 'group' : 'p2p');
+    // Two-stage ack, stage 1: 👀 on the accepted message. Best-effort — a
+    // failed reaction must never block the turn.
+    const reactionId = await this.options.transport
+      .addReaction(message.messageId, this.reactionEmojis().received)
+      .catch((error: unknown) => {
+        this.options.logger.warn(`received reaction failed: ${String(error)}`);
+        return undefined;
+      });
+    this.pendingReactions.set(message.chatId, { messageId: message.messageId, reactionId });
     const sessionId = this.options.sessionMap.ensure(message.chatId);
     const cwd = this.options.sessionMap.cwdFor(message.chatId) ?? this.options.defaultCwd;
     const agent = await this.resolveAgent(message.chatId, sessionId, cwd);
@@ -1154,7 +1246,8 @@ export class Bridge {
 
   /**
    * The group mention gate (botmux-compatible). p2p messages always pass;
-   * group messages follow `groupMentionMode` plus the chat allowlist.
+   * group messages follow `groupMentionMode`; both must pass the chat and
+   * user allowlists.
    * @param message - the normalized inbound message.
    * @returns whether the surface should respond to this message.
    */
@@ -1162,6 +1255,13 @@ export class Bridge {
     const allowed = this.options.allowedChats ?? [];
     if (allowed.length > 0 && !allowed.includes(message.chatId)) {
       this.options.logger.info(`ignoring message from chat ${message.chatId}: not in allowlist`);
+      return false;
+    }
+    const allowedUsers = this.options.allowedUsers ?? [];
+    if (allowedUsers.length > 0 && !allowedUsers.includes(message.senderOpenId)) {
+      this.options.logger.info(
+        `ignoring message from user ${message.senderOpenId}: not in user allowlist`,
+      );
       return false;
     }
     if (message.chatType === 'p2p') return true;
@@ -1349,6 +1449,8 @@ export class Bridge {
         // is none, and the card would keep the stale working render.)
         this.options.cards.patch(chatId, this.snapshot(chatId, state));
         await this.options.cards.finalize(chatId, status);
+        // Two-stage ack, stage 2: swap 👀 for the terminal emoji.
+        await this.ackTurnEnd(chatId, status);
         const finalText = state.content.trim();
         if (finalText !== '') this.lastOutputs.set(chatId, finalText);
         // The card holds the full answer and finalizes in place; the initial
@@ -1357,7 +1459,12 @@ export class Bridge {
         // unnoticed. A stopped turn's '⏹ Stopping…' was already sent by the
         // stop action; the card's '⏹ Stopped' is the terminal state.
         if (status === 'error') {
-          await this.options.transport.sendText(chatId, '⚠️ Turn failed — see the card for details');
+          // Proactive @ of the requester in groups: a broken turn must not
+          // go unnoticed, and the group must know WHOSE turn failed.
+          await this.options.transport.sendText(
+            chatId,
+            `${this.textMentionFor(chatId)}⚠️ Turn failed — see the card for details`,
+          );
         }
         break;
       }
@@ -1370,6 +1477,16 @@ export class Bridge {
    * @param action - the normalized card callback.
    */
   async handleCardAction(action: CardAction): Promise<void> {
+    // The user allowlist gates card buttons too (a button IS a command —
+    // everything-is-a-card); an unlisted operator must not stop turns or
+    // answer approvals from an allowed chat.
+    const allowedUsers = this.options.allowedUsers ?? [];
+    if (allowedUsers.length > 0 && !allowedUsers.includes(action.operatorOpenId)) {
+      this.options.logger.info(
+        `ignoring card action from user ${action.operatorOpenId}: not in user allowlist`,
+      );
+      return;
+    }
     const kind = action.value.kind;
     this.options.logger.info(
       `card action ${kind ?? '?'} from ${action.operatorOpenId} in ${action.chatId}`,
@@ -2035,6 +2152,54 @@ export class Bridge {
         return { kind: 'success', text: '' };
       },
     });
+    // /history: replay this chat's session log as in-chat cards — the card
+    // sibling of /export (which ships the same transcript as a file). The
+    // full log is always replayed; an explicit `last <n>` argument replays
+    // only the last n events (a user-requested subset, never silent
+    // truncation). Long logs are split across cards on line boundaries.
+    this.commands.register({
+      name: 'history',
+      description: 'Replay this chat\u2019s session log as cards (/history [last <n>])',
+      category: 'system',
+      buttonLabel: '📜 History',
+      handler: async (invocation) => {
+        const sessionId = options.sessionMap.get(invocation.chatId);
+        if (sessionId === undefined) {
+          return { kind: 'error', text: 'no session to replay yet — send a message first.' };
+        }
+        if (options.readSession === undefined) {
+          return {
+            kind: 'error',
+            text: 'session replay unavailable — the session query service is not mounted.',
+          };
+        }
+        try {
+          const log = await options.readSession(sessionId);
+          const raw = invocation.rawInput.trim();
+          const requested = /^(?:last\s+)?(\d+)$/.exec(raw)?.[1];
+          let events = log.events;
+          if (requested !== undefined) {
+            const count = Number(requested);
+            if (!Number.isInteger(count) || count < 1) {
+              return { kind: 'error', text: 'usage: /history [last <n>]' };
+            }
+            events = events.slice(-count);
+          }
+          const markdown = toLarkCardMarkdown(buildSessionExport(events));
+          const parts = splitTranscriptParts(markdown);
+          for (let index = 0; index < parts.length; index += 1) {
+            await options.transport.sendCard(
+              invocation.chatId,
+              buildHistoryCard(sessionId, parts[index] ?? '', index + 1, parts.length),
+            );
+          }
+          return { kind: 'success', text: '' };
+        } catch (error: unknown) {
+          this.options.logger.warn(`session replay failed: ${String(error)}`);
+          return { kind: 'error', text: `session replay failed: ${String(error)}` };
+        }
+      },
+    });
     this.commands.register({
       name: 'resume',
       description: 'Resume a saved session (no id opens the session list)',
@@ -2210,6 +2375,34 @@ export class Bridge {
         this.options.logger.warn(`streaming card sync failed: ${String(error)}`);
       });
     }, 0);
+  }
+
+  /**
+   * Two-stage ack, stage 2: remove the received reaction and add the
+   * terminal one (done / error / stopped). Best-effort; failures log only.
+   */
+  private async ackTurnEnd(chatId: string, status: CardStatus): Promise<void> {
+    const pending = this.pendingReactions.get(chatId);
+    if (pending === undefined) return;
+    this.pendingReactions.delete(chatId);
+    const terminal =
+      status === 'done'
+        ? this.reactionEmojis().done
+        : status === 'stopped'
+          ? this.reactionEmojis().stopped
+          : this.reactionEmojis().error;
+    if (pending.reactionId !== undefined) {
+      await this.options.transport
+        .removeReaction(pending.messageId, pending.reactionId)
+        .catch((error: unknown) => {
+          this.options.logger.warn(`ack reaction remove failed: ${String(error)}`);
+        });
+    }
+    await this.options.transport
+      .addReaction(pending.messageId, terminal)
+      .catch((error: unknown) => {
+        this.options.logger.warn(`ack reaction add failed: ${String(error)}`);
+      });
   }
 
   /** Build the render snapshot from the authoritative state. */

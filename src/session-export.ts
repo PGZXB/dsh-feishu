@@ -102,3 +102,42 @@ export function buildSessionExport(
   if (lines.length === 0) return `${header}\n_(no content)_\n`;
   return `${header}\n${lines.join('\n\n')}\n`;
 }
+
+/** lark_md has no ATX headings, blockquotes, or horizontal rules: convert
+ *  the exported transcript so it renders in a Feishu `markdown` card
+ *  element — headings become bold, blockquotes italic, rules blank lines. */
+export function toLarkCardMarkdown(transcript: string): string {
+  const lines = transcript.split('\n').map((line) => {
+    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (heading !== null) return `**${heading[2] ?? ''}**`;
+    if (line.startsWith('> ')) return `_${line.slice(2)}_`;
+    if (/^-{3,}$/.test(line.trim())) return '';
+    return line;
+  });
+  return lines
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/** Split a long transcript into parts that each fit one card, on newline
+ *  boundaries so no line (and therefore no content) is ever cut mid-way.
+ *  @param markdown - lark_md-ready transcript text.
+ *  @param maxChars - per-part cap (defaults to the card text cap).
+ *  @returns the parts, in order.
+ */
+export function splitTranscriptParts(markdown: string, maxChars = 60_000): string[] {
+  if (markdown.length <= maxChars) return [markdown];
+  const lines = markdown.split('\n');
+  const parts: string[] = [];
+  let current = '';
+  for (const line of lines) {
+    if (current !== '' && current.length + line.length + 1 > maxChars) {
+      parts.push(current);
+      current = '';
+    }
+    current = current === '' ? line : `${current}\n${line}`;
+  }
+  if (current !== '') parts.push(current);
+  return parts;
+}

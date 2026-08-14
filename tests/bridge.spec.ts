@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type AgentDefaultModelService,
   Bridge,
+  type BridgeOptions,
   type LlmService,
   type ModelSelectionView,
   type PermissionPresetService,
@@ -35,6 +36,7 @@ import type {
   FeishuTransport,
   SentCard,
 } from '../src/feishu/types.js';
+import type { SessionExportEvent } from '../src/session-export.js';
 import { SessionMap } from '../src/session-map.js';
 
 const SCRATCH = join(process.cwd(), '_dev', 'test-bridge');
@@ -72,6 +74,22 @@ class RecordingTransport implements FeishuTransport {
   async sendFile(chatId: string, fileName: string, content: string): Promise<void> {
     this.sentFiles.push({ chatId, fileName, content });
   }
+  reactions: Array<{
+    messageId: string;
+    emojiType?: string;
+    action: 'add' | 'remove';
+    reactionId?: string;
+  }> = [];
+  private reactionSeq = 0;
+  async addReaction(messageId: string, emojiType: string): Promise<string | undefined> {
+    const reactionId = `rx-${++this.reactionSeq}`;
+    this.reactions.push({ messageId, emojiType, action: 'add', reactionId });
+    return reactionId;
+  }
+  async removeReaction(messageId: string, reactionId: string): Promise<void> {
+    this.reactions.push({ messageId, action: 'remove', reactionId });
+  }
+
   async sendCard(_chatId: string, card: CardJson): Promise<SentCard> {
     this.sentCards.push(card);
     return { messageId: `msg-${this.sentCards.length}` };
@@ -179,6 +197,7 @@ function makeHarness(
     mint?: () => string;
     groupMentionMode?: 'always' | 'never' | 'ambient' | 'topic';
     allowedChats?: readonly string[];
+    allowedUsers?: readonly string[];
     executeCommand?: (agent: Agent, line: string) => Promise<CommandResult | undefined>;
     unknownCommand?: 'error' | 'passthrough';
     repoRoots?: readonly string[];
@@ -188,6 +207,8 @@ function makeHarness(
     agentDefaultModel?: AgentDefaultModelService;
     llm?: LlmService;
     requireWorkingDir?: boolean;
+    reactions?: NonNullable<BridgeOptions['reactions']>;
+    readSession?: NonNullable<BridgeOptions['readSession']>;
   } = {},
 ): Harness {
   const transport = new RecordingTransport();
@@ -219,6 +240,7 @@ function makeHarness(
       ? { groupMentionMode: options.groupMentionMode }
       : {}),
     ...(options.allowedChats !== undefined ? { allowedChats: options.allowedChats } : {}),
+    ...(options.allowedUsers !== undefined ? { allowedUsers: options.allowedUsers } : {}),
     ...(options.executeCommand !== undefined ? { executeCommand: options.executeCommand } : {}),
     ...(options.unknownCommand !== undefined ? { unknownCommand: options.unknownCommand } : {}),
     ...(options.repoRoots !== undefined ? { repoRoots: options.repoRoots } : {}),
@@ -231,6 +253,8 @@ function makeHarness(
       ? { agentDefaultModel: options.agentDefaultModel }
       : {}),
     ...(options.llm !== undefined ? { llm: options.llm } : {}),
+    ...(options.reactions !== undefined ? { reactions: options.reactions } : {}),
+    ...(options.readSession !== undefined ? { readSession: options.readSession } : {}),
     // Tests default the working-directory gate OFF (production defaults it
     // ON); the gate's own tests enable it explicitly.
     requireWorkingDir: options.requireWorkingDir ?? false,
@@ -2851,5 +2875,253 @@ describe('/export command', () => {
     h.sessionMap.set('oc_chat', 'feishu-session-1');
     await h.bridge.handleMessage(message({ text: '/export' }));
     expect(h.transport.sentTexts.some((t) => t.text.includes('session export failed'))).toBe(true);
+  });
+});
+
+describe('two-stage reaction ack', () => {
+  it('adds the received emoji to an accepted turn message', async () => {
+    const h = makeHarness();
+    await h.bridge.handleMessage(message({ text: 'work please' }));
+    expect(h.transport.reactions).toEqual([
+      { messageId: 'om_msg1', emojiType: 'GoGoGo', action: 'add', reactionId: 'rx-1' },
+    ]);
+  });
+
+  it('swaps to DONE when the turn completes', async () => {
+    const h = makeHarness({ throttleMs: 0 });
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleEvent('feishu-session-1', chunkEvent('answer'));
+    await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const actions = h.transport.reactions.filter(
+      (r) => r.action === 'add' || r.action === 'remove',
+    );
+    expect(actions).toEqual([
+      { messageId: 'om_msg1', emojiType: 'GoGoGo', action: 'add', reactionId: 'rx-1' },
+      { messageId: 'om_msg1', action: 'remove', reactionId: 'rx-1' },
+      { messageId: 'om_msg1', emojiType: 'DONE', action: 'add', reactionId: 'rx-2' },
+    ]);
+  });
+
+  it('swaps to WARN on error and stopped', async () => {
+    for (const reason of ['error', 'aborted']) {
+      const h = makeHarness({ throttleMs: 0 });
+      await h.bridge.handleMessage(message());
+      await h.bridge.handleEvent(
+        'feishu-session-1',
+        reason === 'error'
+          ? (turnEndEvent({ kind: 'error', error: { code: 'X', message: 'boom' } }) as SessionEvent)
+          : (turnEndEvent({ kind: 'aborted' }) as SessionEvent),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const adds = h.transport.reactions.filter((r) => r.action === 'add').map((r) => r.emojiType);
+      expect(adds).toEqual(['GoGoGo', 'WARN']);
+      expect(h.transport.reactions.some((r) => r.action === 'remove')).toBe(true);
+    }
+  });
+
+  it('does not react to slash commands or gated-away messages', async () => {
+    const h = makeHarness({ requireWorkingDir: true });
+    await h.bridge.handleMessage(message({ text: '/help' }));
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: 'no cwd yet' }));
+    expect(h.transport.reactions).toHaveLength(0);
+  });
+
+  it('survives reaction failures (turn still completes)', async () => {
+    const h = makeHarness({ throttleMs: 0 });
+    const transport = h.transport;
+    const original = transport.addReaction.bind(transport);
+    transport.addReaction = async () => {
+      throw new Error('reaction api down');
+    };
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleEvent('feishu-session-1', chunkEvent('answer'));
+    await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.transport.updatedCards.at(-1)?.header?.template).toBe('green');
+    void original;
+  });
+
+  it('honors configured reaction emojis', async () => {
+    const h = makeHarness({
+      reactions: { received: 'OK', done: 'THUMBSUP', error: 'WOW', stopped: 'WOW' },
+    });
+    await h.bridge.handleMessage(message());
+    expect(h.transport.reactions[0]?.emojiType).toBe('OK');
+  });
+});
+
+describe('/history', () => {
+  const historyEvents = (): SessionExportEvent[] => [
+    { type: 'user/message', seq: 1, data: { content: [{ type: 'text', text: 'first ask' }] } },
+    {
+      type: 'assistant/message',
+      seq: 2,
+      data: { message: { content: [{ type: 'text', text: 'first answer' }] } },
+    },
+    { type: 'turn/end', seq: 3, data: { reason: { kind: 'completed' } } },
+    { type: 'user/message', seq: 4, data: { content: [{ type: 'text', text: 'second ask' }] } },
+    {
+      type: 'assistant/message',
+      seq: 5,
+      data: { message: { content: [{ type: 'text', text: 'second answer' }] } },
+    },
+  ];
+
+  it('replays the full session log as one card', async () => {
+    const h = makeHarness({
+      readSession: async () => ({ session: { id: 'feishu-session-1' }, events: historyEvents() }),
+    });
+    // Mint the chat's session first (a normal turn), then replay it.
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/history' }));
+    const card = h.transport.sentCards.at(-1);
+    expect(card?.header?.title.content).toBe('📜 History · feishu-session-1');
+    const markdown = card?.elements.find((el) => el.tag === 'markdown');
+    expect(markdown && 'content' in markdown ? markdown.content : '').toContain('first ask');
+    expect(markdown && 'content' in markdown ? markdown.content : '').toContain('second answer');
+    expect(markdown && 'content' in markdown ? markdown.content : '').not.toContain('## user');
+  });
+
+  it('replays only the last n events on an explicit /history last <n>', async () => {
+    const h = makeHarness({
+      readSession: async () => ({ session: { id: 'feishu-session-1' }, events: historyEvents() }),
+    });
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/history last 2' }));
+    const markdown = h.transport.sentCards.at(-1)?.elements.find((el) => el.tag === 'markdown');
+    const content = markdown && 'content' in markdown ? markdown.content : '';
+    expect(content).toContain('second ask');
+    expect(content).toContain('second answer');
+    expect(content).not.toContain('first ask');
+  });
+
+  it('splits an overlong log into sequential parts without loss', async () => {
+    const events = Array.from({ length: 40 }, (_, index) => ({
+      type: 'assistant/message',
+      seq: index + 1,
+      data: {
+        message: { content: [{ type: 'text', text: `block ${index} ${'x'.repeat(2000)}` }] },
+      },
+    }));
+    const h = makeHarness({
+      readSession: async () => ({ session: { id: 'feishu-session-1' }, events }),
+    });
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/history' }));
+    const cards = h.transport.sentCards.filter((c) =>
+      c.header?.title.content.startsWith('📜 History'),
+    );
+    expect(cards.length).toBeGreaterThan(1);
+    expect(cards[0]?.header?.title.content).toContain('(1/');
+    expect(cards.at(-1)?.header?.title.content).toContain(`(${cards.length}/${cards.length})`);
+    const all = cards
+      .map((c) => c.elements.find((el) => el.tag === 'markdown'))
+      .map((el) => (el && 'content' in el ? el.content : ''))
+      .join('');
+    expect(all).toContain('block 0');
+    expect(all).toContain('block 39');
+  });
+
+  it('reports missing session or service', async () => {
+    const noSession = makeHarness();
+    await noSession.bridge.handleMessage(message({ text: '/history' }));
+    expect(
+      noSession.transport.sentTexts.some((t) => t.text.includes('no session to replay yet')),
+    ).toBe(true);
+
+    // A chat with a session but no readSession service → loud degradation.
+    const h = makeHarness();
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/history' }));
+    expect(h.transport.sentTexts.some((t) => t.text.includes('session replay unavailable'))).toBe(
+      true,
+    );
+  });
+});
+
+describe('allowedUsers allowlist', () => {
+  it('ignores senders not on the allowlist; serves listed senders', async () => {
+    const h = makeHarness({ allowedUsers: ['ou_admin'] });
+    await h.bridge.handleMessage(message({ messageId: 'om_msg1', senderOpenId: 'ou_stranger' }));
+    expect(h.transport.reactions).toHaveLength(0);
+    expect(h.transport.sentCards).toHaveLength(0);
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', senderOpenId: 'ou_admin' }));
+    expect(h.transport.reactions).toHaveLength(1);
+  });
+
+  it('an empty allowlist serves everyone', async () => {
+    const h = makeHarness();
+    await h.bridge.handleMessage(message({ senderOpenId: 'ou_anyone' }));
+    expect(h.transport.reactions).toHaveLength(1);
+  });
+
+  it('applies inside allowed chats and to card actions', async () => {
+    const h = makeHarness({ allowedChats: ['oc_chat'], allowedUsers: ['ou_admin'] });
+    await h.bridge.handleMessage(message({ senderOpenId: 'ou_stranger' }));
+    expect(h.transport.sentCards).toHaveLength(0);
+    // A stranger's button tap is ignored too (buttons are commands).
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_stranger',
+      value: { kind: 'panel' },
+    });
+    expect(
+      h.transport.sentCards.some((c) => c.header?.title.content === '⚙️ dsh-feishu panel'),
+    ).toBe(false);
+  });
+});
+
+describe('proactive @ mentions in groups', () => {
+  it('error notice @s the requester in a group', async () => {
+    const h = makeHarness({ groupMentionMode: 'never' });
+    await h.bridge.handleMessage(groupMessage([], { senderOpenId: 'ou_user' }));
+    await h.bridge.handleEvent(
+      'feishu-session-1',
+      turnEndEvent({ kind: 'error', error: { code: 'X', message: 'boom' } }) as SessionEvent,
+    );
+    const notice = h.transport.sentTexts.at(-1);
+    expect(notice?.text).toContain('<at user_id="ou_user"></at>');
+    expect(notice?.text).toContain('Turn failed');
+  });
+
+  it('p2p error notices carry no mention', async () => {
+    const h = makeHarness();
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleEvent(
+      'feishu-session-1',
+      turnEndEvent({ kind: 'error', error: { code: 'X', message: 'boom' } }) as SessionEvent,
+    );
+    expect(h.transport.sentTexts.at(-1)?.text).toBe('⚠️ Turn failed — see the card for details');
+  });
+
+  it('approval card @s the requester in a group', async () => {
+    const h = makeHarness({ groupMentionMode: 'never' });
+    h.sessionMap.set('oc_chat', 'feishu-session-1');
+    await h.bridge.handleMessage(groupMessage([], { senderOpenId: 'ou_user' }));
+    const agent = await h.agentStore.resume('feishu-session-1');
+    void h.bridge.handleApprovalRequest({ agent, toolName: 'bash', reason: 'run' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const markdown = h.transport.sentCards.at(-1)?.elements.find((el) => el.tag === 'markdown');
+    expect(markdown && 'content' in markdown ? markdown.content : '').toContain(
+      '<at id="ou_user"></at>',
+    );
+  });
+
+  it('question card @s the requester in a group', async () => {
+    const h = makeHarness({ groupMentionMode: 'never' });
+    h.sessionMap.set('oc_chat', 'feishu-session-1');
+    await h.bridge.handleMessage(groupMessage([], { senderOpenId: 'ou_user' }));
+    const agent = await h.agentStore.resume('feishu-session-1');
+    void h.bridge.askQuestions({
+      agent,
+      questions: [{ id: 'q1', question: 'Which?', options: [{ label: 'Go' }] }],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const markdown = h.transport.sentCards.at(-1)?.elements.find((el) => el.tag === 'markdown');
+    expect(markdown && 'content' in markdown ? markdown.content : '').toContain(
+      '<at id="ou_user"></at>',
+    );
   });
 });

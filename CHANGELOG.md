@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Two-stage reaction ack (Iteration 4).** An accepted turn message gets a
+  received reaction (`GoGoGo` by default, botmux code) that is removed and
+  swapped for `DONE` / `WARN` / `WARN` when the turn settles — configurable
+  via `reactions.received/done/error/stopped` (set `received` to `''` to
+  disable). `FeishuTransport` gains `addReaction`/`removeReaction`; the
+  memory transport records `kind: 'reaction'` outbox entries. Best-effort:
+  a failed reaction logs and never blocks the turn. (New scope
+  `im:message.reaction` — see the permissions manifest below.)
+- **`/history` — session log replay (Iteration 4).** The card sibling of
+  `/export`: replays the chat's session log as in-chat cards from
+  `ctx.sessionQuery.readSession` — a lark_md-safe transcript (headings →
+  bold, quotes → italic) split across cards on line boundaries when long,
+  so nothing is ever cut. `/history last <n>` replays an explicit subset.
+  Read-only, allowed while a turn is running.
+- **`allowedUsers` user allowlist (Iteration 4).** Restricts the surface to
+  listed sender open ids (messages AND card buttons); unlisted users are
+  ignored entirely. Config key `allowedUsers`, with a `FEISHU_ALLOWED_USERS`
+  comma-separated env fallback for deployments/tests.
+- **Proactive @-mentions in groups (Iteration 4).** The bridge remembers the
+  last accepted sender per chat; group error notices, approval cards, and
+  question cards carry an @-mention of that requester (`<at user_id>` in
+  text, `<at id>` in card markdown). p2p chats and unknown requesters get
+  no mention.
+
 ### Fixed
 
 - **Question cards disable after answering** (user report): the card is

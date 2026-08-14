@@ -48,7 +48,7 @@ export interface MemoryTransportOptions {
 /** One recorded send/update in the outbox. */
 export interface MemoryOutboxRecord {
   readonly seq: number;
-  readonly kind: 'text' | 'card' | 'patch' | 'file';
+  readonly kind: 'text' | 'card' | 'patch' | 'file' | 'reaction';
   readonly at: number;
   readonly chatId?: string;
   readonly messageId?: string;
@@ -57,6 +57,10 @@ export interface MemoryOutboxRecord {
   /** File-message sends (`/export`); the integration-test seam. */
   readonly fileName?: string;
   readonly content?: string;
+  /** Reaction ack records (`add`/`remove` two-stage flow). */
+  readonly action?: 'add' | 'remove';
+  readonly emojiType?: string;
+  readonly reactionId?: string;
 }
 
 /**
@@ -138,6 +142,24 @@ export class MemoryTransport implements FeishuTransport {
   /** Record a file send in the outbox (the integration-test /export seam). */
   async sendFile(chatId: string, fileName: string, content: string): Promise<void> {
     this.record({ kind: 'file', chatId, fileName, content });
+  }
+
+  /** Record a reaction add (two-stage ack seam). */
+  async addReaction(messageId: string, emojiType: string): Promise<string | undefined> {
+    const reactionId = `reaction-${++this.seq}`;
+    this.record({
+      kind: 'reaction',
+      messageId,
+      emojiType,
+      action: 'add',
+      reactionId,
+    });
+    return reactionId;
+  }
+
+  /** Record a reaction remove (two-stage ack seam). */
+  async removeReaction(messageId: string, reactionId: string): Promise<void> {
+    this.record({ kind: 'reaction', messageId, action: 'remove', reactionId });
   }
 
   /** Record a card send; the created message id is the outbox seq. */

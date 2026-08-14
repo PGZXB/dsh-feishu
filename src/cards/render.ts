@@ -963,6 +963,7 @@ export function buildApprovalCard(
   toolName: string,
   reason: string | undefined,
   requestId: string,
+  mention = '',
 ): CardJson {
   return {
     config: { wide_screen_mode: true },
@@ -970,7 +971,7 @@ export function buildApprovalCard(
     elements: [
       {
         tag: 'markdown',
-        content: `**${stripAngleBrackets(toolName)}** wants to run${
+        content: `${mention}**${stripAngleBrackets(toolName)}** wants to run${
           reason === undefined || reason === '' ? '.' : `:\n\n${stripAngleBrackets(reason)}`
         }`,
       },
@@ -1037,11 +1038,12 @@ export interface QuestionView {
 export function buildQuestionCard(
   question: QuestionView,
   selected: readonly string[] = [],
+  mention = '',
 ): CardJson {
   const elements: CardElement[] = [
     {
       tag: 'markdown',
-      content: `**${stripAngleBrackets(question.question)}**${
+      content: `${mention}**${stripAngleBrackets(question.question)}**${
         question.detail === undefined || question.detail === ''
           ? ''
           : `\n\n${stripAngleBrackets(question.detail)}`
@@ -1115,5 +1117,42 @@ export function buildQuestionAnsweredCard(question: string, answer: string): Car
       { tag: 'markdown', content: `**${stripAngleBrackets(question)}**` },
       { tag: 'note', elements: [{ tag: 'plain_text', content: `Answer: ${answer}` }] },
     ],
+  };
+}
+
+/**
+ * Build the static card `/history` posts for one part of the session replay.
+ * The transcript is rendered as a single `markdown` element (lark_md): one
+ * element per card avoids the Feishu element-count cap for long logs.
+ * @param sessionId - the session being replayed.
+ * @param markdown - this part's lark_md-ready transcript text.
+ * @param part - one-based part index.
+ * @param total - total number of parts.
+ * @returns Feishu interactive card JSON (v1 layout).
+ */
+export function buildHistoryCard(
+  sessionId: string,
+  markdown: string,
+  part: number,
+  total: number,
+): CardJson {
+  const title =
+    total <= 1 ? `📜 History · ${sessionId}` : `📜 History · ${sessionId} (${part}/${total})`;
+  const elements: CardElement[] = [{ tag: 'markdown', content: markdown }];
+  if (total > 1) {
+    elements.push({
+      tag: 'note',
+      elements: [
+        {
+          tag: 'plain_text',
+          content: `part ${part} of ${total} — nothing is cut; the replay continues in the next card.`,
+        },
+      ],
+    });
+  }
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: title }, template: 'blue' },
+    elements,
   };
 }

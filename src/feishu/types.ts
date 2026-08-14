@@ -187,6 +187,15 @@ export interface FeishuTransport {
    * web's browser-download /export.
    */
   sendFile(chatId: string, fileName: string, content: string): Promise<void>;
+  /**
+   * Add an emoji reaction to a message (two-stage ack: 👀 on receive,
+   * swapped to ✅/⚠️ on turn end). Resolves with the reaction id so the
+   * surface can remove it later; `undefined` when the platform returns none.
+   * Failures are logged by callers — the reaction is never load-bearing.
+   */
+  addReaction(messageId: string, emojiType: string): Promise<string | undefined>;
+  /** Remove a reaction previously added by {@link addReaction}. */
+  removeReaction(messageId: string, reactionId: string): Promise<void>;
   /** Send an interactive card; resolves with the created message id. */
   sendCard(chatId: string, card: CardJson): Promise<SentCard>;
   /** Update an already-sent card in place (silent: no unread notification). */

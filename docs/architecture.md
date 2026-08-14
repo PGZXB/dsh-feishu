@@ -101,7 +101,18 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
   groups via cached chat member counts); `never` answers every group message;
   `ambient` yields when a message redirects to another member; `topic`
   behaves like `always` until threads land. `allowedChats` restricts which
-  chats are served at all.
+  chats are served at all; `allowedUsers` restricts which sender open ids
+  are served (messages and card buttons from unlisted users are ignored).
+- **Two-stage reaction ack.** An accepted turn message gets a received
+  reaction (`GoGoGo` by default), swapped for `DONE` / `WARN` / `WARN` at
+  turn end (config-overridable via `reactions`); failures only log.
+- **Proactive @-mentions.** The last accepted sender per chat is remembered;
+  group error notices, approval cards, and question cards carry an @-mention
+  of that requester so the right human is drawn in.
+- **Session replay.** `/history` renders the chat's session log as in-chat
+  cards (lark_md-safe transcript, split across cards without loss;
+  `/history last <n>` replays a subset); `/export` ships the same transcript
+  as a file message.
 - **A chat is a session.** One Feishu chat maps to one dsh session id
   (`feishu-*`), persisted so a restart resumes every chat.
 - **Restart-safe session resolution.** For a chat with a mapped session and

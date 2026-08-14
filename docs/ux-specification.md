@@ -466,3 +466,56 @@ profile composition so the Feishu agent has web-parity question capability.
 
 The agent's `signal` abort settles unanswered questions as empty answers.
 The answer card becomes a static confirmation.
+
+## 10. Iteration 4: reaction ack, history replay, allowlists, proactive mentions
+
+Reference: botmux (`im/lark/client.ts` reactions, `RECEIVED_REACTION_EMOJI_TYPE`
+/ `DONE`), DSH web (`/export` file download), and the harness config surface.
+
+### 10.1 Two-stage reaction ack
+
+Every accepted turn message gets a **received** reaction immediately (default
+`GoGoGo`, the botmux code), tracking `{messageId, reactionId}` per chat. When
+the turn settles, the received reaction is **removed and swapped** for the
+terminal emoji:
+
+| Turn outcome | Emoji (config `reactions`) | Default |
+|---|---|---|
+| completed | `done` | `DONE` |
+| error | `error` | `WARN` |
+| stopped (user Stop) | `stopped` | `WARN` |
+
+Configurable via `reactions.received/done/error/stopped`; `received: ''`
+disables the ack entirely. Reaction calls are best-effort: a failure logs and
+never blocks the turn. Slash commands and gate-refused messages get no
+reaction. `/clear`/`/resume` drop the pending-tracking entry.
+
+### 10.2 `/history` — session log replay
+
+`/history` replays the chat's session log as **in-chat cards** — the card
+sibling of `/export` (which ships the same transcript as a file message).
+The transcript is the same builder (`buildSessionExport`); a lark_md-safe
+conversion turns ATX headings into bold, blockquotes into italic, and rules
+into blank lines (`toLarkCardMarkdown`), and long logs are split across
+cards on line boundaries (`splitTranscriptParts`, `📜 History · <session>`
+header, `part i/n` note) — **nothing is ever cut**. `/history last <n>`
+replays only the last `n` events (an explicit user-requested subset, never a
+silent truncation). Read-only: allowed while a turn is running.
+
+### 10.3 `allowedUsers` allowlist
+
+`allowedUsers` (config; `FEISHU_ALLOWED_USERS` env fallback, comma-separated)
+restricts which **sender open ids** the surface serves — the user-level
+counterpart of `allowedChats`. When non-empty, messages from unlisted senders
+are ignored entirely (logged, no reaction/card/turn), including inside an
+allowed chat; card buttons (which are commands) are gated the same way by
+`operatorOpenId`. Note `ou_` open ids are app-scoped — the list is per-app.
+
+### 10.4 Proactive @-mentions in groups
+
+The bridge remembers the **last accepted sender** per chat (and its chat
+type). When a group needs a specific human — a failed turn's `⚠️ Turn
+failed` notice, an approval card, or a question card — the post carries an
+`@`-mention of that requester: `<at user_id="…"></at>` in text messages,
+`<at id="…"></at>` in card markdown (botmux-proven syntaxes). p2p chats get
+no mention (single-user; noise). Unknown requester → no mention, gracefully.

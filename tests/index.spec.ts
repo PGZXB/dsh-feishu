@@ -54,6 +54,11 @@ class FakeTransport implements FeishuTransport {
   }
   async sendText(_chatId: string, _text: string): Promise<void> {}
   async sendFile(_chatId: string, _fileName: string, _content: string): Promise<void> {}
+  async addReaction(_messageId: string, _emojiType: string): Promise<string | undefined> {
+    return undefined;
+  }
+  async removeReaction(_messageId: string, _reactionId: string): Promise<void> {}
+
   async sendCard(_chatId: string, _card: CardJson): Promise<SentCard> {
     return { messageId: 'msg-1' };
   }

@@ -2245,4 +2245,375 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
       );
     }
   }, 180_000);
+
+  /** Two-stage reaction ack on a completed turn: the received emoji lands
+   *  on the inbound message, then swaps to DONE via remove+add at turn end. */
+  it('two-stage reaction ack: received emoji, then DONE swap on completion', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_reaction_${Date.now()}`;
+      const messageId = `om-rx-${Date.now()}`;
+      await pinWorkingDir(chatId);
+      // Reaction records carry no chatId — the correlation key is the
+      // inbound messageId, written explicitly here.
+      writeFileSync(
+        join(INBOX_DIR, `${messageId}.json`),
+        JSON.stringify({
+          messageId,
+          chatId,
+          chatType: 'p2p',
+          senderOpenId: 'ou_mock',
+          text: 'run a reaction check',
+          createdAt: Date.now(),
+        }),
+        'utf8',
+      );
+      // Stage 1: the received emoji lands on the inbound message.
+      await waitFor(
+        'the received reaction add',
+        () =>
+          readOutbox().some(
+            (r) =>
+              r.kind === 'reaction' &&
+              r.messageId === messageId &&
+              r.action === 'add' &&
+              r.emojiType === 'GoGoGo',
+          ),
+        60_000,
+      );
+      // Stage 2: turn completion swaps it to DONE (remove then add).
+      await waitFor(
+        'the DONE reaction swap',
+        () =>
+          readOutbox().some(
+            (r) =>
+              r.kind === 'reaction' &&
+              r.messageId === messageId &&
+              r.action === 'add' &&
+              r.emojiType === 'DONE',
+          ),
+        90_000,
+      );
+      const records = readOutbox().filter(
+        (r) => r.kind === 'reaction' && r.messageId === messageId,
+      );
+      expect(records[0]).toMatchObject({ action: 'add', emojiType: 'GoGoGo' });
+      expect(records[1]).toMatchObject({ action: 'remove', reactionId: records[0]?.reactionId });
+      expect(records[2]).toMatchObject({ action: 'add', emojiType: 'DONE' });
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 180_000);
+
+  /** Two-stage reaction ack on a failing turn: the received emoji swaps to
+   *  the configured error emoji (WARN) instead of DONE. */
+  it('two-stage reaction ack: error turn swaps to the error emoji', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      server.setScripts([
+        [{ error: 'mock boom' }],
+        [{ error: 'mock boom' }],
+        [{ error: 'mock boom' }],
+      ]);
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_reaction_err_${Date.now()}`;
+      const messageId = `om-rx-err-${Date.now()}`;
+      await pinWorkingDir(chatId);
+      writeFileSync(
+        join(INBOX_DIR, `${messageId}.json`),
+        JSON.stringify({
+          messageId,
+          chatId,
+          chatType: 'p2p',
+          senderOpenId: 'ou_mock',
+          text: 'cause a reaction ack error',
+          createdAt: Date.now(),
+        }),
+        'utf8',
+      );
+      await waitFor(
+        'the red final card patch',
+        () => readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'red'),
+        90_000,
+      );
+      await waitFor(
+        'the WARN reaction swap',
+        () =>
+          readOutbox().some(
+            (r) =>
+              r.kind === 'reaction' &&
+              r.messageId === messageId &&
+              r.action === 'add' &&
+              r.emojiType === 'WARN',
+          ),
+        30_000,
+      );
+      const records = readOutbox().filter(
+        (r) => r.kind === 'reaction' && r.messageId === messageId,
+      );
+      expect(records[0]).toMatchObject({ action: 'add', emojiType: 'GoGoGo' });
+      expect(records[1]).toMatchObject({ action: 'remove', reactionId: records[0]?.reactionId });
+      expect(records[2]).toMatchObject({ action: 'add', emojiType: 'WARN' });
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 180_000);
+
+  /** /history replays the chat's real session log as an in-chat card: the
+   *  transcript of the turn that just ran (mock LLM answer included). */
+  it('/history replays the session log as a card', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_history_${Date.now()}`;
+      await pinWorkingDir(chatId);
+      sendMessage(chatId, 'remember this answer');
+      await waitFor(
+        'the green final card patch',
+        () => readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'green'),
+        90_000,
+      );
+      sendMessage(chatId, '/history');
+      await waitFor(
+        'the history card',
+        () =>
+          readOutbox()
+            .filter((r) => r.kind === 'card')
+            .some((r) => r.card?.header?.title.content.startsWith('📜 History')),
+        60_000,
+      );
+      const historyCard = [...readOutbox()]
+        .reverse()
+        .find(
+          (r) => r.kind === 'card' && r.card?.header?.title.content.startsWith('📜 History'),
+        )?.card;
+      const markdown = historyCard?.elements.find((el) => el.tag === 'markdown');
+      const content = markdown && 'content' in markdown ? markdown.content : '';
+      expect(content).toContain('remember this answer');
+      expect(content).toContain('Hello from mock LLM');
+    } catch (error) {
+      const tail = readOutbox()
+        .slice(-8)
+        .map((r) => `${r.seq} ${r.kind} ${r.text ?? ''} ${r.fileName ?? ''} ${r.messageId ?? ''}`)
+        .join('\n');
+      throw new Error(
+        `${String(error)}\n--- outbox tail ---\n${tail}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 180_000);
+
+  /** The user allowlist (env seam FEISHU_ALLOWED_USERS): a listed sender is
+   *  served, a stranger in the same chat is ignored entirely — no reaction,
+   *  no card, no LLM request. */
+  it('allowedUsers: listed sender served, stranger ignored', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          FEISHU_ALLOWED_USERS: 'ou_mock',
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_allowed_${Date.now()}`;
+      await pinWorkingDir(chatId);
+      sendMessage(chatId, 'served turn');
+      await waitFor(
+        'the green final card patch',
+        () => readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'green'),
+        90_000,
+      );
+      // A stranger (same chat, different sender) is ignored: no reaction on
+      // their message, no new LLM request, no card.
+      const completionsBefore = server.completionRequests();
+      const strangerId = `om-stranger-${Date.now()}`;
+      writeFileSync(
+        join(INBOX_DIR, `${strangerId}.json`),
+        JSON.stringify({
+          messageId: strangerId,
+          chatId,
+          chatType: 'p2p',
+          senderOpenId: 'ou_stranger',
+          text: 'intrude',
+          createdAt: Date.now(),
+        }),
+        'utf8',
+      );
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      expect(readOutbox().some((r) => r.kind === 'reaction' && r.messageId === strangerId)).toBe(
+        false,
+      );
+      expect(server.completionRequests()).toBe(completionsBefore);
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 180_000);
+
+  /** Proactive @-mention: a failing turn in a GROUP posts the error notice
+   *  with a text-channel mention of the user who started the turn. */
+  it('proactive mention: group error notice @s the requester', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      server.setScripts([
+        [{ error: 'mock boom' }],
+        [{ error: 'mock boom' }],
+        [{ error: 'mock boom' }],
+      ]);
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          FEISHU_MOCK_BOT_OPEN_ID: 'ou_bot',
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_mention_${Date.now()}`;
+      sendGroupMessage(chatId, `/cd ${INT_CWD}`, ['ou_bot']);
+      await waitFor(
+        'the /cd confirmation in the group',
+        () =>
+          readOutbox().some(
+            (r) => r.kind === 'text' && r.text?.includes('Working directory set to'),
+          ),
+        30_000,
+      );
+      sendGroupMessage(chatId, 'break something', ['ou_bot']);
+      await waitFor(
+        'the red final card patch',
+        () => readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'red'),
+        90_000,
+      );
+      await waitFor(
+        'the mention-carrying failure notice',
+        () =>
+          readOutbox().some(
+            (r) =>
+              r.kind === 'text' &&
+              r.text?.includes('<at user_id="ou_mock"></at>') &&
+              r.text?.includes('Turn failed'),
+          ),
+        30_000,
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 180_000);
 });

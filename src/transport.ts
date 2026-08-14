@@ -290,6 +290,24 @@ export class LarkTransport implements FeishuTransport {
     await this.createMessage(chatId, 'file', JSON.stringify({ file_key: fileKey }));
   }
 
+  /** Add an emoji reaction to a message (two-stage ack). */
+  async addReaction(messageId: string, emojiType: string): Promise<string | undefined> {
+    const response = await this.client.im.v1.messageReaction.create({
+      data: { reaction_type: { emoji_type: emojiType } },
+      path: { message_id: messageId },
+    });
+    this.assertOk(response, 'im.v1.message.reaction.create');
+    return response.data?.reaction_id;
+  }
+
+  /** Remove a reaction previously added by this bot. */
+  async removeReaction(messageId: string, reactionId: string): Promise<void> {
+    const response = await this.client.im.v1.messageReaction.delete({
+      path: { message_id: messageId, reaction_id: reactionId },
+    });
+    this.assertOk(response, 'im.v1.message.reaction.delete');
+  }
+
   /** Send an interactive card; resolves with the created message id. */
   async sendCard(chatId: string, card: CardJson): Promise<SentCard> {
     const response = await this.createMessage(chatId, 'interactive', JSON.stringify(card));

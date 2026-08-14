@@ -2,6 +2,12 @@
   "appEvents": ["im.message.receive_v1"],
   "cardCallbacks": ["card.action.trigger"],
   "longConnectionMode": 4,
-  "scopes": ["im:message", "im:message:send_as_bot", "im:chat", "im:resource"],
+  "scopes": [
+    "im:message",
+    "im:message:send_as_bot",
+    "im:chat",
+    "im:resource",
+    "im:message.reaction"
+  ],
   "defaultAppName": "DSH Agent (dsh-feishu)"
 }

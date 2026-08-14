@@ -4,7 +4,7 @@
 >
 > 开发方式：**迭代式**——先完成核心功能并测试，再逐步叠加新功能。
 >
-> 状态：**Iteration 1–2 ✅**（私聊/群聊闭环、重启安全、命令体系（17 个表面命令 + 完整按钮面板 + DSH web 命令包装 `/plan /goal /compact /feedback /permission`、surface-native `/model`）、会话生命周期 `/sessions /resume /clear`、UX 打磨（下拉选择卡、note 状态、按钮分行）、**工作目录门禁**（未显式选 repo 前拒绝工作）；`/export` 因 Web-only 浏览器下载通道有意排除）；**Iteration 3 ✅（交互审批卡 + 提问卡 + 统一交互机制 `cards/interactions.ts`，fail-closed 语义）**；299 测试全绿（含 21 个真实组合集成测试，其中 2 个为真实审批链路：沙箱升级工具调用 → 审批卡 → Allow/Reject → 工具继续/报错）。**Iteration 4（历史回放/表情回执/主动通知/权限白名单）待开始**。`/export` 已落地为**文件消息**（web 浏览器下载的飞书等价物），`ask_user_question` 提问工具已随 bundle 挂载（与 web standard/code 预设对齐）。
+> 状态：**Iteration 1–2 ✅**（私聊/群聊闭环、重启安全、命令体系（17 个表面命令 + 完整按钮面板 + DSH web 命令包装 `/plan /goal /compact /feedback /permission`、surface-native `/model`）、会话生命周期 `/sessions /resume /clear`、UX 打磨（下拉选择卡、note 状态、按钮分行）、**工作目录门禁**（未显式选 repo 前拒绝工作）；`/export` 因 Web-only 浏览器下载通道有意排除）；**Iteration 3 ✅（交互审批卡 + 提问卡 + 统一交互机制 `cards/interactions.ts`，fail-closed 语义）**；299 测试全绿（含 21 个真实组合集成测试，其中 2 个为真实审批链路：沙箱升级工具调用 → 审批卡 → Allow/Reject → 工具继续/报错）。**Iteration 4 ✅（两阶段表情回执 + `/history` 会话回放卡 + `allowedUsers` 用户白名单 + 群内主动 @ 提醒）**；364 单元测试 + 28 真实组合集成测试全绿。`/export` 已落地为**文件消息**（web 浏览器下载的飞书等价物），`ask_user_question` 提问工具已随 bundle 挂载（与 web standard/code 预设对齐）。
 >
 > 已确认决策（2026-08）：npm 包名 `@dsh-feishu/dsh-feishu`；未知 slash 命令默认报错提示（附 `/help` 指引，配置项留后门）；飞书测试机器人由用户自行申请、稍后提供凭据。
 >
@@ -197,14 +197,14 @@ examples/            # 最小可运行 profile 配置 + 飞书后台配置指南
 ### P1 —— 交互与多会话（Iteration 3–4）
 - [x] **审批卡（高优先级，用户介入核心场景）**：监听 `approval/request` → 审批卡（工具名+原因+允许一次/拒绝）→ 回调 → `allowed-once/rejected`；超时/abort → `cancelled`；无聊天/发卡失败 → fail-closed `unavailable`（DSH 语义）
 - [x] **提问卡**：`userQuestions.registerProvider` → 单选点即答 / 多选切换+提交 / 无选项回复文本捕获（与审批卡共用 `cards/interactions.ts` 统一机制）
-- [ ] 交互按钮卡：`/repo` 目录选择器、确认/取消
-- [ ] 卡片控制按钮：显示/隐藏输出、复制、重试、停止
-- [ ] 表情回执：收到消息时 `addReaction`（botmux `RECEIVED_REACTION_EMOJI_TYPE`）
-- [ ] 多群并发（每群独立 session + 独立串行队列）
-- [ ] 会话历史回放（`/history` 或进群先发最近摘要卡）
-- [ ] 长会话输出折叠（cc-tui MAX_ROWS 思路的卡片折叠）
-- [ ] 权限：群管理员/用户白名单控制命令（注意 `ou_` open_id app-scoped）
-- [ ] 主动通知（agent 空闲/出错/需要确认时 @ 提醒）
+- [x] 交互按钮卡：`/repo` 目录选择器、确认/取消（Iteration 2 已落地图形目录选择卡）
+- [x] 卡片控制按钮：显示/隐藏输出、复制、重试、停止（Iteration 2 落地，状态机矩阵覆盖）
+- [x] **表情回执（两阶段）**：收到消息 `addReaction`（botmux `GoGoGo`）→ 回合结束 remove+swap 为 `DONE`/`WARN`（可配置 `reactions`，失败仅日志不阻塞回合；`im:message.reaction` scope 已入 manifest）
+- [x] 多群并发（每群独立 session + 独立串行队列）
+- [x] **会话历史回放**：`/history` 会话日志以卡片回放（lark_md 转换 + 按行分卡不截断；`/history last <n>` 显式子集）；`/export` 同一转录以文件消息发出
+- [ ] 长会话输出折叠（cc-tui MAX_ROWS 思路的卡片折叠）——输出折叠已由"完成态卡片保留 + 按钮"部分覆盖，完整折叠视图待 Iteration 5
+- [x] **权限：用户白名单控制命令**（`allowedUsers`，`ou_` open_id app-scoped；消息与卡片按钮同门禁；`FEISHU_ALLOWED_USERS` env 兜底）
+- [x] **主动通知（出错/需确认时 @ 提醒）**：群内失败提示/审批卡/提问卡 @ 最后发起者（文本 `<at user_id>` / 卡片 `<at id>` 两种语法）
 
 ### P2 —— botmux 精选迁移（Iteration 5，按需）
 - [ ] 定时任务（复用 DSH `dsh-schedule`）+ 外部 webhook 触发

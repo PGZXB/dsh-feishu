@@ -95,6 +95,30 @@ describe('MemoryTransport', () => {
     expect(records[0]?.messageId).toBe(messageId);
   });
 
+  it('records reaction adds and removals in the outbox (two-stage ack seam)', async () => {
+    const transport = new MemoryTransport({ dir: SCRATCH });
+    await transport.start();
+    const messageId = 'om_reaction_1';
+    const reactionId = await transport.addReaction(messageId, 'GoGoGo');
+    expect(reactionId).toMatch(/^reaction-\d+$/);
+    await transport.removeReaction(messageId, reactionId as string);
+    const records = transport.outbox();
+    expect(records.map((r) => r.kind)).toEqual(['reaction', 'reaction']);
+    expect(records[0]).toMatchObject({
+      kind: 'reaction',
+      messageId,
+      action: 'add',
+      emojiType: 'GoGoGo',
+      reactionId,
+    });
+    expect(records[1]).toMatchObject({
+      kind: 'reaction',
+      messageId,
+      action: 'remove',
+      reactionId,
+    });
+  });
+
   it('stops polling after stop()', async () => {
     const transport = new MemoryTransport({ dir: SCRATCH, pollIntervalMs: 100 });
     const delivered: FeishuMessage[] = [];

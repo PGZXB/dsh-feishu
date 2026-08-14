@@ -97,6 +97,7 @@ Current scopes (权限):
 | `im:message:send_as_bot` | Send messages and cards as the bot |
 | `im:chat` | Read chat metadata |
 | `im:resource` | Upload file messages (`/export`) |
+| `im:message.reaction` | Two-stage reaction ack (received/done/error emojis) |
 
 ### 4. Publish
 
@@ -150,3 +151,11 @@ installs). No inbound ports, no public IP.
   Permissions). Without it the upload fails with HTTP 400 / "Access denied …
   im:resource:upload" — the surface surfaces this hint in the `/export`
   error text.
+
+- The two-stage reaction ack needs the **`im:message.reaction`** scope (also
+  in the manifest above). Reaction failures only log — a missing scope
+  degrades to no emojis, never a broken turn.
+- **`allowedUsers`** (config, or the `FEISHU_ALLOWED_USERS` env var —
+  comma-separated) restricts the surface to the listed sender open ids; the
+  default (unset/empty) serves everyone. `ou_` open ids are app-scoped: a
+  list from one app does not transfer to another.

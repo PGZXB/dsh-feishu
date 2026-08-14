@@ -90,6 +90,12 @@ export interface Config {
    */
   readonly allowedChats?: string[];
   /**
+   * User allowlist: when non-empty, only messages from these sender open ids
+   * are served (anything else is ignored, including inside an allowed chat).
+   * Note `ou_` open ids are app-scoped. Empty means all users are served.
+   */
+  readonly allowedUsers?: string[];
+  /**
    * Unknown slash-line policy: `error` replies with an unknown-command notice
    * (default); `passthrough` delivers the line to the model as a normal turn.
    */
@@ -105,6 +111,17 @@ export interface Config {
    * is never an implicit choice.
    */
   readonly requireWorkingDir?: boolean;
+  /**
+   * Two-stage reaction ack emojis (received / done / error / stopped).
+   * Defaults GoGoGo / DONE / WARN / WARN. Set `received` to '' to disable
+   * the ack entirely.
+   */
+  readonly reactions?: {
+    readonly received?: string;
+    readonly done?: string;
+    readonly error?: string;
+    readonly stopped?: string;
+  };
 }
 
 /** Validated plugin configuration (schemastery schema). */
@@ -121,9 +138,18 @@ export const Config: z<Config> = z.object({
     .union([z.const('always'), z.const('never'), z.const('ambient'), z.const('topic')])
     .required(false),
   allowedChats: z.array(z.string()).required(false),
+  allowedUsers: z.array(z.string()).required(false),
   unknownCommand: z.union([z.const('error'), z.const('passthrough')]).required(false),
   repoRoots: z.array(z.string()).required(false),
   requireWorkingDir: z.boolean().required(false),
+  reactions: z
+    .object({
+      received: z.string().required(false),
+      done: z.string().required(false),
+      error: z.string().required(false),
+      stopped: z.string().required(false),
+    })
+    .required(false),
 });
 
 /** Resolved credentials, or `undefined` when either value is missing. */
@@ -189,6 +215,23 @@ type SessionQueryLike = {
     }[]
   >;
 };
+
+/** Resolve the user allowlist: config first, then the `FEISHU_ALLOWED_USERS`
+ *  environment variable (comma-separated open ids; the integration-test
+ *  seam — sender open ids are fixed there). Empty means no restriction. */
+function resolveAllowedUsers(config: Config): string[] | undefined {
+  // Schemastery materializes absent optional arrays as `[]` — treat an empty
+  // list as "no restriction" exactly like an absent one.
+  if (config.allowedUsers !== undefined && config.allowedUsers.length > 0) {
+    return config.allowedUsers;
+  }
+  const env = process.env.FEISHU_ALLOWED_USERS;
+  if (env === undefined || env.trim() === '') return undefined;
+  return env
+    .split(',')
+    .map((id) => id.trim())
+    .filter((id) => id !== '');
+}
 
 /** The default transport factory picks this up; see below. */
 function defaultTransportFactory(
@@ -280,6 +323,7 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
   const dataDir = config.dataDir ?? defaultDataDir();
   const sessionMap = new SessionMap(join(dataDir, 'session-map.json'));
   sessionMap.load();
+  const allowedUsers = resolveAllowedUsers(config);
   const transportFactory = deps.createTransport ?? defaultTransportFactory(dataDir);
   const transport = transportFactory(credentials, logger);
   const cards = new StreamingCardManager(transport, {
@@ -328,11 +372,13 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
     logger,
     ...(config.groupMentionMode !== undefined ? { groupMentionMode: config.groupMentionMode } : {}),
     ...(config.allowedChats !== undefined ? { allowedChats: config.allowedChats } : {}),
+    ...(allowedUsers !== undefined ? { allowedUsers } : {}),
     ...(config.unknownCommand !== undefined ? { unknownCommand: config.unknownCommand } : {}),
     ...(config.repoRoots !== undefined ? { repoRoots: config.repoRoots } : {}),
     ...(config.requireWorkingDir !== undefined
       ? { requireWorkingDir: config.requireWorkingDir }
       : {}),
+    ...(config.reactions !== undefined ? { reactions: config.reactions } : {}),
     executeCommand: (agent, line) => executeDshCommand(ctx, agent, line),
     listSessions: () => listSessions(ctx),
     readSession: (sessionId) => {
