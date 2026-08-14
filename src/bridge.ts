@@ -49,6 +49,7 @@ import { CommandRegistry, type CommandResult, parseSlash } from './commands.js';
 import type { CardAction, FeishuMessage, FeishuTransport, SentCard } from './feishu/types.js';
 import { MessageDeduplicator } from './message-dedup.js';
 import { type ProjectInfo, scanMultipleProjects } from './projects.js';
+import { buildSessionExport, type SessionExportEvent } from './session-export.js';
 import type { SessionMap } from './session-map.js';
 
 /** Minimal logger surface the bridge needs. */
@@ -221,6 +222,15 @@ export interface BridgeOptions {
    * bound-sessions-only listing.
    */
   readonly listSessions?: () => Promise<readonly SessionListRow[] | undefined>;
+  /**
+   * Read one complete session log for `/export` (structural subset of
+   * `ctx.sessionQuery.readSession`). Absent, `/export` reports the service
+   * is not mounted.
+   */
+  readonly readSession?: (sessionId: string) => Promise<{
+    readonly session: { readonly id: string };
+    readonly events: readonly SessionExportEvent[];
+  }>;
   /**
    * Permission-preset service (`ctx.permissionPresets`, mounted by
    * dsh-base): `/permission` renders a preset picker from it and applies
@@ -1960,6 +1970,37 @@ export class Bridge {
           kind: 'success',
           text: `Default model set to ${parsed.selection.provider} · ${parsed.selection.model} (applies to new sessions).`,
         };
+      },
+    });
+    this.commands.register({
+      name: 'export',
+      description: 'Export this chat’s session log as a file',
+      category: 'system',
+      buttonLabel: '📤 Export',
+      handler: async (invocation) => {
+        const sessionId = options.sessionMap.get(invocation.chatId);
+        if (sessionId === undefined) {
+          return { kind: 'error', text: 'no session to export yet — send a message first.' };
+        }
+        if (options.readSession === undefined) {
+          return {
+            kind: 'error',
+            text: 'session export unavailable — the session query service is not mounted.',
+          };
+        }
+        try {
+          const log = await options.readSession(sessionId);
+          const transcript = buildSessionExport(log.events);
+          const fileName = `session-${sessionId}.md`;
+          await options.transport.sendFile(invocation.chatId, fileName, transcript);
+          return {
+            kind: 'success',
+            text: `Exported ${log.events.length} events to ${fileName}.`,
+          };
+        } catch (error: unknown) {
+          this.options.logger.warn(`session export failed: ${String(error)}`);
+          return { kind: 'error', text: `session export failed: ${String(error)}` };
+        }
       },
     });
     this.commands.register({

@@ -68,6 +68,10 @@ class RecordingTransport implements FeishuTransport {
   async sendText(chatId: string, text: string): Promise<void> {
     this.sentTexts.push({ chatId, text });
   }
+  sentFiles: Array<{ chatId: string; fileName: string; content: string }> = [];
+  async sendFile(chatId: string, fileName: string, content: string): Promise<void> {
+    this.sentFiles.push({ chatId, fileName, content });
+  }
   async sendCard(_chatId: string, card: CardJson): Promise<SentCard> {
     this.sentCards.push(card);
     return { messageId: `msg-${this.sentCards.length}` };
@@ -1862,10 +1866,26 @@ describe('panel command palette', () => {
           ? el.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
           : [],
       ) ?? [];
-    expect(labels2).toContain('🗺️ Plan mode');
     expect(labels2).toContain('🤖 Model');
+    expect(labels2).toContain('📤 Export');
     expect(labels2).toContain('🎯 Goal');
     expect(labels2).toContain('🔐 Permission');
+    // The 17th button pushes the system group past one page: plan lands on
+    // page 3.
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel-page', page: '2' },
+    });
+    const panel3 = h.transport.sentCards.at(-1);
+    const labels3 =
+      panel3?.elements.flatMap((el) =>
+        el.tag === 'action'
+          ? el.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
+          : [],
+      ) ?? [];
+    expect(labels3).toContain('🗺️ Plan mode');
     // /panel is reachable as a slash line but its palette button is hidden —
     // a palette button that opens the panel would be the panel launching
     // itself (user report).
@@ -1891,7 +1911,7 @@ describe('panel command palette', () => {
     expect(
       panel?.elements.some(
         (el) =>
-          el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 1/2'),
+          el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 1/3'),
       ),
     ).toBe(true);
     const navLabels = (card: CardJson | undefined): string[] =>
@@ -1917,10 +1937,25 @@ describe('panel command palette', () => {
     expect(
       panel2?.elements.some(
         (el) =>
-          el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 2/2'),
+          el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 2/3'),
       ),
     ).toBe(true);
-    expect(navLabels(panel2)).toEqual(['◀️ Prev']);
+    expect(navLabels(panel2)).toEqual(['◀️ Prev', 'Next ▶️']);
+    // Last page: only Prev.
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel-page', page: '2' },
+    });
+    const panel3 = h.transport.sentCards.at(-1);
+    expect(
+      panel3?.elements.some(
+        (el) =>
+          el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 3/3'),
+      ),
+    ).toBe(true);
+    expect(navLabels(panel3)).toEqual(['◀️ Prev']);
   });
 
   it('a command button executes the same handler as the slash line', async () => {
@@ -2776,5 +2811,69 @@ describe('interactive questions (Iteration 3)', () => {
     });
     expect(answer).toEqual({ answers: [{ id: 'q1', selected: [] }] });
     expect(h.transport.sentCards).toHaveLength(0);
+  });
+});
+
+describe('/export command', () => {
+  function makeExportHarness(readSession?: (id: string) => Promise<unknown>) {
+    const h = makeHarness({});
+    if (readSession !== undefined) {
+      const bridge = h.bridge as unknown as { options: { readSession?: unknown } };
+      bridge.options.readSession = readSession;
+    }
+    return h;
+  }
+
+  it('exports the session log as a file message', async () => {
+    const h = makeExportHarness(async () => ({
+      session: { id: 'feishu-session-1' },
+      events: [
+        {
+          type: 'message',
+          seq: 1,
+          data: { message: { role: 'user', content: [{ type: 'text', text: 'hello' }] } },
+        },
+        {
+          type: 'assistant/message',
+          seq: 2,
+          data: { message: { content: [{ type: 'text', text: 'hi' }] } },
+        },
+        { type: 'turn/end', seq: 3, data: { reason: { kind: 'completed' } } },
+      ],
+    }));
+    h.sessionMap.set('oc_chat', 'feishu-session-1');
+    await h.bridge.handleMessage(message({ text: '/export' }));
+    expect(h.transport.sentFiles).toHaveLength(1);
+    const file = h.transport.sentFiles[0];
+    expect(file?.fileName).toBe('session-feishu-session-1.md');
+    expect(file?.content).toContain('## user');
+    expect(file?.content).toContain('hi');
+    expect(h.transport.sentTexts.some((t) => t.text.includes('Exported 3 events'))).toBe(true);
+  });
+
+  it('reports when there is no session yet', async () => {
+    const h = makeExportHarness();
+    await h.bridge.handleMessage(message({ text: '/export' }));
+    expect(h.transport.sentTexts.some((t) => t.text.includes('no session to export'))).toBe(true);
+    expect(h.transport.sentFiles).toHaveLength(0);
+  });
+
+  it('reports loudly when the session query service is absent', async () => {
+    const h = makeExportHarness();
+    h.sessionMap.set('oc_chat', 'feishu-session-1');
+    await h.bridge.handleMessage(message({ text: '/export' }));
+    expect(
+      h.transport.sentTexts.some((t) => t.text.includes('session query service is not mounted')),
+    ).toBe(true);
+    expect(h.transport.sentFiles).toHaveLength(0);
+  });
+
+  it('surfaces a failed read as an error', async () => {
+    const h = makeExportHarness(async () => {
+      throw new Error('corrupt log');
+    });
+    h.sessionMap.set('oc_chat', 'feishu-session-1');
+    await h.bridge.handleMessage(message({ text: '/export' }));
+    expect(h.transport.sentTexts.some((t) => t.text.includes('session export failed'))).toBe(true);
   });
 });

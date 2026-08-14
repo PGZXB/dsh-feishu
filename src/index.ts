@@ -46,6 +46,7 @@ import type { CommandResult } from './commands.js';
 import { consoleExporter } from './console-exporter.js';
 import type { FeishuTransport } from './feishu/types.js';
 import { createMemoryTransport } from './memory-transport.js';
+import type { SessionExportEvent } from './session-export.js';
 import { SessionMap } from './session-map.js';
 import { createLarkTransport } from './transport.js';
 
@@ -173,6 +174,10 @@ type SessionQueryLike = {
       readonly persisted: boolean;
     }[]
   >;
+  readSession(sessionId: unknown): Promise<{
+    readonly session: { readonly id: unknown };
+    readonly events: readonly SessionExportEvent[];
+  }>;
   readTitleSnapshots(
     sessionIds: readonly unknown[],
     signal?: AbortSignal,
@@ -330,6 +335,16 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
       : {}),
     executeCommand: (agent, line) => executeDshCommand(ctx, agent, line),
     listSessions: () => listSessions(ctx),
+    readSession: (sessionId) => {
+      const sessionQuery = ctx.get('sessionQuery') as SessionQueryLike | undefined;
+      if (sessionQuery === undefined) {
+        throw new Error('sessionQuery service unavailable');
+      }
+      return sessionQuery.readSession(sessionId) as Promise<{
+        readonly session: { readonly id: string };
+        readonly events: readonly SessionExportEvent[];
+      }>;
+    },
     // Feature-detect the two stateful web-command services (both mounted by
     // dsh-base); absent, the /permission and /plan wrappers degrade.
     ...(ctx.get('permissionPresets') !== undefined

@@ -68,6 +68,19 @@ describe('MemoryTransport', () => {
     expect(records[0]).toMatchObject({ kind: 'text', chatId: 'oc_chat', text: 'the answer' });
   });
 
+  it('records file sends in the outbox (/export seam)', async () => {
+    const transport = new MemoryTransport({ dir: SCRATCH });
+    await transport.start();
+    await transport.sendFile('oc_chat', 'session-x.md', '# log');
+    const records = transport.outbox();
+    expect(records[0]).toMatchObject({
+      kind: 'file',
+      chatId: 'oc_chat',
+      fileName: 'session-x.md',
+      content: '# log',
+    });
+  });
+
   it('records card sends and patches in order', async () => {
     const transport = new MemoryTransport({ dir: SCRATCH });
     await transport.start();

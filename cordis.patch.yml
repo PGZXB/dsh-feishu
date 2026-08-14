@@ -12,3 +12,10 @@
 - insert:
     - id: feishu
       name: '@dsh-feishu/dsh-feishu'
+
+    # Parity with the web surface (its standard/code agent presets mount
+    # this tool): the model can ask the user questions on Feishu, rendered
+    # as question cards by the surface's userQuestions provider. The tool
+    # needs `tools` + `userQuestions`, both mounted by dsh-base above.
+    - id: tool-ask-user
+      name: '@deepseek-ai/dsh-tool-ask-user'

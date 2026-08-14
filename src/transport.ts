@@ -277,6 +277,19 @@ export class LarkTransport implements FeishuTransport {
     await this.createMessage(chatId, 'text', JSON.stringify({ text }));
   }
 
+  /** Upload a file and deliver it as a file message (`/export`). */
+  async sendFile(chatId: string, fileName: string, content: string): Promise<void> {
+    const uploaded = await this.client.im.v1.file.create({
+      data: { file_type: 'stream', file_name: fileName, file: Buffer.from(content, 'utf8') },
+    });
+    // im.v1.file.create returns the data directly (`{file_key} | null`).
+    const fileKey = uploaded === null ? undefined : uploaded.file_key;
+    if (fileKey === undefined) {
+      throw new FeishuApiError('im.v1.file.create', -1, 'response carried no file_key');
+    }
+    await this.createMessage(chatId, 'file', JSON.stringify({ file_key: fileKey }));
+  }
+
   /** Send an interactive card; resolves with the created message id. */
   async sendCard(chatId: string, card: CardJson): Promise<SentCard> {
     const response = await this.createMessage(chatId, 'interactive', JSON.stringify(card));

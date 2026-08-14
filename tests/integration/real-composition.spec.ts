@@ -1833,7 +1833,7 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
       expect(
         page1?.elements.some(
           (el) =>
-            el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 1/2'),
+            el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 1/3'),
         ),
       ).toBe(true);
       writeAction({
@@ -1853,7 +1853,7 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
                   (el) =>
                     el.tag === 'note' &&
                     'elements' in el &&
-                    el.elements[0]?.content.includes('page 2/2'),
+                    el.elements[0]?.content.includes('page 2/3'),
                 ) === true,
             ),
         30_000,
@@ -1867,8 +1867,42 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
             ? el.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
             : [],
         ) ?? [];
-      expect(labels).toContain('🗺️ Plan mode');
+      expect(labels).toContain('🤖 Model');
+      expect(labels).toContain('📤 Export');
       expect(labels).toContain('🔐 Permission');
+      // The 17th button pushes plan mode to page 3.
+      writeAction({
+        messageId: 'mem-3',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'panel-page', page: '2' },
+      });
+      await waitFor(
+        'the page-3 panel card',
+        () =>
+          readOutbox()
+            .filter((r) => r.kind === 'card')
+            .some(
+              (r) =>
+                r.card?.elements.some(
+                  (el) =>
+                    el.tag === 'note' &&
+                    'elements' in el &&
+                    el.elements[0]?.content.includes('page 3/3'),
+                ) === true,
+            ),
+        30_000,
+      );
+      const page3 = readOutbox()
+        .filter((r) => r.kind === 'card')
+        .at(-1)?.card;
+      const labels3 =
+        page3?.elements.flatMap((el) =>
+          el.tag === 'action'
+            ? el.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
+            : [],
+        ) ?? [];
+      expect(labels3).toContain('🗺️ Plan mode');
     } catch (error) {
       throw new Error(
         `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
@@ -2073,6 +2107,167 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
               r.kind === 'patch' &&
               r.card?.header?.template === 'green' &&
               JSON.stringify(r.card.elements).includes('Rejected flow done.'),
+          ),
+        90_000,
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 180_000);
+
+  /** /export delivers the session log as a file message (the Feishu
+   *  equivalent of the web's browser-download /export). */
+  it('/export sends the session log as a file message', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      server.setScripts([[{ content: 'Exportable answer.' }]]);
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_export_${Date.now()}`;
+      await pinWorkingDir(chatId);
+      sendMessage(chatId, 'produce exportable content');
+      await waitFor(
+        'the green final card patch',
+        () => readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'green'),
+        90_000,
+      );
+      sendMessage(chatId, '/export');
+      await waitFor(
+        'the file record in the outbox',
+        () => readOutbox().some((r) => r.kind === 'file'),
+        30_000,
+      );
+      const file = readOutbox().find((r) => r.kind === 'file');
+      expect(file?.fileName).toMatch(/^session-.*\.md$/);
+      // The transcript carries the user turn and the assistant answer.
+      expect(file?.content ?? '').toContain('## user');
+      expect(file?.content ?? '').toContain('produce exportable content');
+      expect(file?.content ?? '').toContain('Exportable answer.');
+      await waitFor(
+        'the export confirmation text',
+        () => readOutbox().some((r) => r.kind === 'text' && r.text?.includes('Exported')),
+        30_000,
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 180_000);
+
+  /** The model can ask the user a question (ask_user_question, mounted in
+   *  the profile): the question card posts and an option tap feeds the
+   *  answer back into the turn. */
+  it('ask_user_question posts a question card and the option answer continues the turn', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      server.setScripts([
+        [
+          {
+            toolCall: {
+              index: 0,
+              id: 'call-question-1',
+              name: 'ask_user_question',
+              arguments:
+                '{"questions":[{"id":"q1","question":"Which stack?","options":[{"label":"Go"},{"label":"Rust"}]}]}',
+            },
+          },
+        ],
+        [{ content: 'Question answered.' }],
+      ]);
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_question_${Date.now()}`;
+      await pinWorkingDir(chatId);
+      sendMessage(chatId, 'ask me something');
+      // The question card posts with the option buttons.
+      await waitFor(
+        'the question card',
+        () =>
+          readOutbox()
+            .filter((r) => r.kind === 'card')
+            .some((r) => r.card?.header?.title.content === '❓ Question'),
+        60_000,
+      );
+      const questionRecord = [...readOutbox()]
+        .reverse()
+        .find((r) => r.kind === 'card' && r.card?.header?.title.content === '❓ Question');
+      const questionCard = questionRecord?.card;
+      expect(JSON.stringify(questionCard?.elements)).toContain('Which stack?');
+      const action = questionCard?.elements.find((el) => el.tag === 'action');
+      const optionButton =
+        action && 'actions' in action
+          ? action.actions.find(
+              (a) => a.tag === 'button' && 'value' in a && a.value.answer === 'Rust',
+            )
+          : undefined;
+      expect(optionButton && 'value' in optionButton ? optionButton.value.id : undefined).toBe(
+        'q1',
+      );
+      // Answer via the card callback channel.
+      writeAction({
+        messageId: questionRecord?.messageId ?? '',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'question', id: 'q1', answer: 'Rust' },
+      });
+      // The tool result feeds back and the turn completes green.
+      await waitFor(
+        'the green final card patch after the question',
+        () =>
+          readOutbox().some(
+            (r) =>
+              r.kind === 'patch' &&
+              r.card?.header?.template === 'green' &&
+              JSON.stringify(r.card.elements).includes('Question answered.'),
           ),
         90_000,
       );

@@ -48,12 +48,15 @@ export interface MemoryTransportOptions {
 /** One recorded send/update in the outbox. */
 export interface MemoryOutboxRecord {
   readonly seq: number;
-  readonly kind: 'text' | 'card' | 'patch';
+  readonly kind: 'text' | 'card' | 'patch' | 'file';
   readonly at: number;
   readonly chatId?: string;
   readonly messageId?: string;
   readonly text?: string;
   readonly card?: CardJson;
+  /** File-message sends (`/export`); the integration-test seam. */
+  readonly fileName?: string;
+  readonly content?: string;
 }
 
 /**
@@ -130,6 +133,11 @@ export class MemoryTransport implements FeishuTransport {
   /** Record a text send in the outbox. */
   async sendText(chatId: string, text: string): Promise<void> {
     this.record({ kind: 'text', chatId, text });
+  }
+
+  /** Record a file send in the outbox (the integration-test /export seam). */
+  async sendFile(chatId: string, fileName: string, content: string): Promise<void> {
+    this.record({ kind: 'file', chatId, fileName, content });
   }
 
   /** Record a card send; the created message id is the outbox seq. */

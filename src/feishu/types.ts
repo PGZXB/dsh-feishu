@@ -180,6 +180,13 @@ export interface FeishuTransport {
   onCardAction(handler: (action: CardAction) => void): void;
   /** Send a plain text message to a chat. */
   sendText(chatId: string, text: string): Promise<void>;
+  /**
+   * Upload `content` as a file message (im.v1.file.create → file_key →
+   * im.v1.message.create with msg_type 'file'). Used by /export to deliver
+   * the session log as a downloadable file — the Feishu equivalent of the
+   * web's browser-download /export.
+   */
+  sendFile(chatId: string, fileName: string, content: string): Promise<void>;
   /** Send an interactive card; resolves with the created message id. */
   sendCard(chatId: string, card: CardJson): Promise<SentCard>;
   /** Update an already-sent card in place (silent: no unread notification). */

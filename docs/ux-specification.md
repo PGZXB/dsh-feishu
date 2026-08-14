@@ -287,19 +287,20 @@ palette idea). `category` groups the panel palette.
 | `/group [<name>]` | chat | create a group with the bot and sender |
 | `/sessions` | session | session list card (title/id/cwd/age/live/saved), paginated, per-row Resume buttons |
 | `/model` | system | **model picker card** (catalog from `ctx.llm` `listProviders` × `listModels`, current preselected); a pick sets the default for new sessions. `/model <provider>/<model>` sets it directly. Surface-native — the web `/model` is a client popup with no host command |
+| `/export` | system | send this chat's session log as a **file message** (`session-<id>.md` markdown transcript from `ctx.sessionQuery.readSession`) — the Feishu equivalent of the web's browser-download `/export` |
 | `/panel` | system | open the control panel card from any chat (slash line only — its palette button is hidden, since a palette button that opens the panel would be the panel launching itself) |
 | `/resume [<id>]` | session | resume a saved session; no id opens the `/sessions` picker |
 | `/clear` | session | start a fresh conversation — **non-destructive**: the previous session stays saved and resumable (content-integrity rule) |
 | `/new` | session | alias of `/clear` (web/cc-tui "new chat" parity) |
 | `/plan` `/goal` `/compact` `/feedback` `/permission` | system | **dsh web wrappers**: ensure a session/agent, then execute the harness command through `ctx.commands.execute` (dsh-base mounts all five); error kinds surface as ⚠️. Two are state-aware (below): a bare `/plan` toggles plan mode, and `/permission` opens a preset picker. |
 
-`/export` is **intentionally absent**: `dsh-session-log-export` registers a
-Web-only command whose handler a *browser* download plugin observes
-("Register the Web-only `/export` command that the browser download plugin
-observes"); on a Feishu surface nothing would download. A native Feishu
-log-export (file message) is a later-iteration feature. Likewise the web
-`/model` popup is a client-side contribution (`commandUi.popupSelect`) with
-no host command — Feishu gets a surface-native `/model` instead. Unknown
+The web's `/export` command itself is a browser-download observer
+(`dsh-session-log-export` — "Register the Web-only `/export` command that
+the browser download plugin observes"), so Feishu implements its own
+surface-native `/export` that uploads the transcript as a file message
+(`im.v1.file.create` → `msg_type: 'file'`). Likewise the web `/model`
+popup is a client-side contribution (`commandUi.popupSelect`) with no host
+command — Feishu gets a surface-native `/model` picker instead. Unknown
 slash lines keep the passthrough/fallback path.
 
 ### 8.2 Stateful web wrappers (/plan toggle, /permission picker)
@@ -457,6 +458,11 @@ failure, or bridge disposal (every pending entry settles `'cancelled'`).
   message; the next plain chat message is captured as the answer (it
   bypasses the working-directory gate and is not a turn). A `✖ Cancel`
   button aborts.
+
+The model reaches questions through the standard `ask_user_question` tool
+(`@deepseek-ai/dsh-tool-ask-user`), which the web surface mounts via its
+standard/code agent presets; this bundle inserts the same tool row into the
+profile composition so the Feishu agent has web-parity question capability.
 
 The agent's `signal` abort settles unanswered questions as empty answers.
 The answer card becomes a static confirmation.

@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`/export` sends the session log as a file message.** The Feishu
+  equivalent of the web's browser-download `/export` (whose command is a
+  web-only download observer): the surface uploads a markdown transcript
+  (`session-<id>.md`) built from `ctx.sessionQuery.readSession` via
+  `im.v1.file.create` → `msg_type: 'file'`. `FeishuTransport` gains
+  `sendFile`; the memory transport records `kind: 'file'` outbox entries.
+  No truncation — the file is not bound by the card cap.
+- **`ask_user_question` tool mounted (web parity).** The web surface
+  exposes the standard `@deepseek-ai/dsh-tool-ask-user` tool through its
+  standard/code agent presets; this bundle now inserts the same tool row
+  into the profile composition, so the Feishu agent can ask the user
+  questions — rendered as question cards by the surface's
+  `userQuestions` provider (option buttons / multi-select / free-text).
+- Real-process integration: `/export` produces a file outbox record whose
+  transcript carries the turn's user message and assistant answer;
+  `ask_user_question` posts a question card and an option tap feeds the
+  answer back into the turn. Tests: 308 (was 299).
+
+
 - **Agent workflow documentation.** `AGENTS.md` gains a "Worktree + PR
   workflow" section (work in a git worktree under `_dev/`, verify gates with
   `FEISHU_INT_REQUIRED=1`, rebase onto latest `origin/main`, merge only via a
