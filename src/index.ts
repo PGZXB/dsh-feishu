@@ -92,6 +92,12 @@ export interface Config {
    * directories. Empty means `/repo` lists nothing (use `/cd <path>`).
    */
   readonly repoRoots?: string[];
+  /**
+   * Refuse to start turns until the chat has an explicitly chosen working
+   * directory (/repo pick or /cd). Default true — the deployment defaultCwd
+   * is never an implicit choice.
+   */
+  readonly requireWorkingDir?: boolean;
 }
 
 /** Validated plugin configuration (schemastery schema). */
@@ -110,6 +116,7 @@ export const Config: z<Config> = z.object({
   allowedChats: z.array(z.string()).required(false),
   unknownCommand: z.union([z.const('error'), z.const('passthrough')]).required(false),
   repoRoots: z.array(z.string()).required(false),
+  requireWorkingDir: z.boolean().required(false),
 });
 
 /** Resolved credentials, or `undefined` when either value is missing. */
@@ -304,6 +311,9 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
     ...(config.allowedChats !== undefined ? { allowedChats: config.allowedChats } : {}),
     ...(config.unknownCommand !== undefined ? { unknownCommand: config.unknownCommand } : {}),
     ...(config.repoRoots !== undefined ? { repoRoots: config.repoRoots } : {}),
+    ...(config.requireWorkingDir !== undefined
+      ? { requireWorkingDir: config.requireWorkingDir }
+      : {}),
     executeCommand: (agent, line) => executeDshCommand(ctx, agent, line),
     listSessions: () => listSessions(ctx),
     // Feature-detect the two stateful web-command services (both mounted by

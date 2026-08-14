@@ -133,7 +133,13 @@ export function buildSessionsCard(sessions: readonly SessionRowView[], page = 0)
             tag: 'button',
             text: { tag: 'plain_text', content: 'Resume' },
             type: 'default',
-            value: actionValue({ kind: 'resume-session', sessionId: row.sessionId }),
+            // The cwd rides along so the resumed chat pins this directory
+            // (the working-directory gate would otherwise refuse turns).
+            value: actionValue({
+              kind: 'resume-session',
+              sessionId: row.sessionId,
+              ...(row.cwd !== undefined ? { cwd: row.cwd } : {}),
+            }),
           },
         ],
       });

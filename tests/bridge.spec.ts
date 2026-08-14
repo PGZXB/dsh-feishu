@@ -183,6 +183,7 @@ function makeHarness(
     planMode?: PlanModeService;
     agentDefaultModel?: AgentDefaultModelService;
     llm?: LlmService;
+    requireWorkingDir?: boolean;
   } = {},
 ): Harness {
   const transport = new RecordingTransport();
@@ -226,6 +227,9 @@ function makeHarness(
       ? { agentDefaultModel: options.agentDefaultModel }
       : {}),
     ...(options.llm !== undefined ? { llm: options.llm } : {}),
+    // Tests default the working-directory gate OFF (production defaults it
+    // ON); the gate's own tests enable it explicitly.
+    requireWorkingDir: options.requireWorkingDir ?? false,
   });
   const emit = (sessionId: string, event: SessionEvent): void => {
     for (const listener of [...listeners]) listener(sessionId, event);
@@ -1629,6 +1633,7 @@ describe('session commands (/sessions /resume /clear /new)', () => {
     expect(resumeValues).toContainEqual({
       kind: 'resume-session',
       sessionId: 'feishu-session-9',
+      cwd: '/work/old',
     });
     // The current row offers no Resume button.
     expect(resumeValues.some((v) => v.sessionId === 'feishu-session-1')).toBe(false);
@@ -2438,5 +2443,121 @@ describe('/panel command', () => {
         ? core.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
         : [];
     expect(coreLabels).toEqual(['⏹ Stop current', '🔁 Retry last', '📋 Copy last']);
+  });
+});
+
+describe('working-directory gate (requireWorkingDir)', () => {
+  it('refuses a turn until a working directory is chosen', async () => {
+    const h = makeHarness({ requireWorkingDir: true });
+    await h.bridge.handleMessage(message({ text: 'do some work' }));
+    expect(h.transport.sentTexts.some((t) => t.text.includes('No working directory chosen'))).toBe(
+      true,
+    );
+    // No session was created and the agent never saw the message.
+    expect(h.sessionMap.get('oc_chat')).toBeUndefined();
+    expect(h.agentStore.followups.get('feishu-session-1')).toBeUndefined();
+    expect(h.agentStore.created).toHaveLength(0);
+  });
+
+  it('allows the turn after /cd pins a directory', async () => {
+    const { mkdirSync } = await import('node:fs');
+    const target = join(SCRATCH, 'proj-gate-cd');
+    mkdirSync(target, { recursive: true });
+    const h = makeHarness({ requireWorkingDir: true });
+    await h.bridge.handleMessage(message({ text: `/cd ${target}` }));
+    expect(h.sessionMap.cwdFor('oc_chat')).toBe(target);
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: 'now work' }));
+    expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(1);
+  });
+
+  it('allows the turn after a /repo pick', async () => {
+    const { mkdirSync } = await import('node:fs');
+    const target = join(SCRATCH, 'proj-gate-repo');
+    mkdirSync(target, { recursive: true });
+    const h = makeHarness({ requireWorkingDir: true });
+    await h.bridge.handleMessage(message({ text: `/repo ${target}` }));
+    expect(h.sessionMap.cwdFor('oc_chat')).toBe(target);
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: 'now work' }));
+    expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(1);
+  });
+
+  it('keeps read-only commands usable while unpinned', async () => {
+    const h = makeHarness({ requireWorkingDir: true });
+    await h.bridge.handleMessage(message({ text: '/help' }));
+    expect(h.transport.sentTexts.some((t) => t.text.includes('dsh-feishu commands'))).toBe(true);
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/status' }));
+    expect(h.transport.sentTexts.some((t) => t.text.includes('session: (none yet)'))).toBe(true);
+    // The panel opens and surfaces the unpinned state.
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel' },
+    });
+    const panel = h.transport.sentCards.at(-1);
+    expect(
+      panel?.elements.some(
+        (el) =>
+          el.tag === 'markdown' && 'content' in el && el.content.includes('No working directory'),
+      ),
+    ).toBe(true);
+  });
+
+  it('/clear keeps the pinned working directory', async () => {
+    const { mkdirSync } = await import('node:fs');
+    const target = join(SCRATCH, 'proj-gate-clear');
+    mkdirSync(target, { recursive: true });
+    let seq = 0;
+    const h = makeHarness({ requireWorkingDir: true, mint: () => `feishu-session-${++seq}` });
+    await h.bridge.handleMessage(message({ text: `/cd ${target}` }));
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/clear' }));
+    expect(h.sessionMap.cwdFor('oc_chat')).toBe(target);
+    await h.bridge.handleMessage(message({ messageId: 'om_msg3', text: 'work again' }));
+    expect(h.agentStore.followups.get('feishu-session-2')).toHaveLength(1);
+  });
+
+  it('resume adopts the session cwd carried by the picker button', async () => {
+    const h = makeHarness({
+      requireWorkingDir: true,
+      listSessions: async () => [
+        {
+          sessionId: 'feishu-session-9',
+          title: 'Old project',
+          cwd: '/work/old',
+          createdAt: Date.now() - 3_600_000,
+          live: false,
+          persisted: true,
+        },
+      ],
+    });
+    await h.bridge.handleMessage(message({ text: '/sessions' }));
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      // The picker stamps the session's cwd into the button value.
+      value: { kind: 'resume-session', sessionId: 'feishu-session-9', cwd: '/work/old' },
+    });
+    expect(h.sessionMap.cwdFor('oc_chat')).toBe('/work/old');
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: 'continue the work' }));
+    expect(h.agentStore.followups.get('feishu-session-9')).toHaveLength(1);
+  });
+
+  it('typed /resume looks up the session cwd from the list', async () => {
+    const h = makeHarness({
+      requireWorkingDir: true,
+      listSessions: async () => [
+        {
+          sessionId: 'feishu-session-9',
+          title: 'Old project',
+          cwd: '/work/old',
+          createdAt: Date.now() - 3_600_000,
+          live: false,
+          persisted: true,
+        },
+      ],
+    });
+    await h.bridge.handleMessage(message({ text: '/resume feishu-session-9' }));
+    expect(h.sessionMap.cwdFor('oc_chat')).toBe('/work/old');
   });
 });

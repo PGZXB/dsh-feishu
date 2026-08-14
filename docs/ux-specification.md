@@ -338,7 +338,26 @@ args only reports the current preset. A button press must be able to switch
   and `/plan <message>` pass through unchanged. Without the controller the
   bare form falls back to the harness behavior (loud log).
 
-### 8.3 Working-state gate (state-machine rule)
+### 8.3 Working-directory gate (DSH unavailable until a repo is chosen)
+
+A chat with no **explicitly pinned** working directory (/repo pick or
+`/cd`) is unavailable: every turn is refused with guidance ("No working
+directory chosen yet — send /repo or /cd"), no session/card is created and
+the message is not remembered. The deployment `defaultCwd` fallback is
+never an implicit choice — a fresh chat or a brand-new group must pick a
+repo before DSH works there (user requirement). `requireWorkingDir`
+(default true) disables the gate for deployments that want the fallback.
+
+- Read-only commands (`/help /status /sessions /panel` and the pickers)
+  stay usable unpinned; the panel surfaces "No working directory — pick
+  one with /repo or /cd first".
+- `/clear` keeps the pinned directory (only the session rebinds).
+- **Resume adopts the session's working directory**: the /sessions Resume
+  button carries the session's cwd in its value, and a typed `/resume`
+  looks it up from the session list — so a resumed session stays usable in
+  the new chat (otherwise the gate would refuse every follow-up).
+
+### 8.4 Working-state gate (state-machine rule)
 
 While a turn is running (`cardStates[chatId].status === 'working'`), only
 read-only commands may run: `/help`, `/status`, `/sessions` (read state),
@@ -350,7 +369,7 @@ carries Stop). Every other command —
 the panel `command` action (one rule, two entry points), so a mid-turn
 session rebind/remint can never corrupt the live card.
 
-### 8.4 Session lifecycle commands
+### 8.5 Session lifecycle commands
 
 - `/sessions` rows are two lines: line 1 = `**title** · age · badges`
   (the ★ current marker inline), line 2 = `` `id` · cwd `` (quiet identity);
@@ -372,7 +391,7 @@ session rebind/remint can never corrupt the live card.
   card, no copy/retry targets). The old session stays persisted → still
   listed by `/sessions` and resumable.
 
-### 8.5 Panel palette
+### 8.6 Panel palette
 
 `buildPanelCard(statusLine, running, commands, page)`: the core row
 (Stop while running / Retry / Copy) stays first; below it the full command
@@ -388,7 +407,7 @@ always shows what the buttons act on. The panel is stateless: every
 open/pager posts a fresh card built from the current authoritative state
 (no stale-guard needed).
 
-### 8.6 State-machine matrix for the new actions
+### 8.7 State-machine matrix for the new actions
 
 | Action \ Status | none | working | done | stopped | error |
 |---|---|---|---|---|---|

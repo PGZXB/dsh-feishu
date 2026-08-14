@@ -97,6 +97,20 @@ describe('buildSessionsCard', () => {
     expect(buttons[0] && 'value' in buttons[0] ? buttons[0].value : undefined).toEqual({
       kind: 'resume-session',
       sessionId: 'a',
+      cwd: '/work/my-project',
+    });
+    // A session without a known cwd omits it from the payload.
+    const noCwd = buildSessionsCard([row({ sessionId: 'x', title: 'X', cwd: undefined })]);
+    const noCwdRow = noCwd.elements.find((el) => el.tag === 'column_set');
+    const noCwdButton =
+      noCwdRow && 'columns' in noCwdRow
+        ? noCwdRow.columns.flatMap((column) =>
+            column.elements.filter((element) => element.tag === 'button'),
+          )[0]
+        : undefined;
+    expect(noCwdButton && 'value' in noCwdButton ? noCwdButton.value : undefined).toEqual({
+      kind: 'resume-session',
+      sessionId: 'x',
     });
     // The current row has no resume button.
     const rowB = rows[1];

@@ -205,6 +205,13 @@ export interface BridgeOptions {
    */
   readonly llm?: LlmService;
   /**
+   * Refuse to start turns until the chat has an EXPLICITLY pinned working
+   * directory (/repo pick or /cd). Default true — a fresh chat (or a new
+   * group) must choose a repo before DSH works there; the deployment
+   * defaultCwd fallback is never an implicit choice (user requirement).
+   */
+  readonly requireWorkingDir?: boolean;
+  /**
    * Policy for an unknown slash line: `error` replies with an unknown-command
    * notice (default); `passthrough` delivers the line to the model as a
    * normal turn (cc-tui behavior).
@@ -563,7 +570,24 @@ export class Bridge {
    * @param sessionId - the session to resume.
    * @returns the surface outcome text.
    */
-  private async resumeSession(chatId: string, sessionId: string): Promise<CommandResult> {
+  /**
+   * The shared /resume flow (slash line and /sessions Resume button). The
+   * chat must be idle; the target session must not be running elsewhere;
+   * then bind the chat to the session (moving the previous binding) and
+   * resume a persisted agent when none is live. The resumed session's
+   * working directory becomes the chat's pinned cwd (known via the picker
+   * action value, or looked up from the session list) — otherwise the
+   * working-directory gate would refuse every follow-up turn here.
+   * @param chatId - the chat to rebind.
+   * @param sessionId - the session to resume.
+   * @param cwd - the session's working directory, when already known.
+   * @returns the surface outcome text.
+   */
+  private async resumeSession(
+    chatId: string,
+    sessionId: string,
+    cwd?: string,
+  ): Promise<CommandResult> {
     if (this.refuseWhileWorking(chatId)) {
       return { kind: 'error', text: 'a turn is running — stop it first.' };
     }
@@ -588,14 +612,28 @@ export class Bridge {
         };
       }
     }
+    // Adopt the resumed session's working directory as the chat's pin.
+    let adopted = cwd;
+    if (adopted === undefined && this.options.listSessions !== undefined) {
+      try {
+        const rows = await this.options.listSessions();
+        adopted = rows?.find((row) => row.sessionId === sessionId)?.cwd;
+      } catch (error: unknown) {
+        this.options.logger.warn(`resume cwd lookup failed: ${String(error)}`);
+      }
+    }
+    if (adopted !== undefined) this.options.sessionMap.setCwd(chatId, adopted);
     // Bind the chat to the session (both directions stay consistent; the
-    // previous binding — if any — is detached). Resume does not change the
-    // chat's pinned cwd: /cd remains the way to set where new sessions start.
+    // previous binding — if any — is detached).
     this.options.sessionMap.set(chatId, sessionId);
     this.resetChatState(chatId);
+    const hint =
+      this.options.sessionMap.cwdFor(chatId) === undefined
+        ? ' This chat has no working directory — pick one with /repo or /cd before sending a message.'
+        : '';
     return {
       kind: 'success',
-      text: `Resumed session ${sessionId} — send a message to continue it.`,
+      text: `Resumed session ${sessionId} — send a message to continue it.${hint}`,
     };
   }
 
@@ -695,13 +733,17 @@ export class Bridge {
           ? '**Idle** — send a message to start a turn.'
           : '**Ready** — the last answer is in the card above; copy or retry it.';
     // The panel carries the chat's session context so a tap always shows
-    // which session the buttons act on.
+    // which session the buttons act on. An unpinned chat (no /repo or /cd)
+    // surfaces the working-directory requirement instead of a fake cwd.
     const sessionId = this.options.sessionMap.get(chatId);
-    const cwd = this.options.sessionMap.cwdFor(chatId) ?? this.options.defaultCwd;
+    const pinned = this.options.sessionMap.cwdFor(chatId);
+    const cwd = pinned ?? this.options.defaultCwd;
     const contextLine =
-      sessionId === undefined
-        ? `No session yet · \`${cwd}\``
-        : `session \`${sessionId}\` · \`${cwd}\``;
+      pinned === undefined && this.options.requireWorkingDir !== false
+        ? 'No working directory — pick one with /repo or /cd first'
+        : sessionId === undefined
+          ? `No session yet · \`${cwd}\``
+          : `session \`${sessionId}\` · \`${cwd}\``;
     await this.options.transport.sendCard(
       chatId,
       buildPanelCard(`${statusLine}\n${contextLine}`, running, this.panelCommands(), page),
@@ -818,6 +860,21 @@ export class Bridge {
 
   /** The normal turn flow: session resolution, streaming card, followup. */
   private async deliverTurn(message: FeishuMessage): Promise<void> {
+    // The working-directory gate: without an explicit /repo pick or /cd the
+    // chat is "unavailable" — DSH refuses to work there (user requirement:
+    // a new group must choose a repo before any turn runs). The refused
+    // message is not remembered as a retry target.
+    if (
+      this.options.requireWorkingDir !== false &&
+      this.options.sessionMap.cwdFor(message.chatId) === undefined
+    ) {
+      await this.options.transport.sendText(
+        message.chatId,
+        '⚠️ No working directory chosen yet — DSH won’t start work here until you pick one. ' +
+          'Send /repo to choose a project, or /cd <path> to set a directory.',
+      );
+      return;
+    }
     this.lastPrompts.set(message.chatId, message.text);
     const sessionId = this.options.sessionMap.ensure(message.chatId);
     const cwd = this.options.sessionMap.cwdFor(message.chatId) ?? this.options.defaultCwd;
@@ -1136,6 +1193,9 @@ export class Bridge {
           );
           break;
         }
+        // No working-directory gate here: an unpinned chat can never have a
+        // remembered prompt (turns are refused before lastPrompts is set), so
+        // the "Nothing to retry" branch above is the only reachable path.
         const sessionId = this.options.sessionMap.ensure(action.chatId);
         const cwd = this.options.sessionMap.cwdFor(action.chatId) ?? this.options.defaultCwd;
         const agent = await this.resolveAgent(action.chatId, sessionId, cwd);
@@ -1292,7 +1352,9 @@ export class Bridge {
           this.options.logger.info(`ignoring stale session resume from card ${action.messageId}`);
           break;
         }
-        const result = await this.resumeSession(action.chatId, sessionId);
+        // The picker row carries the session's cwd so the resumed chat
+        // adopts it as its pinned working directory.
+        const result = await this.resumeSession(action.chatId, sessionId, action.value.cwd);
         await this.replyCommandResult(action.chatId, result);
         break;
       }

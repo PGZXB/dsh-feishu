@@ -75,7 +75,13 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
   stays saved and resumable).
 - **Working-state gate.** While a turn runs, only read-only commands run
   (`/help /status /sessions /cancel /group`); mutating commands refuse with
-  an explanation, keeping the state machine coherent (see ux-spec §8.2).
+  an explanation, keeping the state machine coherent (see ux-spec §8.4).
+- **Working-directory gate.** A chat with no explicitly pinned cwd (/repo
+  or /cd) refuses turns with guidance — no session/card is created and the
+  message is not remembered; `defaultCwd` is never an implicit choice
+  (`requireWorkingDir`, default true). `/clear` keeps the pin; `/resume`
+  adopts the resumed session's cwd (picker button value, or session-list
+  lookup) so the resumed chat stays usable (see ux-spec §8.3).
 - **Configurable group mention gate.** `groupMentionMode` (botmux
   semantics): `always` requires an @-mention (relaxed in 1-person-1-bot solo
   groups via cached chat member counts); `never` answers every group message;

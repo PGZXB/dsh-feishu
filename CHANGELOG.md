@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Working-directory gate (user requirement).** A chat with no explicitly
+  pinned working directory (/repo pick or /cd) is unavailable: turns are
+  refused with guidance, no session/card is created, and the message is not
+  remembered as a retry target. The deployment `defaultCwd` fallback is
+  never an implicit choice — a fresh chat or new group must pick a repo
+  before DSH works there (`requireWorkingDir`, default true). Read-only
+  commands and the pickers stay usable; the panel surfaces the unpinned
+  state. `/clear` keeps the pinned directory. `/resume` adopts the resumed
+  session's cwd (the /sessions Resume button carries it; typed `/resume`
+  looks it up from the session list) so a resumed session stays usable in
+  the new chat.
+
+
 - **`/model` now opens a model picker card** (user report: the button only
   passed through). The catalog comes from `ctx.llm` (`listProviders` ×
   `listModels`; the deepseek adapter ships a static default catalog, so no

@@ -80,6 +80,9 @@ const dshBin = resolveDshBin();
 const profileReady = existsSync(join(PROFILE_DIR, 'package.json'));
 const built = existsSync(join(REPO_ROOT, 'lib', 'index.js'));
 const ACTIONS_DIR = join(MEMORY_DIR, 'actions');
+/** Scratch working directory pinned via /cd in turn-running tests (the
+ *  working-directory gate refuses turns until a repo/cwd is chosen). */
+const INT_CWD = join(REPO_ROOT, '_dev', 'int-cwd');
 
 /** Write one card action into the actions channel for the spawned process. */
 function writeAction(action: unknown): void {
@@ -87,6 +90,18 @@ function writeAction(action: unknown): void {
     join(ACTIONS_DIR, `act-${Date.now()}-${Math.random().toString(36).slice(2)}.json`),
     JSON.stringify(action),
     'utf8',
+  );
+}
+
+/** Pin the chat's working directory via /cd (the gate refuses turns until
+ *  an explicit directory is chosen). */
+async function pinWorkingDir(chatId: string): Promise<void> {
+  sendMessage(chatId, `/cd ${INT_CWD}`);
+  await waitFor(
+    'the /cd confirmation',
+    () =>
+      readOutbox().some((r) => r.kind === 'text' && r.text?.includes('Working directory set to')),
+    30_000,
   );
 }
 
@@ -117,6 +132,7 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
     if (mock !== undefined) await mock.close();
     if (child !== undefined && child.exitCode === null) child.kill('SIGTERM');
     rmSync(MEMORY_DIR, { recursive: true, force: true });
+    mkdirSync(INT_CWD, { recursive: true });
     mkdirSync(INBOX_DIR, { recursive: true });
     mkdirSync(ACTIONS_DIR, { recursive: true });
     mkdirSync(OUTBOX_DIR, { recursive: true });
@@ -165,6 +181,7 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
       // A unique chat id per run avoids colliding with a previous run's
       // persisted session mapping.
       const chatId = `oc_int_${Date.now()}`;
+      await pinWorkingDir(chatId);
       writeFileSync(
         join(INBOX_DIR, `om-int-1.json`),
         JSON.stringify({
@@ -189,7 +206,10 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
       const records = readOutbox();
       expect(records.some((r) => r.kind === 'card')).toBe(true);
       expect(records.some((r) => r.kind === 'patch')).toBe(true);
-      expect(records.some((r) => r.kind === 'text')).toBe(false);
+      // The only text is the /cd pin confirmation — no second answer bubble.
+      const texts = records.filter((r) => r.kind === 'text');
+      expect(texts.length).toBeGreaterThanOrEqual(1);
+      expect(texts.every((r) => r.text?.includes('Working directory set to') === true)).toBe(true);
       const patches = records.filter((r) => r.kind === 'patch');
       const lastCard = patches.at(-1)?.card;
       expect(JSON.stringify(lastCard?.elements)).toContain('Hello from mock LLM');
@@ -241,6 +261,7 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
       await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
 
       const chatId = `oc_ux_${Date.now()}`;
+      await pinWorkingDir(chatId);
       writeFileSync(
         join(INBOX_DIR, `om-ux-1.json`),
         JSON.stringify({
@@ -401,6 +422,7 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
       await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
 
       const chatId = `oc_paneldone_${Date.now()}`;
+      await pinWorkingDir(chatId);
       sendMessage(chatId, 'check panel after done');
 
       // Wait for the green final card (turn completed).
@@ -492,6 +514,7 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
       await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
 
       const chatId = `oc_table_${Date.now()}`;
+      await pinWorkingDir(chatId);
       sendMessage(chatId, 'show me a table');
 
       // The final card patch carries a native table element, not raw pipes.
@@ -558,6 +581,7 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
       await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
 
       const chatId = `oc_matrix_${Date.now()}`;
+      await pinWorkingDir(chatId);
       sendMessage(chatId, 'run the matrix check');
 
       // Wait for the running turn's card to appear (the agent is held
@@ -714,6 +738,7 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
       await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
 
       const chatA = `oc_chain_a_${Date.now()}`;
+      await pinWorkingDir(chatA);
       sendMessage(chatA, 'start the chain in A');
       await waitFor(
         'the green final card patch for A',
@@ -1162,4 +1187,67 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
       );
     }
   }, 120_000);
+
+  /** The working-directory gate on the real process: a fresh chat refuses
+   *  turns with guidance until /cd pins a directory (user requirement: DSH
+   *  is unavailable until a repo is explicitly chosen). */
+  it('refuses work until a working directory is chosen, then works after /cd', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      server.setScripts([[{ content: 'Gated work answer.' }]]);
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_gate_${Date.now()}`;
+      // A plain message without a pinned directory → refused with guidance.
+      sendMessage(chatId, 'do some work');
+      await waitFor(
+        'the working-directory refusal',
+        () =>
+          readOutbox().some(
+            (r) => r.kind === 'text' && r.text?.includes('No working directory chosen'),
+          ),
+        30_000,
+      );
+      // No card was opened and no model request happened.
+      expect(readOutbox().filter((r) => r.kind === 'card')).toHaveLength(0);
+      expect(server.completionRequests()).toBe(0);
+
+      // After /cd pins a directory, the same chat works normally.
+      await pinWorkingDir(chatId);
+      sendMessage(chatId, 'now work');
+      await waitFor(
+        'the green final card patch',
+        () => readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'green'),
+        90_000,
+      );
+      expect(server.completionRequests()).toBeGreaterThanOrEqual(1);
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 180_000);
 });
