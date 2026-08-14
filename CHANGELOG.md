@@ -145,6 +145,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **CI runs the real-composition integration suite.** The workflow builds
+  the checkout before testing, prepares the `feishu-dev` profile with
+  `dsh plugin ... add link:$GITHUB_WORKSPACE`, and runs tests with
+  `FEISHU_INT_REQUIRED=1` so a missing prerequisite (dsh CLI, profile,
+  build) fails the job loudly instead of silently skipping. The dsh CLI is
+  now a devDependency (`@deepseek-ai/dsh`, lockfile-pinned) and the native
+  build scripts it needs (node-pty, koffi, …) are allowed in
+  `pnpm-workspace.yaml`. The suite needs no credentials: Feishu runs over
+  the memory transport and the LLM is a local mock server.
 - The full card state-machine matrix in `tests/bridge.spec.ts` is extended
   with the command and resume-session action classes; new unit suites cover
   the panel palette, the `/sessions` picker builder, and the

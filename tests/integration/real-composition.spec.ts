@@ -11,7 +11,9 @@
  * fresh message.
  *
  * It self-skips when the environment lacks a prepared profile or the dsh
- * CLI. See docs/development.md → "Integration test" for prerequisites.
+ * CLI; CI runs it with `FEISHU_INT_REQUIRED=1` so a missing prerequisite
+ * there is a hard failure, never a silent skip. See
+ * docs/development.md → "Integration test" for prerequisites.
  */
 
 import { spawn, spawnSync } from 'node:child_process';
@@ -79,6 +81,20 @@ async function waitFor(
 const dshBin = resolveDshBin();
 const profileReady = existsSync(join(PROFILE_DIR, 'package.json'));
 const built = existsSync(join(REPO_ROOT, 'lib', 'index.js'));
+/**
+ * CI runs this suite with `FEISHU_INT_REQUIRED=1`: a missing prerequisite
+ * there is a hard failure, never a silent skip. Local runs keep the graceful
+ * self-skip (no dsh CLI, prepared profile, or built lib).
+ */
+const integrationRequired = process.env.FEISHU_INT_REQUIRED === '1';
+const integrationReady = dshBin !== undefined && profileReady && built;
+if (integrationRequired && !integrationReady) {
+  throw new Error(
+    `FEISHU_INT_REQUIRED=1 but integration prerequisites are missing ` +
+      `(dsh CLI=${dshBin !== undefined} profile=${profileReady} built=${built}); ` +
+      'see docs/development.md → "Integration test"',
+  );
+}
 const ACTIONS_DIR = join(MEMORY_DIR, 'actions');
 /** Scratch working directory pinned via /cd in turn-running tests (the
  *  working-directory gate refuses turns until a repo/cwd is chosen). */
@@ -148,7 +164,7 @@ function sendMessage(chatId: string, text: string): void {
   );
 }
 
-describe.skipIf(!dshBin || !profileReady || !built)('real-composition integration', () => {
+describe.skipIf(!integrationReady)('real-composition integration', () => {
   let mock: MockLlmServer | undefined;
   let child: ReturnType<typeof spawn> | undefined;
   let stdout = '';

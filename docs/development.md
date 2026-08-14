@@ -81,10 +81,19 @@ unless the prerequisites are met:
   `DSH_HOME` so the test never touches another dsh home.
 - The checkout is built (`pnpm run build`).
 
+CI runs the suite on every push (both node-version legs): the workflow
+builds the checkout, prepares the profile, and runs the tests with
+`FEISHU_INT_REQUIRED=1` so a missing prerequisite fails the job loudly
+instead of silently skipping. The dsh CLI is a devDependency
+(`@deepseek-ai/dsh`) and native build scripts (node-pty and friends) are
+allowed in `pnpm-workspace.yaml` — no credentials are involved; the Feishu
+and LLM mocks above are what make the suite runnable without secrets.
+
 ```sh
 pnpm run build        # ensure lib/ is current (the profile links the checkout)
 pnpm run test         # unit + integration (integration self-skips as needed)
 DSH_BIN=/path/to/dsh pnpm run test -- tests/integration/real-composition.spec.ts
+FEISHU_INT_REQUIRED=1 pnpm run test   # fail (not skip) when a prerequisite is missing
 ```
 
 Turn-running tests pin a working directory first (`/cd`, required by the

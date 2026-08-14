@@ -1,9 +1,14 @@
 allowBuilds:
+  '@deepseek-ai/dsh-subprocess-local': true
+  '@google/genai': true
   esbuild: true
+  koffi: true
+  node-pty: true
   protobufjs: true
 minimumReleaseAgeExclude:
   - '@deepseek-ai/cordis@4.0.1'
   - '@deepseek-ai/cosmokit@1.8.2'
+  - '@deepseek-ai/dsh@0.1.0-rc.6'
   - '@deepseek-ai/dsh-agent@0.1.0-rc.6'
   - '@deepseek-ai/dsh-attachment@0.1.0-rc.6'
   - '@deepseek-ai/dsh-brand@0.1.0-rc.6'
