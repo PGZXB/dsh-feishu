@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Agent workflow documentation.** `AGENTS.md` gains a "Worktree + PR
+  workflow" section (work in a git worktree under `_dev/`, verify gates with
+  `FEISHU_INT_REQUIRED=1`, rebase onto latest `origin/main`, merge only via a
+  green PR); `docs/development.md` gains "Local toolchain" (the pnpm
+  PATH/store/cache env block for this machine) and "Pull requests and CI"
+  (the GitHub API calls for PR creation, CI monitoring, and merge using the
+  PAT at `_dev/gh-token`).
+
 - **Interactive approvals (Iteration 3).** `ctx.on('approval/request')`
   answers every approval with a Feishu card (tool + reason, ✅ Allow once /
   ❌ Reject) through the new shared `InteractionRegistry`

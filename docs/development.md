@@ -27,6 +27,25 @@ pnpm install
 > # keep HOME exported for every pnpm invocation in this shell
 > ```
 
+### Local toolchain
+
+On this machine `pnpm` is not on `PATH`. Use the local install and point every
+pnpm invocation — including the profile's spawned `pnpm`, since `dsh plugin`
+forwards to it — at writable store/cache paths under `_dev/`:
+
+```sh
+export PATH="/home/zhangmm23/dsh-feishu/_dev/pnpm/node_modules/.bin:$PATH"
+export npm_config_store_dir="/home/zhangmm23/dsh-feishu/_dev/pnpm-store"
+export npm_config_cache_dir="/home/zhangmm23/dsh-feishu/_dev/pnpm-cache"
+export XDG_CACHE_HOME="/home/zhangmm23/dsh-feishu/_dev/xdg-cache"  # node-gyp builds
+```
+
+`npm_config_*` env vars override project config, so `dsh plugin`'s inner
+`pnpm add` uses the same store without editing the profile. `XDG_CACHE_HOME`
+redirects node-gyp's header cache (the default `~/.cache/node-gyp` sits on a
+read-only mount here) — without it native modules such as node-pty fail to
+build.
+
 ## Gates
 
 ```sh
@@ -139,6 +158,51 @@ timeout 30 dsh --profile feishu-dev       # boot; expect the "[feishu]" log line
    `ctx.get`).
 4. Update the relevant `docs/` page and `CHANGELOG.md`.
 5. Run all gates; commit with a Conventional Commit message.
+
+## Pull requests and CI
+
+Merge only through a PR with green CI — never push to main. GitHub API access
+uses the repo-scoped fine-grained PAT at `_dev/gh-token` (chmod 600, owned by
+the developer, never committed). Read it into a variable per call and never
+echo it:
+
+```sh
+TOKEN=$(cat _dev/gh-token)
+```
+
+Open a PR (head = your pushed branch, base = `main`):
+
+```sh
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H 'Accept: application/vnd.github+json' -H 'Content-Type: application/json' \
+  https://api.github.com/repos/PGZXB/dsh-feishu/pulls \
+  --data '{"title":"...","head":"<branch>","base":"main","body":"..."}'
+```
+
+Watch CI until it concludes — the workflow runs the full gate matrix,
+including the real-composition integration suite:
+
+```sh
+SHA=$(git rev-parse HEAD)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  -H 'Accept: application/vnd.github+json' \
+  "https://api.github.com/repos/PGZXB/dsh-feishu/actions/runs?head_sha=$SHA"
+```
+
+Merge once the PR's `mergeable_state` is `clean` (checks green):
+
+```sh
+curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
+  -H 'Accept: application/vnd.github+json' -H 'Content-Type: application/json' \
+  https://api.github.com/repos/PGZXB/dsh-feishu/pulls/<number>/merge \
+  --data '{"commit_title":"...","merge_method":"merge"}'
+```
+
+Before opening the PR, rebase onto the latest `origin/main` and re-run the
+gates: the main tree moves under concurrent work, and conflicts are cheapest
+to fix before the PR exists. If CI is red, fix in the worktree and re-push —
+GitHub re-runs checks on the new head. See AGENTS.md → "Worktree + PR
+workflow" for the end-to-end practice.
 
 ## Publishing (planned)
 

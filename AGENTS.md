@@ -152,6 +152,38 @@ PLAN.md               # the development plan (bilingual planning artifact)
    `pnpm run build` and confirm each returns 0 before committing with a
    Conventional Commit message.
 
+## Worktree + PR workflow
+
+The main working tree is shared: a human or another agent may be editing it at
+any moment. Never commit or run stateful work there. Do feature work in a git
+**worktree under `_dev/`** (git-ignored, so it never pollutes commits):
+
+```sh
+git worktree add -b <topic-branch> _dev/dsh-feishu-<topic> main
+```
+
+A fresh worktree has no `node_modules/`, `lib/`, or `_dev/` state. Before
+running the gates there: `pnpm install`, `pnpm run build`, and prepare the
+integration profile (`DSH_HOME="$(pwd)/_dev/dsh-home" dsh plugin --profile
+feishu-dev add "link:$(pwd)"`). pnpm is not on PATH in this environment — use
+the local install under `_dev/pnpm` and point store/cache at `_dev/` (env
+block in `docs/development.md` → "Local toolchain").
+
+Verify every gate exactly as CI does — including `FEISHU_INT_REQUIRED=1` so
+the integration suite must actually run, never silently skip — then:
+
+```sh
+git fetch origin && git rebase origin/main   # resolve conflicts, re-verify
+git push -u origin <topic-branch>            # open a PR; never push to main
+```
+
+Merge only through a PR with green CI. GitHub API access (PR creation, CI
+monitoring, merge) is automated with the repo-scoped PAT at `_dev/gh-token`
+(chmod 600); the concrete API calls live in `docs/development.md` →
+"Pull requests and CI". Keep the main tree untouched throughout: the
+integration suite writes `_dev/` state (dsh home, memory transport), so run it
+in the worktree, never in the main tree.
+
 ## Lessons learned (field-proven on real devices)
 
 These rules came from real bugs; each has a regression test and a
