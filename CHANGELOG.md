@@ -153,6 +153,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The PR-merge snippet in `docs/development.md` now uses
+  `merge_method: "rebase"` to keep `main` linear — a `"merge"` merge commit
+  adds a second commit per PR even when the branch is fast-forwardable.
 - **CI runs the real-composition integration suite.** The workflow builds
   the checkout before testing, prepares the `feishu-dev` profile with
   `dsh plugin ... add link:$GITHUB_WORKSPACE`, and runs tests with
