@@ -34,6 +34,7 @@ import {
   type TurnRow,
 } from './cards/render.js';
 import type { StreamingCardManager } from './cards/streaming.js';
+import { toolRowSummary } from './cards/tool-summary.js';
 import { CommandRegistry, type CommandResult, parseSlash } from './commands.js';
 import type { CardAction, FeishuMessage, FeishuTransport } from './feishu/types.js';
 import { MessageDeduplicator } from './message-dedup.js';
@@ -444,11 +445,15 @@ export class Bridge {
       }
       case 'tool/call': {
         settleOpenThink(turn);
+        const cwd = this.options.sessionMap.cwdFor(chatId) ?? this.options.defaultCwd;
         upsertRow(turn, {
           kind: 'tool',
           id: event.data.callId,
           name: event.data.name,
           status: 'running',
+          // The summary derives from the FULL arguments before truncation —
+          // a long command must never render as its raw JSON envelope.
+          summary: toolRowSummary(event.data.name, event.data.arguments, cwd),
           args: event.data.arguments.slice(0, MAX_TOOL_RECORD_CHARS),
           result: '',
         } satisfies ToolRow);

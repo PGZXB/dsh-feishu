@@ -91,10 +91,26 @@ describe('rowLine', () => {
       id: 'c1',
       name: 'bash',
       status: 'done' as const,
+      summary: 'ls -la',
       args: '{"command":"ls -la"}',
       result: '',
     };
     expect(rowLine(row)).toBe('✅ Bash · ls -la');
+  });
+
+  it('uses the stored summary even when the args were truncated', () => {
+    // A long command truncates mid-JSON; the summary was computed from the
+    // full arguments at capture time and must not degrade to the raw JSON.
+    const row = {
+      kind: 'tool' as const,
+      id: 'c1',
+      name: 'bash',
+      status: 'running' as const,
+      summary: 'export DOCKER_HOST=unix:///run/user/1001/docker.sock',
+      args: '{"command":"export DOCKER_HOST=unix:///run/u',
+      result: '',
+    };
+    expect(rowLine(row)).toBe('🔧 Bash · export DOCKER_HOST=unix:///run/user/1001/docker.sock');
   });
 });
 
@@ -107,6 +123,7 @@ describe('collapseSequence', () => {
         id: 'c1',
         name: 'bash',
         status: 'done' as const,
+        summary: '',
         args: '',
         result: '',
       },
@@ -115,6 +132,7 @@ describe('collapseSequence', () => {
         id: 'c2',
         name: 'read',
         status: 'done' as const,
+        summary: '',
         args: '',
         result: '',
       },
@@ -128,6 +146,7 @@ describe('collapseSequence', () => {
       id: `c${i}`,
       name: `t${i}`,
       status: 'done' as const,
+      summary: '',
       args: '',
       result: '',
     }));
@@ -166,6 +185,7 @@ describe('buildCard', () => {
           id: 'c1',
           name: 'bash',
           status: 'done',
+          summary: 'ls',
           args: '{"command":"ls"}',
           result: '',
         },
@@ -174,6 +194,7 @@ describe('buildCard', () => {
           id: 'c2',
           name: 'read',
           status: 'error',
+          summary: 'a.txt',
           args: '{"path":"a.txt"}',
           result: '',
         },
@@ -195,8 +216,24 @@ describe('buildCard', () => {
       content: 'done',
       rows: [
         { kind: 'think', id: 't1', text: 'hmm', settled: true },
-        { kind: 'tool', id: 'c1', name: 'bash', status: 'done', args: '{}', result: '' },
-        { kind: 'tool', id: 'c2', name: 'read', status: 'done', args: '{}', result: '' },
+        {
+          kind: 'tool',
+          id: 'c1',
+          name: 'bash',
+          status: 'done',
+          summary: '',
+          args: '{}',
+          result: '',
+        },
+        {
+          kind: 'tool',
+          id: 'c2',
+          name: 'read',
+          status: 'done',
+          summary: '',
+          args: '{}',
+          result: '',
+        },
       ],
       collapsed: true,
       status: 'done',
@@ -215,7 +252,17 @@ describe('buildCard', () => {
     const card = buildCard({
       title: 'T',
       content: 'done',
-      rows: [{ kind: 'tool', id: 'c1', name: 'bash', status: 'done', args: '{}', result: '' }],
+      rows: [
+        {
+          kind: 'tool',
+          id: 'c1',
+          name: 'bash',
+          status: 'done',
+          summary: '',
+          args: '{}',
+          result: '',
+        },
+      ],
       status: 'done',
     });
     const action = card.elements.find((el) => el.tag === 'action');
@@ -242,7 +289,17 @@ describe('buildCard', () => {
     const card = buildCard({
       title: 'T',
       content: 'done',
-      rows: [{ kind: 'tool', id: 'c1', name: 'bash', status: 'done', args: '{}', result: 'ok' }],
+      rows: [
+        {
+          kind: 'tool',
+          id: 'c1',
+          name: 'bash',
+          status: 'done',
+          summary: '',
+          args: '{}',
+          result: 'ok',
+        },
+      ],
       status: 'done',
     });
     const action = card.elements.find((el) => el.tag === 'action');
@@ -299,6 +356,7 @@ describe('buildRowDetailsCard', () => {
       id: 'c1',
       name: 'bash',
       status: 'done',
+      summary: 'ls',
       args: '{"command":"ls","n":1}',
       result: 'file.txt',
     });
@@ -321,6 +379,7 @@ describe('buildRowDetailsCard', () => {
       id: 'c1',
       name: 'bash',
       status: 'done',
+      summary: '{not json',
       args: '{not json',
       result: '',
     });

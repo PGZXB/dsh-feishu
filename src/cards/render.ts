@@ -16,7 +16,7 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import type { CardElement, CardJson } from '../feishu/types.js';
 import type { ProjectInfo } from '../projects.js';
 import { markdownToElements } from './markdown.js';
-import { toolRowSummary, toolRowTitle } from './tool-summary.js';
+import { toolRowTitle } from './tool-summary.js';
 
 /** Terminal/working state of one streaming card. */
 export type CardStatus = 'working' | 'done' | 'error';
@@ -41,6 +41,9 @@ export interface ToolRow {
   readonly id: string;
   readonly name: string;
   readonly status: 'running' | 'done' | 'error';
+  /** One-line summary derived from the FULL arguments at capture time —
+   *  truncating the stored args must never degrade the visible summary. */
+  readonly summary: string;
   /** Raw JSON arguments (may be truncated for card size). */
   readonly args: string;
   /** Result text (may be truncated). */
@@ -332,15 +335,14 @@ export function assistantText(blocks: readonly ContentBlock[]): string {
 }
 
 /** The one-line display text of a row, DSH web style. */
-export function rowLine(row: TurnRow, cwd?: string): string {
+export function rowLine(row: TurnRow): string {
   if (row.kind === 'think') {
     // Always "Thinking" — a live latest-line would flicker through
     // throttled card patches; the full text lives in the expand card.
     return '☁️ Think · Thinking';
   }
   const icon = row.status === 'running' ? '🔧' : row.status === 'done' ? '✅' : '❌';
-  const summary = toolRowSummary(row.name, row.args, cwd);
-  return `${icon} ${toolRowTitle(row.name)} · ${summary}`;
+  return `${icon} ${toolRowTitle(row.name)} · ${row.summary}`;
 }
 
 /**
@@ -356,8 +358,8 @@ export function collapseSequence(rows: readonly TurnRow[], max = 12): string {
 }
 
 /** One card row: the line text plus its expand button (opens row details). */
-function rowElement(row: TurnRow, cwd?: string): CardElement {
-  const line = stripAngleBrackets(rowLine(row, cwd));
+function rowElement(row: TurnRow): CardElement {
+  const line = stripAngleBrackets(rowLine(row));
   return {
     tag: 'column_set',
     flex_mode: 'flow',
@@ -402,7 +404,7 @@ export function buildCard(snapshot: CardSnapshot): CardJson {
     elements.push({ tag: 'markdown', content: collapseSequence(snapshot.rows) });
   } else {
     for (const row of snapshot.rows) {
-      elements.push(rowElement(row, snapshot.cwd));
+      elements.push(rowElement(row));
     }
   }
   if (elements.length > 0 && snapshot.content.trim() !== '') {
