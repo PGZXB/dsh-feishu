@@ -79,6 +79,28 @@ export interface SelectAction {
   readonly value: Record<string, string>;
 }
 
+/** A `div` element: a single lark_md text block inside a card column. */
+export interface DivElement {
+  readonly tag: 'div';
+  readonly text: { readonly tag: 'lark_md'; readonly content: string };
+}
+
+/** Elements allowed inside a `column_set` column. */
+export type ColumnElement =
+  | { readonly tag: 'markdown'; readonly content: string }
+  | DivElement
+  | ButtonAction
+  | { readonly tag: 'img'; readonly img_key: string };
+
+/** One column inside a `column_set` row. */
+export interface ColumnContainer {
+  readonly tag: 'column';
+  readonly width?: 'auto' | 'weighted';
+  readonly weight?: number;
+  readonly vertical_align?: 'center' | 'top' | 'bottom';
+  readonly elements: readonly ColumnElement[];
+}
+
 /** One card element the surface emits. */
 export type CardElement =
   | { readonly tag: 'markdown'; readonly content: string }
@@ -90,7 +112,14 @@ export type CardElement =
   | {
       readonly tag: 'note';
       readonly elements: readonly { readonly tag: 'plain_text'; readonly content: string }[];
-    };
+    }
+  | {
+      readonly tag: 'column_set';
+      readonly flex_mode?: 'none' | 'flow';
+      readonly horizontal_spacing?: 'default' | 'small' | 'large';
+      readonly columns: readonly ColumnContainer[];
+    }
+  | DivElement;
 
 /**
  * One card button callback normalized for the surface. `value` is the

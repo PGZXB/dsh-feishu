@@ -10,11 +10,14 @@ import {
   buildPanelCard,
   buildRepoPickedCard,
   buildRepoPickerCard,
-  buildToolDetailsCard,
+  buildRowDetailsCard,
   REPO_SELECT_MAX_OPTIONS,
   repoOptionLabel,
+  repoRelativePath,
+  rowLine,
   truncateTail,
 } from '../../src/cards/render.js';
+import { toolRowSummary, toolRowTitle } from '../../src/cards/tool-summary.js';
 import type { ButtonAction, CardElement, SelectAction } from '../../src/feishu/types.js';
 
 /** Button-only labels of an action element (skips select dropdowns). */
@@ -27,6 +30,23 @@ function buttonLabels(el: CardElement | undefined): string[] {
 function selectOf(el: CardElement | undefined): SelectAction | undefined {
   if (el === undefined || el.tag !== 'action') return undefined;
   return el.actions.find((a): a is SelectAction => a.tag === 'select_static');
+}
+
+/** The one-line lark_md content of a row's text column. */
+function rowText(row: CardElement | undefined): string {
+  if (row === undefined || row.tag !== 'column_set') return '';
+  const text = row.columns[0]?.elements[0];
+  return text?.tag === 'div' ? text.text.content : '';
+}
+
+/** The ⋯ expand button of a row's button column. */
+function rowButton(
+  row: CardElement | undefined,
+): { content: string; value: Record<string, string> } | undefined {
+  if (row === undefined || row.tag !== 'column_set') return undefined;
+  const button = row.columns[1]?.elements[0];
+  if (button?.tag !== 'button') return undefined;
+  return { content: button.text.content, value: button.value };
 }
 
 describe('truncateTail', () => {
@@ -53,15 +73,35 @@ describe('assistantText', () => {
   });
 });
 
+describe('rowLine', () => {
+  it('shows a running think row as Thinking', () => {
+    expect(rowLine({ kind: 'think', id: 't1', text: 'hmm', settled: false })).toBe(
+      'Think · Thinking…',
+    );
+  });
+
+  it('shows the first line of a settled think row', () => {
+    expect(rowLine({ kind: 'think', id: 't1', text: 'first line\nsecond', settled: true })).toBe(
+      'Think · first line',
+    );
+  });
+
+  it('renders a tool row as Title · summary with status icon', () => {
+    const row = {
+      kind: 'tool' as const,
+      id: 'c1',
+      name: 'bash',
+      status: 'done' as const,
+      args: '{"command":"ls -la"}',
+      result: '',
+    };
+    expect(rowLine(row)).toBe('✅ Bash · ls -la');
+  });
+});
+
 describe('buildCard', () => {
   it('emits a v1 card (no schema field) with header template by status', () => {
-    const card = buildCard({
-      title: 'T',
-      content: 'body',
-      thinking: '',
-      tools: [],
-      status: 'working',
-    });
+    const card = buildCard({ title: 'T', content: 'body', rows: [], status: 'working' });
     // The v1 root-elements layout is used deliberately so the card can carry
     // interactive action buttons (schema 2.0 rejects the action tag).
     expect(card.schema).toBeUndefined();
@@ -70,63 +110,53 @@ describe('buildCard', () => {
   });
 
   it('uses green for done and red for error', () => {
-    expect(
-      buildCard({ title: 'T', content: '', thinking: '', tools: [], status: 'done' }).header
-        ?.template,
-    ).toBe('green');
-    expect(
-      buildCard({ title: 'T', content: '', thinking: '', tools: [], status: 'error' }).header
-        ?.template,
-    ).toBe('red');
+    expect(buildCard({ title: 'T', content: '', rows: [], status: 'done' }).header?.template).toBe(
+      'green',
+    );
+    expect(buildCard({ title: 'T', content: '', rows: [], status: 'error' }).header?.template).toBe(
+      'red',
+    );
   });
 
-  it('renders tool records as compact lines in order', () => {
+  it('renders think/tool rows in chronological order with expand buttons', () => {
     const card = buildCard({
       title: 'T',
       content: '',
-      thinking: '',
-      tools: [
-        { name: 'bash', status: 'running', args: '{}', result: '' },
-        { name: 'grep', status: 'done', args: '{}', result: 'ok' },
-        { name: 'ls', status: 'error', args: '{}', result: 'boom' },
+      rows: [
+        { kind: 'think', id: 't1', text: 'hmm', settled: true },
+        {
+          kind: 'tool',
+          id: 'c1',
+          name: 'bash',
+          status: 'done',
+          args: '{"command":"ls"}',
+          result: '',
+        },
+        {
+          kind: 'tool',
+          id: 'c2',
+          name: 'read',
+          status: 'error',
+          args: '{"path":"a.txt"}',
+          result: '',
+        },
       ],
-      status: 'working',
-    });
-    const lines = card.elements
-      .filter((el) => el.tag === 'markdown' && typeof el.content === 'string')
-      .map((el) => (el.tag === 'markdown' ? el.content : ''));
-    expect(lines).toContain('🔧 bash');
-    expect(lines).toContain('✅ grep');
-    expect(lines).toContain('❌ ls');
-  });
-
-  it('renders thinking first, dimmed, then the final output last', () => {
-    const card = buildCard({
-      title: 'T',
-      content: 'final answer',
-      thinking: 'let me think',
-      tools: [{ name: 'bash', status: 'done', args: '{}', result: 'ok' }],
       status: 'done',
     });
-    const markdowns = card.elements.filter((el) => el.tag === 'markdown') as Extract<
-      CardElement,
-      { tag: 'markdown' }
-    >[];
-    const contents = markdowns.map((el) => el.content);
-    const thinkingIdx = contents.findIndex((c) => c.includes('let me think'));
-    const toolIdx = contents.findIndex((c) => c.includes('✅ bash'));
-    const answerIdx = contents.findIndex((c) => c === 'final answer');
-    expect(thinkingIdx).toBeGreaterThanOrEqual(0);
-    expect(toolIdx).toBeGreaterThan(thinkingIdx);
-    expect(answerIdx).toBeGreaterThan(toolIdx);
+    const rows = card.elements.filter((el) => el.tag === 'column_set');
+    expect(rows).toHaveLength(3);
+    expect(rowText(rows[0])).toBe('Think · hmm');
+    expect(rowText(rows[1])).toContain('✅ Bash');
+    expect(rowText(rows[2])).toContain('❌ Read');
+    expect(rowButton(rows[0])?.content).toBe('⋯');
+    expect(rowButton(rows[1])?.value).toEqual({ kind: 'row-details', id: 'c1' });
   });
 
-  it('renders the final output as markdown (headings become bold)', () => {
+  it('renders the complete output at the bottom as markdown', () => {
     const card = buildCard({
       title: 'T',
       content: '# Hello\n\nsome **bold** text',
-      thinking: '',
-      tools: [],
+      rows: [{ kind: 'think', id: 't1', text: 'hmm', settled: true }],
       status: 'done',
     });
     const markdowns = card.elements.filter(
@@ -138,16 +168,15 @@ describe('buildCard', () => {
     expect(joined).not.toContain('# Hello');
   });
 
-  it('shows a tools button when the turn invoked tools', () => {
+  it('shows copy/retry/panel when done (no tools button)', () => {
     const card = buildCard({
       title: 'T',
       content: 'done',
-      thinking: '',
-      tools: [{ name: 'bash', status: 'done', args: '{}', result: 'ok' }],
+      rows: [{ kind: 'tool', id: 'c1', name: 'bash', status: 'done', args: '{}', result: 'ok' }],
       status: 'done',
     });
     const action = card.elements.find((el) => el.tag === 'action');
-    expect(buttonLabels(action)).toContain('🔧 Tools');
+    expect(buttonLabels(action)).toEqual(['📋 Copy', '🔁 Retry', '⚙️ Panel']);
   });
 });
 
@@ -174,43 +203,41 @@ describe('markdownToElements', () => {
 
 describe('card buttons', () => {
   it('shows only the stop button while working', () => {
-    const card = buildCard({
-      title: 'T',
-      content: 'x',
-      thinking: '',
-      tools: [],
-      status: 'working',
-    });
+    const card = buildCard({ title: 'T', content: 'x', rows: [], status: 'working' });
     const action = card.elements.find((el) => el.tag === 'action');
     expect(buttonLabels(action)).toEqual(['⏹ Stop']);
   });
-
-  it('shows copy/retry/panel when done', () => {
-    const card = buildCard({ title: 'T', content: 'x', thinking: '', tools: [], status: 'done' });
-    const action = card.elements.find((el) => el.tag === 'action');
-    expect(buttonLabels(action)).toEqual(['📋 Copy', '🔁 Retry', '⚙️ Panel']);
-  });
 });
 
-describe('buildToolDetailsCard', () => {
-  it('lists each tool call with args and result', () => {
-    const card = buildToolDetailsCard('My turn', [
-      { name: 'bash', status: 'done', args: '{"cmd":"ls"}', result: 'file.txt' },
-    ]);
+describe('buildRowDetailsCard', () => {
+  it('shows the full reasoning text for a think row', () => {
+    const card = buildRowDetailsCard({
+      kind: 'think',
+      id: 't1',
+      text: 'full reasoning',
+      settled: true,
+    });
     const markdowns = card.elements.filter(
       (el): el is Extract<CardElement, { tag: 'markdown' }> => el.tag === 'markdown',
     );
-    expect(markdowns[0]?.content).toContain('✅ **1. bash**');
-    expect(markdowns[1]?.content).toContain('args:');
-    expect(markdowns[2]?.content).toContain('result:');
+    expect(markdowns[0]?.content).toBe('full reasoning');
   });
 
-  it('handles a turn with no tools', () => {
-    const card = buildToolDetailsCard('T', []);
+  it('shows IN args and OUT result for a tool row', () => {
+    const card = buildRowDetailsCard({
+      kind: 'tool',
+      id: 'c1',
+      name: 'bash',
+      status: 'done',
+      args: '{"command":"ls"}',
+      result: 'file.txt',
+    });
     const markdowns = card.elements.filter(
       (el): el is Extract<CardElement, { tag: 'markdown' }> => el.tag === 'markdown',
     );
-    expect(markdowns[0]?.content).toContain('No tool calls');
+    expect(markdowns[0]?.content).toContain('Bash');
+    expect(markdowns[1]?.content).toContain('IN');
+    expect(markdowns[2]?.content).toContain('OUT');
   });
 });
 
@@ -223,42 +250,31 @@ describe('buildPanelCard', () => {
   });
 });
 
-describe('buildRepoPickerCard', () => {
-  it('renders a select_static dropdown inside an action container', () => {
-    const card = buildRepoPickerCard([
-      { name: 'a', path: '/work/a', type: 'repo', branch: 'main' },
-      { name: 'b', path: '/work/b', type: 'repo', branch: 'dev' },
-    ]);
-    const action = card.elements.find((el) => el.tag === 'action');
-    const select = selectOf(action);
-    expect(select).toBeDefined();
-    expect(select?.options.map((o) => o.value)).toEqual(['/work/a', '/work/b']);
-    expect(select?.value).toEqual({ kind: 'repo-pick' });
-  });
-
-  it('labels dropdown options with name, branch, and worktree tag', () => {
-    const card = buildRepoPickerCard([
-      { name: 'a', path: '/work/a', type: 'repo', branch: 'main' },
-      { name: 'b', path: '/work/b', type: 'worktree', branch: 'feature' },
-    ]);
-    const action = card.elements.find((el) => el.tag === 'action');
-    const select = selectOf(action);
-    expect(select?.options.map((o) => o.text.content)).toEqual([
-      '1. a (main)',
-      '2. b (feature) [worktree]',
-    ]);
-  });
-
-  it('disambiguates duplicate basenames with a path suffix', () => {
-    const card = buildRepoPickerCard([
-      { name: 'repo', path: '/work/a/repo', type: 'repo', branch: 'main' },
-      { name: 'repo', path: '/work/b/repo', type: 'repo', branch: 'main' },
-    ]);
+describe('repo relative paths', () => {
+  it('labels options with the repoRoot-relative path, not the basename', () => {
+    const roots = ['/work'];
+    const card = buildRepoPickerCard(
+      [
+        { name: 'source', path: '/work/a/source', type: 'repo', branch: 'main' },
+        { name: 'source', path: '/work/b/source', type: 'repo', branch: 'dev' },
+      ],
+      roots,
+    );
     const action = card.elements.find((el) => el.tag === 'action');
     const select = selectOf(action);
     const labels = select?.options.map((o) => o.text.content) ?? [];
-    expect(labels[0]).toContain('a/repo');
-    expect(labels[1]).toContain('b/repo');
+    expect(labels).toEqual(['1. a/source (main)', '2. b/source (dev)']);
+  });
+
+  it('repoRelativePath picks the longest matching root and falls back to full path', () => {
+    expect(
+      repoRelativePath({ name: 'x', path: '/work/sub/x', type: 'repo', branch: 'main' }, ['/work']),
+    ).toBe('sub/x');
+    expect(
+      repoRelativePath({ name: 'x', path: '/elsewhere/x', type: 'repo', branch: 'main' }, [
+        '/work',
+      ]),
+    ).toBe('/elsewhere/x');
   });
 
   it('falls back to paginated buttons beyond the dropdown option cap', () => {
@@ -272,7 +288,7 @@ describe('buildRepoPickerCard', () => {
           branch: 'main',
         }) as const,
     );
-    const card = buildRepoPickerCard(projects, 0);
+    const card = buildRepoPickerCard(projects, ['/work'], 0);
     const actions = card.elements.filter((el) => el.tag === 'action');
     const last = actions.at(-1);
     expect(buttonLabels(last)).toEqual(['Next ›']);
@@ -294,21 +310,30 @@ describe('buildRepoPickedCard', () => {
 });
 
 describe('repoOptionLabel', () => {
-  it('keeps short labels for unique names', () => {
-    const label = repoOptionLabel(
-      { name: 'a', path: '/work/a', type: 'repo', branch: 'main' },
-      new Set(),
-      '/work',
+  it('appends branch and worktree marker', () => {
+    expect(
+      repoOptionLabel({ name: 'a', path: '/work/a', type: 'worktree', branch: 'feature' }, [
+        '/work',
+      ]),
+    ).toBe('a (feature) [worktree]');
+  });
+});
+
+describe('toolRowSummary / toolRowTitle', () => {
+  it('bash summary prefers the description then the command', () => {
+    expect(toolRowSummary('bash', '{"command":"ls"}')).toBe('ls');
+    expect(toolRowSummary('bash', '{"description":"check deps","command":"ls"}')).toBe(
+      'check deps',
     );
-    expect(label).toBe('a (main)');
   });
 
-  it('appends a relative path for duplicate names', () => {
-    const label = repoOptionLabel(
-      { name: 'a', path: '/work/x/a', type: 'repo', branch: 'main' },
-      new Set(['a']),
-      '/work',
-    );
-    expect(label).toBe('a (main) — x/a');
+  it('read summary is the file path', () => {
+    expect(toolRowSummary('read', '{"path":"/work/src/a.ts"}', '/work')).toBe('src/a.ts');
+  });
+
+  it('unknown tools fall back to the first string arg with a Tool call title', () => {
+    expect(toolRowSummary('my_tool', '{"msg":"hello"}')).toBe('my_tool · hello');
+    expect(toolRowTitle('my_tool')).toBe('Tool call');
+    expect(toolRowTitle('bash')).toBe('Bash');
   });
 });

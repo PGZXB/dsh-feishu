@@ -24,11 +24,13 @@ import {
   buildPanelCard,
   buildRepoPickedCard,
   buildRepoPickerCard,
-  buildToolDetailsCard,
+  buildRowDetailsCard,
   type CardSnapshot,
   type CardStatus,
   MAX_TOOL_RECORD_CHARS,
-  type ToolRecord,
+  type ThinkRow,
+  type ToolRow,
+  type TurnRow,
 } from './cards/render.js';
 import type { StreamingCardManager } from './cards/streaming.js';
 import { CommandRegistry, type CommandResult, parseSlash } from './commands.js';
@@ -110,16 +112,16 @@ export interface BridgeOptions {
 interface TurnState {
   readonly title: string;
   content: string;
-  thinking: string;
-  tools: ToolRecord[];
+  /** Chronological think/tool rows (all of them — DSH web layout). */
+  rows: TurnRow[];
+  /** The open think row receiving reasoning deltas, or undefined. */
+  openThinkId: string | undefined;
   status: CardStatus;
 }
 
 const MAX_TITLE_CHARS = 40;
-/** Tool records kept for the live card + details view (newest wins). */
-const MAX_TOOL_RECORDS = 30;
-/** Tool lines shown on the live card (newest N; details card shows all). */
-const MAX_TOOL_LINES = 6;
+/** Monotonic counter for think-row ids (stable across the turn). */
+let thinkRowSeq = 0;
 
 /** Whether a group is a 1-person-1-bot solo group (mention gate relaxation). */
 function isSoloGroup(stats: { userCount: number; botCount: number }): boolean {
@@ -136,20 +138,28 @@ export function turnTitle(text: string): string {
   return oneLine.length <= MAX_TITLE_CHARS ? oneLine : `${oneLine.slice(0, MAX_TITLE_CHARS)}…`;
 }
 
-/** Push a tool record, dropping the oldest when over the cap. */
-function pushToolRecord(turn: TurnState, record: ToolRecord): void {
-  turn.tools.push(record);
-  if (turn.tools.length > MAX_TOOL_RECORDS) turn.tools.shift();
+/** Append a row, or update it in place when it already exists (by id). */
+function upsertRow(turn: TurnState, row: TurnRow): void {
+  const index = turn.rows.findIndex((existing) => existing.id === row.id);
+  if (index >= 0) turn.rows[index] = row;
+  else turn.rows.push(row);
 }
 
-/** Flip the most recent running tool to done/error with its result text. */
-function markLastToolDone(turn: TurnState, result: string, status: 'done' | 'error'): void {
-  for (let i = turn.tools.length - 1; i >= 0; i -= 1) {
-    const tool = turn.tools[i];
-    if (tool?.status === 'running') {
-      turn.tools[i] = { ...tool, status, result };
-      return;
-    }
+/** Open a think row if reasoning is streaming and none is open. */
+function ensureThinkRow(turn: TurnState, id: string): void {
+  if (turn.openThinkId !== undefined) return;
+  turn.openThinkId = id;
+  upsertRow(turn, { kind: 'think', id, text: '', settled: false });
+}
+
+/** Settle the open think row (reasoning for this block ended). */
+function settleOpenThink(turn: TurnState): void {
+  if (turn.openThinkId === undefined) return;
+  const id = turn.openThinkId;
+  turn.openThinkId = undefined;
+  const index = turn.rows.findIndex((row) => row.id === id);
+  if (index >= 0 && turn.rows[index]?.kind === 'think') {
+    turn.rows[index] = { ...turn.rows[index], settled: true } as ThinkRow;
   }
 }
 
@@ -189,8 +199,8 @@ export class Bridge {
   private readonly turns = new Map<string, TurnState>();
   private readonly lastPrompts = new Map<string, string>();
   private readonly lastOutputs = new Map<string, string>();
-  /** Last completed turn's tool records per chat (for the 🔧 Tools button). */
-  private readonly lastTools = new Map<string, readonly ToolRecord[]>();
+  /** Last completed turn's rows per chat (for the ⋯ row expand buttons). */
+  private readonly lastRows = new Map<string, readonly TurnRow[]>();
   /** Active repo-picker card message id per chat; a pick consumes it. */
   private readonly pickerMessageIds = new Map<string, string>();
   private readonly disposeEvents: () => void;
@@ -294,8 +304,8 @@ export class Bridge {
     this.turns.set(message.chatId, {
       title: turnTitle(message.text),
       content: '',
-      thinking: '',
-      tools: [],
+      rows: [],
+      openThinkId: undefined,
       status: 'working',
     });
     // A failed card post must not block the turn: the final answer message
@@ -412,29 +422,66 @@ export class Bridge {
           turn.content += chunk.text;
           this.patch(chatId, turn);
         } else if (chunk.type === 'reasoning-delta') {
-          turn.thinking += chunk.text;
+          // One think row per reasoning block; deltas append to the open row.
+          if (turn.openThinkId === undefined) {
+            thinkRowSeq += 1;
+            ensureThinkRow(turn, `think-${thinkRowSeq}`);
+          }
+          const id = turn.openThinkId;
+          const index = turn.rows.findIndex((row) => row.id === id);
+          if (index >= 0 && turn.rows[index]?.kind === 'think') {
+            const row = turn.rows[index] as ThinkRow;
+            turn.rows[index] = { ...row, text: row.text + chunk.text };
+          }
           this.patch(chatId, turn);
         }
         break;
       }
       case 'tool/call': {
-        pushToolRecord(turn, {
+        settleOpenThink(turn);
+        upsertRow(turn, {
+          kind: 'tool',
+          id: event.data.callId,
           name: event.data.name,
           status: 'running',
           args: event.data.arguments.slice(0, MAX_TOOL_RECORD_CHARS),
           result: '',
-        });
+        } satisfies ToolRow);
         this.patch(chatId, turn);
         break;
       }
       case 'tool/result': {
         const resultText = assistantText(event.data.message.content[0]?.content ?? []);
         const status = event.data.error !== undefined ? 'error' : 'done';
-        markLastToolDone(turn, resultText.slice(0, MAX_TOOL_RECORD_CHARS), status);
+        const index = turn.rows.findIndex(
+          (row): row is ToolRow =>
+            row.kind === 'tool' && row.id === event.data.message.content[0]?.toolCallId,
+        );
+        const target =
+          index >= 0
+            ? index
+            : (() => {
+                // Fall back to the last running tool row when the result does
+                // not carry a correlating call id.
+                for (let i = turn.rows.length - 1; i >= 0; i -= 1) {
+                  const row = turn.rows[i];
+                  if (row?.kind === 'tool' && row.status === 'running') return i;
+                }
+                return -1;
+              })();
+        if (target >= 0 && turn.rows[target]?.kind === 'tool') {
+          const row = turn.rows[target] as ToolRow;
+          turn.rows[target] = {
+            ...row,
+            status,
+            result: resultText.slice(0, MAX_TOOL_RECORD_CHARS),
+          };
+        }
         this.patch(chatId, turn);
         break;
       }
       case 'assistant/message': {
+        settleOpenThink(turn);
         turn.content = assistantText(event.data.message.content);
         this.patch(chatId, turn);
         break;
@@ -455,12 +502,13 @@ export class Bridge {
         } else {
           this.options.logger.info(`turn completed for chat ${chatId}`);
         }
+        settleOpenThink(turn);
         turn.status = status;
         this.patch(chatId, turn);
         await this.options.cards.finalize(chatId, status);
         const finalText = turn.content.trim();
         if (finalText !== '') this.lastOutputs.set(chatId, finalText);
-        if (turn.tools.length > 0) this.lastTools.set(chatId, turn.tools);
+        if (turn.rows.length > 0) this.lastRows.set(chatId, turn.rows);
         this.turns.delete(chatId);
         // The card holds the full answer and finalizes green in place; the
         // initial card send already notified, so a completed turn sends no
@@ -510,8 +558,8 @@ export class Bridge {
           this.turns.set(action.chatId, {
             title: turnTitle(prompt),
             content: '',
-            thinking: '',
-            tools: [],
+            rows: [],
+            openThinkId: undefined,
             status: 'working',
           });
           try {
@@ -578,7 +626,7 @@ export class Bridge {
         try {
           const sent = await this.options.transport.sendCard(
             action.chatId,
-            buildRepoPickerCard(projects, page),
+            buildRepoPickerCard(projects, this.options.repoRoots ?? [], page),
           );
           // The page flip posts a fresh picker card — it becomes the active one.
           this.pickerMessageIds.set(action.chatId, sent.messageId);
@@ -587,10 +635,14 @@ export class Bridge {
         }
         break;
       }
-      case 'tool-details': {
-        const tools = this.lastTools.get(action.chatId) ?? [];
-        const title = turnTitle(this.lastPrompts.get(action.chatId) ?? 'Tool calls');
-        await this.options.transport.sendCard(action.chatId, buildToolDetailsCard(title, tools));
+      case 'row-details': {
+        const id = action.value.id;
+        const row = (this.lastRows.get(action.chatId) ?? []).find((r) => r.id === id);
+        if (row === undefined) {
+          this.options.logger.warn(`row details for unknown id ${id}`);
+          break;
+        }
+        await this.options.transport.sendCard(action.chatId, buildRowDetailsCard(row));
         break;
       }
       case 'panel': {
@@ -702,7 +754,7 @@ export class Bridge {
         try {
           const sent = await options.transport.sendCard(
             invocation.chatId,
-            buildRepoPickerCard(projects),
+            buildRepoPickerCard(projects, roots),
           );
           // Record the active picker card so a pick can consume it (and so
           // stale callbacks from an older picker are rejected).
@@ -749,8 +801,8 @@ export class Bridge {
     const snapshot: CardSnapshot = {
       title: turn.title,
       content: turn.content,
-      thinking: turn.thinking,
-      tools: turn.tools.slice(-MAX_TOOL_LINES),
+      rows: turn.rows,
+      cwd: this.options.sessionMap.cwdFor(chatId) ?? this.options.defaultCwd,
       status: turn.status,
     };
     this.options.cards.patch(chatId, snapshot);

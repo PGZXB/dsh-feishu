@@ -3,9 +3,11 @@
  * JSON. No I/O here — the streaming manager owns the card pipeline and the
  * transport owns the wire.
  *
- * Layout order (feedback-driven): thinking first (dimmed), then tool calls
- * in chronological order, then the final output at the bottom — the natural
- * "process then result" reading, like a terminal or chat log.
+ * Layout mirrors DSH web (feedback-driven): a chronological sequence of
+ * one-line rows — think rows and tool rows — each with an expand button,
+ * then the complete output at the bottom, then the execution status and the
+ * button area. Every row carries a stable id so a button tap can open that
+ * exact row's details card.
  *
  * @module @dsh-feishu/dsh-feishu/cards/render
  */
@@ -14,29 +16,46 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import type { CardElement, CardJson } from '../feishu/types.js';
 import type { ProjectInfo } from '../projects.js';
 import { markdownToElements } from './markdown.js';
+import { toolRowSummary, toolRowTitle } from './tool-summary.js';
 
 /** Terminal/working state of one streaming card. */
 export type CardStatus = 'working' | 'done' | 'error';
 
-/** One tool invocation shown on the live card. */
-export interface ToolRecord {
+/** One think row: a reasoning block, line = `Think · …`. */
+export interface ThinkRow {
+  readonly kind: 'think';
+  readonly id: string;
+  /** Accumulated reasoning text (full, for the expand card). */
+  readonly text: string;
+  /** Whether the block settled (shows its first line once settled). */
+  readonly settled: boolean;
+}
+
+/** One tool row: line = `Title · summary`, expand shows args + result. */
+export interface ToolRow {
+  readonly kind: 'tool';
+  /** Tool call id (stable, pairs call ↔ result). */
+  readonly id: string;
   readonly name: string;
   readonly status: 'running' | 'done' | 'error';
-  /** Raw JSON arguments, truncated for display. */
+  /** Raw JSON arguments (may be truncated for card size). */
   readonly args: string;
-  /** Result text (or error), truncated for display. */
+  /** Result text (may be truncated). */
   readonly result: string;
 }
+
+/** Any chronological row on the live card. */
+export type TurnRow = ThinkRow | ToolRow;
 
 /** Everything the card shows for one turn. */
 export interface CardSnapshot {
   readonly title: string;
-  /** Accumulated assistant text (rendered as markdown). */
+  /** Accumulated assistant text (rendered as markdown, bottom of the card). */
   readonly content: string;
-  /** Accumulated reasoning text (dimmed, truncated). */
-  readonly thinking: string;
-  /** Tool calls, chronological order. */
-  readonly tools: readonly ToolRecord[];
+  /** Chronological think/tool rows (all of them — no truncation). */
+  readonly rows: readonly TurnRow[];
+  /** Session cwd, used to relativize workspace-rooted path summaries. */
+  readonly cwd?: string;
   readonly status: CardStatus;
 }
 
@@ -50,11 +69,11 @@ const STATUS_TEMPLATE: Record<CardStatus, string> = {
 /** Longest card body we ever send; the Feishu card cap is ~109KB. */
 export const MAX_CARD_CHARS = 60_000;
 
-/** Longest thinking snippet shown on the live card (dimmed, truncated). */
-export const MAX_THINKING_CHARS = 500;
-
-/** Longest tool args/result text kept per record. */
+/** Longest tool args/result text kept per row. */
 export const MAX_TOOL_RECORD_CHARS = 300;
+
+/** Longest reasoning text kept per think row (the live line is one-liner). */
+export const MAX_THINK_CHARS = 2000;
 
 /** Surface action payloads stamped on card buttons. */
 export type SurfaceAction =
@@ -62,7 +81,7 @@ export type SurfaceAction =
   | { readonly kind: 'copy' }
   | { readonly kind: 'retry' }
   | { readonly kind: 'panel' }
-  | { readonly kind: 'tool-details' }
+  | { readonly kind: 'row-details'; readonly id: string }
   | { readonly kind: 'repo-pick' }
   | { readonly kind: 'repo-page' };
 
@@ -80,25 +99,33 @@ export const REPO_PAGE_SIZE = 8;
 export const REPO_SELECT_MAX_OPTIONS = 50;
 
 /**
- * Dropdown label for one project. Names are kept short, but repos sharing a
- * basename get a path disambiguator appended (feedback: many same-named
- * repos at different paths are confusing with bare basenames).
- * @param project - the project to label.
- * @param duplicates - basenames that appear more than once in the scan.
- * @param commonPrefix - longest directory prefix shared by all projects.
- * @returns the option label.
+ * The path of a project relative to the repoRoot it lives under, or the
+ * full path when no root contains it. Repos named generically (`source`,
+ * `backend`) are only meaningful through their parent path — the picker
+ * shows relative paths always (feedback).
  */
-export function repoOptionLabel(
-  project: ProjectInfo,
-  duplicates: ReadonlySet<string>,
-  commonPrefix: string,
-): string {
-  const base = `${project.name} (${project.branch})${
-    project.type === 'worktree' ? ' [worktree]' : ''
-  }`;
-  if (!duplicates.has(project.name)) return base;
-  const rel = project.path.slice(commonPrefix.length).replace(/^[/\\]+/, '');
-  return rel === '' ? `${base} — ${project.path}` : `${base} — ${rel}`;
+export function repoRelativePath(project: ProjectInfo, roots: readonly string[]): string {
+  let best: string | undefined;
+  for (const root of roots) {
+    const normalized = root.replace(/[/\\]+$/, '');
+    if (project.path === normalized || project.path.startsWith(`${normalized}/`)) {
+      if (best === undefined || normalized.length > best.length) {
+        best = normalized;
+      }
+    }
+  }
+  if (best === undefined) return project.path;
+  const rel = project.path.slice(best.length).replace(/^[/\\]+/, '');
+  return rel === '' ? project.path : rel;
+}
+
+/**
+ * Dropdown label for one project: `<relative path> (branch)` — always the
+ * repoRoot-relative path, not the bare basename (feedback).
+ */
+export function repoOptionLabel(project: ProjectInfo, roots: readonly string[]): string {
+  const rel = repoRelativePath(project, roots);
+  return `${rel} (${project.branch})${project.type === 'worktree' ? ' [worktree]' : ''}`;
 }
 
 /**
@@ -111,10 +138,15 @@ export function repoOptionLabel(
  * `value` carries the `{kind:'repo-pick'}` marker). Beyond the cap, the card
  * falls back to numbered project buttons with pagination.
  * @param projects - candidate projects (recursively scanned).
+ * @param roots - repoRoots, used to show relative paths in labels.
  * @param page - zero-based page index (button fallback only).
  * @returns Feishu interactive card JSON (v1 layout).
  */
-export function buildRepoPickerCard(projects: readonly ProjectInfo[], page = 0): CardJson {
+export function buildRepoPickerCard(
+  projects: readonly ProjectInfo[],
+  roots: readonly string[],
+  page = 0,
+): CardJson {
   const elements: CardElement[] = [
     {
       tag: 'markdown',
@@ -124,14 +156,6 @@ export function buildRepoPickerCard(projects: readonly ProjectInfo[], page = 0):
     { tag: 'hr' },
   ];
   if (projects.length > 0 && projects.length <= REPO_SELECT_MAX_OPTIONS) {
-    const counts = new Map<string, number>();
-    for (const project of projects) {
-      counts.set(project.name, (counts.get(project.name) ?? 0) + 1);
-    }
-    const duplicates = new Set(
-      [...counts.entries()].filter(([, count]) => count > 1).map(([name]) => name),
-    );
-    const commonPrefix = longestCommonPathPrefix(projects.map((p) => p.path));
     // Dropdown primary (botmux `repo_switch` pattern): the select lives
     // inside an `action` container, not a `form`.
     elements.push({
@@ -143,7 +167,7 @@ export function buildRepoPickerCard(projects: readonly ProjectInfo[], page = 0):
           options: projects.map((project, index) => ({
             text: {
               tag: 'plain_text',
-              content: `${index + 1}. ${repoOptionLabel(project, duplicates, commonPrefix)}`,
+              content: `${index + 1}. ${repoOptionLabel(project, roots)}`,
             },
             value: project.path,
           })),
@@ -156,7 +180,10 @@ export function buildRepoPickerCard(projects: readonly ProjectInfo[], page = 0):
     const pageProjects = projects.slice(start, start + REPO_PAGE_SIZE);
     const buttons = pageProjects.map((project, index) => ({
       tag: 'button' as const,
-      text: { tag: 'plain_text' as const, content: `${start + index + 1}. ${project.path}` },
+      text: {
+        tag: 'plain_text' as const,
+        content: `${start + index + 1}. ${repoOptionLabel(project, roots)}`,
+      },
       value: { kind: 'repo-pick', path: project.path },
     }));
     if (buttons.length > 0) {
@@ -206,28 +233,17 @@ export function buildRepoPickedCard(path: string): CardJson {
   };
 }
 
-/** Longest directory prefix shared by all paths (empty when none). */
-function longestCommonPathPrefix(paths: readonly string[]): string {
-  if (paths.length === 0) return '';
-  let prefix = paths[0] ?? '';
-  for (const path of paths.slice(1)) {
-    while (!path.startsWith(prefix)) {
-      const cut = prefix.lastIndexOf('/');
-      if (cut <= 0) return '';
-      prefix = prefix.slice(0, cut);
-    }
-  }
-  return prefix;
-}
-
 /** Encode a surface action as a button value payload. */
 export function actionValue(action: SurfaceAction): Record<string, string> {
-  return { kind: action.kind };
+  return {
+    kind: action.kind,
+    ...('id' in action && action.id !== undefined ? { id: action.id } : {}),
+  };
 }
 
 /** The button row appended by status: working → stop; done → copy/retry/panel;
- *  error → retry/panel. A tools button appears when the turn invoked tools. */
-function statusButtons(status: CardStatus, hasTools: boolean): CardElement {
+ *  error → retry/panel. Tool detail rows carry their own expand buttons. */
+function statusButtons(status: CardStatus): CardElement {
   const actions: Array<{
     readonly tag: 'button';
     readonly text: { readonly tag: 'plain_text'; readonly content: string };
@@ -259,13 +275,6 @@ function statusButtons(status: CardStatus, hasTools: boolean): CardElement {
       text: { tag: 'plain_text', content: '⚙️ Panel' },
       value: actionValue({ kind: 'panel' }),
     });
-    if (hasTools) {
-      actions.push({
-        tag: 'button',
-        text: { tag: 'plain_text', content: '🔧 Tools' },
-        value: actionValue({ kind: 'tool-details' }),
-      });
-    }
   }
   return { tag: 'action', actions };
 }
@@ -307,30 +316,66 @@ export function assistantText(blocks: readonly ContentBlock[]): string {
     .join('');
 }
 
-/** One compact tool line for the live card. */
-function toolLine(tool: ToolRecord): string {
-  const icon = tool.status === 'running' ? '🔧' : tool.status === 'done' ? '✅' : '❌';
-  return `${icon} ${tool.name}`;
+function firstLine(text: string): string {
+  const nl = text.indexOf('\n');
+  return nl === -1 ? text : text.slice(0, nl);
+}
+
+/** The one-line display text of a row, DSH web style. */
+export function rowLine(row: TurnRow, cwd?: string): string {
+  if (row.kind === 'think') {
+    if (!row.settled) return 'Think · Thinking…';
+    const first = firstLine(row.text.trim());
+    return first === '' ? 'Think · Thinking…' : `Think · ${first}`;
+  }
+  const icon = row.status === 'running' ? '🔧' : row.status === 'done' ? '✅' : '❌';
+  const summary = toolRowSummary(row.name, row.args, cwd);
+  return `${icon} ${toolRowTitle(row.name)} · ${summary}`;
+}
+
+/** One card row: the line text plus its expand button (opens row details). */
+function rowElement(row: TurnRow, cwd?: string): CardElement {
+  const line = stripAngleBrackets(rowLine(row, cwd));
+  return {
+    tag: 'column_set',
+    flex_mode: 'flow',
+    horizontal_spacing: 'default',
+    columns: [
+      {
+        tag: 'column',
+        width: 'weighted',
+        weight: 1,
+        vertical_align: 'center',
+        elements: [{ tag: 'div', text: { tag: 'lark_md', content: line } }],
+      },
+      {
+        tag: 'column',
+        width: 'auto',
+        vertical_align: 'center',
+        elements: [
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '⋯' },
+            type: 'default',
+            value: actionValue({ kind: 'row-details', id: row.id }),
+          },
+        ],
+      },
+    ],
+  };
 }
 
 /**
- * Build the card JSON for one snapshot. Element order: thinking (dimmed,
- * truncated) → tool lines (chronological) → final output at the bottom
- * (markdown-rendered) → status → buttons.
- * @param snapshot - title, content, thinking, tools, and status.
+ * Build the card JSON for one snapshot. Element order: think/tool rows
+ * (chronological, all of them) → complete output at the bottom (markdown
+ * rendered) → status → buttons. Mirrors DSH web's message flow.
+ * @param snapshot - title, content, rows, and status.
  * @returns Feishu interactive card JSON (v1 layout).
  */
 export function buildCard(snapshot: CardSnapshot): CardJson {
   const elements: CardElement[] = [];
-  if (snapshot.thinking.trim() !== '') {
-    const thinking = truncateHead(snapshot.thinking.trim(), MAX_THINKING_CHARS);
-    elements.push({
-      tag: 'markdown',
-      content: `<font color='grey'>💭 ${stripAngleBrackets(thinking)}</font>`,
-    });
-  }
-  for (const tool of snapshot.tools) {
-    elements.push({ tag: 'markdown', content: toolLine(tool) });
+  for (const row of snapshot.rows) {
+    elements.push(rowElement(row, snapshot.cwd));
   }
   if (elements.length > 0 && snapshot.content.trim() !== '') {
     elements.push({ tag: 'hr' });
@@ -349,7 +394,7 @@ export function buildCard(snapshot: CardSnapshot): CardJson {
           : '**… working**';
     elements.push({ tag: 'markdown', content: statusLine });
   }
-  elements.push(statusButtons(snapshot.status, snapshot.tools.length > 0));
+  elements.push(statusButtons(snapshot.status));
   return {
     config: { wide_screen_mode: true },
     header: {
@@ -363,40 +408,48 @@ export function buildCard(snapshot: CardSnapshot): CardJson {
 }
 
 /**
- * Build the tool-details card: one entry per tool call with its arguments
- * and result, opened from the 🔧 Tools button.
- * @param title - the owning turn's title (card header).
- * @param tools - the turn's tool records (chronological).
+ * Build the details card for one row, opened by its ⋯ button: a think row
+ * shows the full reasoning text; a tool row shows args (IN) and result
+ * (OUT).
+ * @param row - the row to expand.
  * @returns Feishu interactive card JSON (v1 layout).
  */
-export function buildToolDetailsCard(title: string, tools: readonly ToolRecord[]): CardJson {
+export function buildRowDetailsCard(row: TurnRow): CardJson {
   const elements: CardElement[] = [];
-  if (tools.length === 0) {
-    elements.push({ tag: 'markdown', content: 'No tool calls in this turn.' });
-  }
-  tools.forEach((tool, index) => {
-    const statusIcon = tool.status === 'done' ? '✅' : tool.status === 'error' ? '❌' : '🔧';
+  if (row.kind === 'think') {
+    const text = row.text.trim();
     elements.push({
       tag: 'markdown',
-      content: `${statusIcon} **${index + 1}. ${tool.name}** — ${tool.status}`,
+      content: text === '' ? '_(no reasoning text)_' : truncateHead(text, MAX_CARD_CHARS),
     });
-    if (tool.args !== '') {
+  } else {
+    elements.push({
+      tag: 'markdown',
+      content: `${row.status === 'error' ? '❌' : '✅'} **${toolRowTitle(row.name)}** — ${row.name}`,
+    });
+    if (row.args !== '') {
       elements.push({
         tag: 'markdown',
-        content: `<font color='grey'>args: \`${stripAngleBrackets(truncateHead(tool.args, 400))}\`</font>`,
+        content: `<font color='grey'>IN</font>\n${truncateHead(row.args, 2000)}`,
       });
     }
-    if (tool.result !== '') {
+    if (row.result !== '') {
       elements.push({
         tag: 'markdown',
-        content: `<font color='grey'>result: ${stripAngleBrackets(truncateHead(tool.result, 400))}</font>`,
+        content: `<font color='grey'>OUT</font>\n${truncateHead(row.result, 2000)}`,
       });
     }
-  });
+    if (row.args === '' && row.result === '') {
+      elements.push({ tag: 'markdown', content: '_(no recorded args or result)_' });
+    }
+  }
   return {
     config: { wide_screen_mode: true },
     header: {
-      title: { tag: 'plain_text', content: `🔧 ${title}` },
+      title: {
+        tag: 'plain_text',
+        content: row.kind === 'think' ? '💭 Think' : `🔧 ${toolRowTitle(row.name)}`,
+      },
       template: 'wathet',
     },
     elements,

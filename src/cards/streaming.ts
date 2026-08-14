@@ -63,7 +63,7 @@ export class StreamingCardManager {
     if (stale !== undefined) {
       await this.finalize(chatId, 'done');
     }
-    const card = buildCard({ title, content: '', thinking: '', tools: [], status: 'working' });
+    const card = buildCard({ title, content: '', rows: [], status: 'working' });
     const { messageId } = await this.transport.sendCard(chatId, card);
     this.active.set(chatId, {
       chatId,

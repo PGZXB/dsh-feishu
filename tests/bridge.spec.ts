@@ -321,14 +321,14 @@ describe('Bridge', () => {
     expect(h.transport.sentTexts).toEqual([]);
   });
 
-  it('renders tool calls and marks them done on result', async () => {
+  it('renders tool calls as rows and marks them done on result', async () => {
     const h = makeHarness();
     await h.bridge.handleMessage(message());
     await h.bridge.handleEvent('feishu-session-1', {
       type: 'tool/call',
       seq: 1,
       time: 0,
-      data: { turn: 0, step: 0, callId: 'call-1', name: 'bash', arguments: '{}' },
+      data: { turn: 0, step: 0, callId: 'call-1', name: 'bash', arguments: '{"command":"ls"}' },
     } as unknown as SessionEvent);
     await h.bridge.handleEvent('feishu-session-1', {
       type: 'tool/result',
@@ -347,22 +347,19 @@ describe('Bridge', () => {
     } as unknown as SessionEvent);
     await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
     const last = h.transport.updatedCards.at(-1);
-    const toolElement = last?.elements.find(
-      (el) =>
-        el.tag === 'markdown' && typeof el.content === 'string' && el.content.includes('bash'),
-    );
-    expect(toolElement).toBeDefined();
-    expect(toolElement && 'content' in toolElement ? toolElement.content : '').toContain('✅ bash');
-    // The done card exposes the 🔧 Tools button (last turn's records kept).
+    const row = last?.elements.find((el) => el.tag === 'column_set');
+    const text = row?.tag === 'column_set' ? row.columns[0]?.elements[0] : undefined;
+    expect(text?.tag === 'div' ? text.text.content : '').toContain('✅ Bash · ls');
+    // The done card keeps the plain action row — no separate Tools button.
     const doneAction = last?.elements.find((el) => el.tag === 'action');
     const doneLabels =
       doneAction && 'actions' in doneAction
         ? doneAction.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
         : [];
-    expect(doneLabels).toContain('🔧 Tools');
+    expect(doneLabels).toEqual(['📋 Copy', '🔁 Retry', '⚙️ Panel']);
   });
 
-  it('streams reasoning deltas into a dimmed thinking block', async () => {
+  it('streams reasoning deltas into a think row (settled on turn end)', async () => {
     const h = makeHarness();
     await h.bridge.handleMessage(message());
     await h.bridge.handleEvent('feishu-session-1', {
@@ -373,20 +370,19 @@ describe('Bridge', () => {
     } as unknown as SessionEvent);
     await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
     const last = h.transport.updatedCards.at(-1);
-    const thinking = last?.elements.find(
-      (el) => el.tag === 'markdown' && typeof el.content === 'string' && el.content.includes('hmm'),
-    );
-    expect(thinking && 'content' in thinking ? thinking.content : '').toContain('hmm');
+    const row = last?.elements.find((el) => el.tag === 'column_set');
+    const text = row?.tag === 'column_set' ? row.columns[0]?.elements[0] : undefined;
+    expect(text?.tag === 'div' ? text.text.content : '').toContain('Think');
   });
 
-  it('opens a tool-details card from the tools button', async () => {
+  it('opens a row-details card from a row expand button', async () => {
     const h = makeHarness();
     await h.bridge.handleMessage(message());
     await h.bridge.handleEvent('feishu-session-1', {
       type: 'tool/call',
       seq: 1,
       time: 0,
-      data: { turn: 0, step: 0, callId: 'call-1', name: 'bash', arguments: '{"cmd":"ls"}' },
+      data: { turn: 0, step: 0, callId: 'call-1', name: 'bash', arguments: '{"command":"ls"}' },
     } as unknown as SessionEvent);
     await h.bridge.handleEvent('feishu-session-1', {
       type: 'tool/result',
@@ -408,13 +404,13 @@ describe('Bridge', () => {
       messageId: 'msg-1',
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
-      value: { kind: 'tool-details' },
+      value: { kind: 'row-details', id: 'call-1' },
     });
     const details = h.transport.sentCards.find((c) => c.header?.title.content.startsWith('🔧'));
     expect(details).toBeDefined();
     expect(
       details?.elements.some(
-        (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('bash'),
+        (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('Bash'),
       ),
     ).toBe(true);
   });
