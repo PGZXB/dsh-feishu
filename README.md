@@ -68,6 +68,20 @@ environment variables.
 See [docs/development.md](docs/development.md) for setup, build, test, and
 lint commands, plus the local-profile mount recipe.
 
+## Credits
+
+- **[botmux](https://github.com/deepcoldy/botmux)** — the reference for the
+  group-chat interaction patterns: streaming cards, approvals, and the
+  QR-driven Open Platform quick-setup flow. dsh-feishu borrows botmux's
+  *interaction and onboarding patterns*, not its architecture — botmux
+  bridges external CLIs, while this surface is dsh-native and in-process.
+- **[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)** —
+  the platform this surface is built for; its web surface
+  (`packages/client/ui-*`) is the parity reference for in-chat commands,
+  approvals, and questions.
+- **[Lark Open Platform SDK](https://github.com/larksuite/node-sdk)** — the
+  WebSocket long connection and card APIs the transport builds on.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
