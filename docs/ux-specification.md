@@ -286,6 +286,7 @@ palette idea). `category` groups the panel palette.
 | `/repo [<path>]` | session | project picker card (dropdown ≤ 50, buttons + pages above) |
 | `/group [<name>]` | chat | create a group with the bot and sender |
 | `/sessions` | session | session list card (title/id/cwd/age/live/saved), paginated, per-row Resume buttons |
+| `/model` | system | show this chat's model (`provider · model`); `/model <provider>/<model>` sets the default for new sessions (surface-native — the web `/model` is a client popup with no host command) |
 | `/resume [<id>]` | session | resume a saved session; no id opens the `/sessions` picker |
 | `/clear` | session | start a fresh conversation — **non-destructive**: the previous session stays saved and resumable (content-integrity rule) |
 | `/new` | session | alias of `/clear` (web/cc-tui "new chat" parity) |
@@ -295,8 +296,10 @@ palette idea). `category` groups the panel palette.
 Web-only command whose handler a *browser* download plugin observes
 ("Register the Web-only `/export` command that the browser download plugin
 observes"); on a Feishu surface nothing would download. A native Feishu
-log-export (file message) is a later-iteration feature. Unknown slash lines
-keep the passthrough/fallback path.
+log-export (file message) is a later-iteration feature. Likewise the web
+`/model` popup is a client-side contribution (`commandUi.popupSelect`) with
+no host command — Feishu gets a surface-native `/model` instead. Unknown
+slash lines keep the passthrough/fallback path.
 
 ### 8.2 Stateful web wrappers (/plan toggle, /permission picker)
 
@@ -329,7 +332,8 @@ args only reports the current preset. A button press must be able to switch
 
 While a turn is running (`cardStates[chatId].status === 'working'`), only
 read-only commands may run: `/help`, `/status`, `/sessions` (read state),
-`/cancel` (the stop itself), `/group` (separate chat). Every other command —
+`/cancel` (the stop itself), `/group` (separate chat), `/model` (reads, or
+sets the default for future sessions — never touches the running turn). Every other command —
 `/cd /repo /clear /new /resume` and the five web wrappers — is refused with
 "a turn is running — stop it first." The gate lives in `handleCommand` and
 the panel `command` action (one rule, two entry points), so a mid-turn
@@ -361,10 +365,12 @@ session rebind/remint can never corrupt the live card.
 
 `buildPanelCard(statusLine, running, commands, page)`: the core row
 (Stop while running / Retry / Copy) stays first; below it the full command
-palette — all 15 commands as buttons, grouped by category with emoji
+palette — all 16 commands as buttons, grouped by category with emoji
 headers (`🧩 Session` / `💬 Chat` / `⚙️ System`), `PANEL_PAGE_SIZE = 8`
 buttons per page, a quiet `note` page indicator (`Commands · page 1/2`),
-and ◀️/▶️ nav hidden at the bounds. Each button stamps `{kind:'command',
+and ◀️/▶️ nav hidden at the bounds. Each category renders as its own block
+— the header line followed by THAT category's button row (headers never
+stack before all buttons). Each button stamps `{kind:'command',
 name}` and executes the same handler as the slash line. The status line
 carries the chat's session context (`session `id` · `cwd``) so a tap
 always shows what the buttons act on. The panel is stateless: every

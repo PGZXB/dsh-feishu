@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Panel palette grouping fix.** Category headers now render as their own
+  blocks — `🧩 Session` header, then the session buttons, then `💬 Chat`,
+  then the chat buttons — instead of all headers stacking before all
+  buttons (user report: "two lines with nothing between them").
+- **`/model` command (surface-native).** The web `/model` is a client-side
+  popup contribution with no host command, so Feishu implements its own:
+  `/model` shows the chat's model (`provider · model`, live agent options
+  first, deployment default otherwise); `/model <provider>/<model>` sets
+  the default for new sessions through `ctx.agentDefaultModel`. Read is
+  allowed while a turn runs (the set never touches the running turn).
+
+
 - **UX polish pass (visual + control language).** Streaming card: working
   header template `blue` → `wathet` (soft default blue), terminal status
   moved from a bold markdown line to a quiet `note` (header color already

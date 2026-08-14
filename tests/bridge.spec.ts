@@ -14,7 +14,9 @@ import type { UserMessage } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  type AgentDefaultModelService,
   Bridge,
+  type ModelSelectionView,
   type PermissionPresetService,
   type PlanModeService,
   type SessionListRow,
@@ -119,14 +121,21 @@ class FakeAgentStore {
   readonly cancels: string[] = [];
   /** Live agent status (default running; tests flip to idle as needed). */
   private readonly statuses = new Map<string, 'idle' | 'running'>();
+  private readonly options = new Map<string, { provider: string; model: string }>();
 
   /** Set the lifecycle status of a created agent (defaults to running). */
   setStatus(sessionId: string, status: 'idle' | 'running'): void {
     this.statuses.set(sessionId, status);
   }
 
+  /** Set the provider/model options a created agent reports. */
+  setOptions(sessionId: string, options: { provider: string; model: string }): void {
+    this.options.set(sessionId, options);
+  }
+
   private makeAgent(sessionId: string): Agent {
     const statuses = this.statuses;
+    const optionMap = this.options;
     statuses.set(sessionId, 'running');
     const followup = vi.fn((message: UserMessage) => {
       const list = this.followups.get(sessionId) ?? [];
@@ -140,6 +149,9 @@ class FakeAgentStore {
       followup,
       cancel,
       session: { events: [] },
+      get options() {
+        return optionMap.get(sessionId) ?? {};
+      },
       get status() {
         return statuses.get(sessionId) ?? 'running';
       },
@@ -168,6 +180,7 @@ function makeHarness(
     listSessions?: () => Promise<readonly SessionListRow[] | undefined>;
     permissionPresets?: PermissionPresetService;
     planMode?: PlanModeService;
+    agentDefaultModel?: AgentDefaultModelService;
   } = {},
 ): Harness {
   const transport = new RecordingTransport();
@@ -207,6 +220,9 @@ function makeHarness(
       ? { permissionPresets: options.permissionPresets }
       : {}),
     ...(options.planMode !== undefined ? { planMode: options.planMode } : {}),
+    ...(options.agentDefaultModel !== undefined
+      ? { agentDefaultModel: options.agentDefaultModel }
+      : {}),
   });
   const emit = (sessionId: string, event: SessionEvent): void => {
     for (const listener of [...listeners]) listener(sessionId, event);
@@ -2209,5 +2225,79 @@ describe('stateful web wrappers (/permission picker, /plan toggle)', () => {
     });
     await h.bridge.handleMessage(message({ text: '/plan' }));
     expect(h.transport.sentTexts.some((t) => t.text.includes('Plan mode on'))).toBe(true);
+  });
+});
+
+/** Fake `ctx.agentDefaultModel` service for the /model tests. */
+class FakeAgentDefaultModelService implements AgentDefaultModelService {
+  selection: ModelSelectionView = { provider: 'deepseek-official', model: 'deepseek-v4-flash' };
+  readonly saved: ModelSelectionView[] = [];
+  currentSelection(): ModelSelectionView {
+    return this.selection;
+  }
+  async saveSelection(next: ModelSelectionView): Promise<void> {
+    this.saved.push(next);
+    this.selection = next;
+  }
+}
+
+describe('/model command', () => {
+  it('shows the deployment default when no live agent exists', async () => {
+    const service = new FakeAgentDefaultModelService();
+    const h = makeHarness({ agentDefaultModel: service });
+    await h.bridge.handleMessage(message({ text: '/model' }));
+    expect(
+      h.transport.sentTexts.some((t) => t.text === 'model: deepseek-official · deepseek-v4-flash'),
+    ).toBe(true);
+  });
+
+  it('shows the live agent’s own model when one exists', async () => {
+    const h = makeHarness({ agentDefaultModel: new FakeAgentDefaultModelService() });
+    await h.bridge.handleMessage(message());
+    h.agentStore.setOptions('feishu-session-1', { provider: 'pi-ai', model: 'deepseek-r1' });
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/model' }));
+    expect(h.transport.sentTexts.some((t) => t.text === 'model: pi-ai · deepseek-r1')).toBe(true);
+  });
+
+  it('/model <provider>/<model> sets the default for new sessions', async () => {
+    const service = new FakeAgentDefaultModelService();
+    const h = makeHarness({ agentDefaultModel: service });
+    await h.bridge.handleMessage(message({ text: '/model pi-ai/deepseek-r1' }));
+    expect(service.saved).toEqual([{ provider: 'pi-ai', model: 'deepseek-r1' }]);
+    expect(
+      h.transport.sentTexts.some(
+        (t) => t.text === 'Default model set to pi-ai · deepseek-r1 (applies to new sessions).',
+      ),
+    ).toBe(true);
+  });
+
+  it('/model rejects a bare token without a provider', async () => {
+    const h = makeHarness({ agentDefaultModel: new FakeAgentDefaultModelService() });
+    await h.bridge.handleMessage(message({ text: '/model deepseek-v4-flash' }));
+    expect(h.transport.sentTexts.some((t) => t.text.includes('usage: /model'))).toBe(true);
+  });
+
+  it('reports loudly when the service is missing', async () => {
+    const h = makeHarness();
+    await h.bridge.handleMessage(message({ text: '/model' }));
+    expect(
+      h.transport.sentTexts.some((t) =>
+        t.text.includes('agentDefaultModel service is not mounted'),
+      ),
+    ).toBe(true);
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/model pi-ai/x' }));
+    expect(h.transport.sentTexts.some((t) => t.text.includes('model switching unavailable'))).toBe(
+      true,
+    );
+  });
+
+  it('is allowed while a turn is running (read-only display / future default)', async () => {
+    const service = new FakeAgentDefaultModelService();
+    const h = makeHarness({ agentDefaultModel: service });
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/model' }));
+    expect(
+      h.transport.sentTexts.some((t) => t.text === 'model: deepseek-official · deepseek-v4-flash'),
+    ).toBe(true);
   });
 });

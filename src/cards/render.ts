@@ -683,8 +683,19 @@ export function buildPanelCard(
       readonly text: { readonly tag: 'plain_text'; readonly content: string };
       readonly value: Record<string, string>;
     }> = [];
+    // Each category renders as its own block: the header markdown line
+    // followed by THAT category's button row — headers must never stack
+    // before all buttons (user report: '🧩 Session' / '💬 Chat' with nothing
+    // between them).
+    const flushButtons = (): void => {
+      if (pageButtons.length > 0) {
+        elements.push({ tag: 'action', actions: [...pageButtons] });
+        pageButtons.length = 0;
+      }
+    };
     for (const entry of entries) {
       if (entry.type === 'header') {
+        flushButtons();
         elements.push({ tag: 'markdown', content: `**${categoryLabel(entry.label)}**` });
       } else {
         pageButtons.push({
@@ -694,7 +705,7 @@ export function buildPanelCard(
         });
       }
     }
-    if (pageButtons.length > 0) elements.push({ tag: 'action', actions: pageButtons });
+    flushButtons();
     if (total > 1) {
       const nav: Array<{
         readonly tag: 'button';

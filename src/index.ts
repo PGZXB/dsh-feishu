@@ -26,6 +26,7 @@ import { credentialRef } from '@deepseek-ai/dsh-credentials';
 import type { SessionId } from '@deepseek-ai/dsh-session';
 import z from '@deepseek-ai/schemastery';
 import {
+  type AgentDefaultModelService,
   type AgentStore,
   Bridge,
   type BridgeLogger,
@@ -311,6 +312,9 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
       : {}),
     ...(ctx.get('planMode') !== undefined
       ? { planMode: ctx.get('planMode') as PlanModeService }
+      : {}),
+    ...(ctx.get('agentDefaultModel') !== undefined
+      ? { agentDefaultModel: ctx.get('agentDefaultModel') as AgentDefaultModelService }
       : {}),
   });
   ctx.effect(() => () => {

@@ -1043,4 +1043,53 @@ describe.skipIf(!dshBin || !profileReady || !built)('real-composition integratio
       );
     }
   }, 120_000);
+
+  /** /model reports the real deployment default (ctx.agentDefaultModel is
+   *  mounted by dsh-base) — the web client's /model popup has no host
+   *  command, so this is a surface-native command. */
+  it('web-command wrapper: /model reports the deployment default model', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_model_${Date.now()}`;
+      sendMessage(chatId, '/model');
+      await waitFor(
+        'the model text',
+        () =>
+          readOutbox().some(
+            (r) =>
+              r.kind === 'text' && r.text?.includes('model: deepseek-official · deepseek-v4-flash'),
+          ),
+        60_000,
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 120_000);
 });

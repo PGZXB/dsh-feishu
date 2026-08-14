@@ -614,23 +614,31 @@ describe('panelPages', () => {
 });
 
 describe('buildPanelCard palette', () => {
-  it('keeps the core buttons first, then the palette page', () => {
+  it('keeps the core buttons first, then the palette page grouped by category', () => {
     const card = buildPanelCard('**Idle**', false, paletteCommands, 0);
     const actions = card.elements.filter(
       (el): el is Extract<CardElement, { tag: 'action' }> => el.tag === 'action',
     );
     expect(buttonLabels(actions[0])).toEqual(['🔁 Retry last', '📋 Copy last']);
-    // Page 1: session group + chat group (8 buttons).
-    const page1 = buttonLabels(actions[1]);
-    expect(page1).toHaveLength(PANEL_PAGE_SIZE);
-    expect(page1[0]).toBe('⏹ Stop');
-    expect(page1).toContain('👥 New group');
-    // Category headers render as emoji-tagged markdown lines.
+    // Each category is its own block: header line, then THAT category's
+    // button row (user report: headers stacked with nothing between them).
+    const sessionRow = buttonLabels(actions[1]);
+    expect(sessionRow).toHaveLength(7);
+    expect(sessionRow[0]).toBe('⏹ Stop');
+    expect(sessionRow).not.toContain('👥 New group');
+    const chatRow = buttonLabels(actions[2]);
+    expect(chatRow).toEqual(['👥 New group']);
+    // Category headers render as emoji-tagged markdown lines, each BEFORE
+    // its own button row (interleaved, not stacked).
     const markdowns = card.elements.filter(
       (el): el is Extract<CardElement, { tag: 'markdown' }> => el.tag === 'markdown',
     );
-    expect(markdowns.some((m) => m.content === '**🧩 Session**')).toBe(true);
-    expect(markdowns.some((m) => m.content === '**💬 Chat**')).toBe(true);
+    const sessionHeader = markdowns.findIndex((m) => m.content === '**🧩 Session**');
+    const chatHeader = markdowns.findIndex((m) => m.content === '**💬 Chat**');
+    expect(sessionHeader).toBeGreaterThanOrEqual(0);
+    expect(chatHeader).toBeGreaterThan(sessionHeader);
+    expect(sessionHeader).toBeLessThan(card.elements.findIndex((el) => el === actions[1]));
+    expect(chatHeader).toBeLessThan(card.elements.findIndex((el) => el === actions[2]));
     // The page indicator is a quiet note, not a bold line.
     const notes = card.elements.filter(
       (el): el is Extract<CardElement, { tag: 'note' }> => el.tag === 'note',

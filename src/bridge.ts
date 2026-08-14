@@ -105,6 +105,22 @@ export interface PlanModeService {
   set(agent: Agent, active: boolean): 'committed' | 'queued' | 'cancelled' | 'noop';
 }
 
+/** A provider/model selection (structural subset of dsh's `ModelSelection`). */
+export interface ModelSelectionView {
+  readonly provider: string;
+  readonly model: string;
+  readonly reasoningEffort?: string;
+}
+
+/** Structural subset of `ctx.agentDefaultModel` (`@deepseek-ai/dsh-agent-default-model`,
+ *  mounted by dsh-base): the default model for new sessions. */
+export interface AgentDefaultModelService {
+  /** The current default selection. */
+  currentSelection(): ModelSelectionView;
+  /** Persist a new default for future sessions. */
+  saveSelection(next: ModelSelectionView): Promise<void>;
+}
+
 /** Options for {@link Bridge}. */
 export interface BridgeOptions {
   readonly transport: FeishuTransport;
@@ -158,6 +174,13 @@ export interface BridgeOptions {
    * entering. Absent, the bare form falls back to the harness behavior.
    */
   readonly planMode?: PlanModeService;
+  /**
+   * Default-model service (`ctx.agentDefaultModel`, mounted by dsh-base):
+   * `/model` reads the current selection and sets the default for future
+   * sessions. Absent, `/model` reports the live agent's own options when
+   * available, else fails loud.
+   */
+  readonly agentDefaultModel?: AgentDefaultModelService;
   /**
    * Policy for an unknown slash line: `error` replies with an unknown-command
    * notice (default); `passthrough` delivers the line to the model as a
@@ -324,6 +347,29 @@ function planModeResultText(
   }
 }
 
+/**
+ * Parse a `/model` argument into a selection: `provider/model` or
+ * `provider model`. A single bare token is rejected (no provider to route).
+ * @param raw - the trimmed argument text.
+ * @returns the selection, or a usage error.
+ */
+function parseModelArg(
+  raw: string,
+): { ok: true; selection: ModelSelectionView } | { ok: false; error: string } {
+  const trimmed = raw.trim();
+  const slash = trimmed.split('/');
+  const parts = slash.length === 2 ? slash : trimmed.split(/\s+/);
+  const provider = parts[0]?.trim();
+  const model = parts[1]?.trim();
+  if (provider === undefined || provider === '' || model === undefined || model === '') {
+    return {
+      ok: false,
+      error: 'usage: /model <provider>/<model> (e.g. /model deepseek-official/deepseek-v4-flash)',
+    };
+  }
+  return { ok: true, selection: { provider, model } };
+}
+
 export class Bridge {
   private readonly dedup = new MessageDeduplicator();
   /** The authoritative streaming-card state per chat (the state machine). */
@@ -461,8 +507,9 @@ export class Bridge {
 
   /**
    * Commands allowed while a turn is running (read-only or safe):
-   * `help`/`status`/`sessions` read state, `cancel` is the stop itself, and
-   * `group` creates a separate chat.
+   * `help`/`status`/`sessions` read state, `cancel` is the stop itself,
+   * `group` creates a separate chat, and `model` reads (or sets the
+   * default for future sessions — never touches the running turn).
    */
   private static readonly ALLOWED_WHILE_WORKING = new Set([
     'help',
@@ -470,6 +517,7 @@ export class Bridge {
     'sessions',
     'cancel',
     'group',
+    'model',
   ]);
 
   /** Reset a chat's card state: no live card, no copy/retry targets. Used by
@@ -1368,6 +1416,54 @@ export class Bridge {
           `mention mode: ${options.groupMentionMode ?? 'always'}`,
         ];
         return { kind: 'success', text: lines.join('\n') };
+      },
+    });
+    this.commands.register({
+      name: 'model',
+      description: 'Show this chat’s model; set the default with /model <provider>/<model>',
+      category: 'system',
+      buttonLabel: '🤖 Model',
+      handler: async (invocation) => {
+        const raw = invocation.rawInput.trim();
+        if (raw === '') {
+          // The live agent's own options win (what this session actually
+          // runs); otherwise the deployment default.
+          const live = this.liveAgent(invocation.chatId);
+          const liveSelection =
+            live !== undefined &&
+            live.options?.provider !== undefined &&
+            live.options?.model !== undefined
+              ? { provider: live.options.provider, model: live.options.model }
+              : undefined;
+          const selection: ModelSelectionView | undefined =
+            liveSelection ?? this.options.agentDefaultModel?.currentSelection();
+          if (selection === undefined) {
+            return {
+              kind: 'error',
+              text: 'no model selection available — the agentDefaultModel service is not mounted.',
+            };
+          }
+          const effort =
+            selection.reasoningEffort === undefined ? '' : ` · effort ${selection.reasoningEffort}`;
+          return {
+            kind: 'success',
+            text: `model: ${selection.provider} · ${selection.model}${effort}`,
+          };
+        }
+        const parsed = parseModelArg(raw);
+        if (!parsed.ok) return { kind: 'error', text: parsed.error };
+        const service = this.options.agentDefaultModel;
+        if (service === undefined) {
+          return {
+            kind: 'error',
+            text: 'model switching unavailable — the agentDefaultModel service is not mounted.',
+          };
+        }
+        await service.saveSelection(parsed.selection);
+        return {
+          kind: 'success',
+          text: `Default model set to ${parsed.selection.provider} · ${parsed.selection.model} (applies to new sessions).`,
+        };
       },
     });
     this.commands.register({
