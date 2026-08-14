@@ -43,8 +43,18 @@ jobs:
         run: pnpm run typecheck
       - name: Build
         run: pnpm run build
+      # The integration suite needs the same prepared profiles as CI.
+      - name: Prepare integration-test profile
+        env:
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home
+        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
+      - name: Prepare scenario integration-test profile
+        env:
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-scenarios
+        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
       - name: Test (unit + integration)
         env:
+          DSH_BIN: ${{ github.workspace }}/node_modules/.bin/dsh
           FEISHU_INT_REQUIRED: '1'
         run: pnpm run test
 
