@@ -96,7 +96,12 @@ export type PanelView =
   | { readonly kind: 'input'; readonly command: PanelInputCommand; readonly sessionId?: string }
   | { readonly kind: 'confirm'; readonly command: 'clear' | 'compact' }
   | { readonly kind: 'sessions'; readonly page: number; readonly archived: boolean }
-  | { readonly kind: 'session-detail'; readonly sessionId: string };
+  | { readonly kind: 'session-detail'; readonly sessionId: string }
+  | {
+      readonly kind: 'picker';
+      readonly picker: 'repo' | 'model' | 'permission';
+      readonly page: number;
+    };
 
 /** Commands whose panel button opens a text-input sub-view. */
 export type PanelInputCommand = 'cd' | 'group' | 'goal' | 'feedback' | 'rename-session';
@@ -1129,7 +1134,16 @@ export class Bridge {
    */
   private async showPanel(chatId: string, view: PanelView): Promise<void> {
     this.panelViews.set(chatId, view);
-    const card = await this.renderPanelView(chatId, view);
+    let card: CardJson;
+    try {
+      card = await this.renderPanelView(chatId, view);
+    } catch (error: unknown) {
+      this.options.logger.error(`panel view render failed: ${String(error)}`);
+      await this.options.transport
+        .sendText(chatId, '⚠️ The panel view could not be rendered — see the bot log.')
+        .catch(() => {});
+      return;
+    }
     const existing = this.panelMessageIds.get(chatId);
     try {
       if (existing !== undefined) {
@@ -1139,7 +1153,20 @@ export class Bridge {
         this.panelMessageIds.set(chatId, sent.messageId);
       }
     } catch (error: unknown) {
-      this.options.logger.warn(`panel render failed: ${String(error)}`);
+      // NEVER leave the panel state and the on-screen card out of sync: a
+      // failed update falls back to posting a fresh card (and re-records its
+      // id); a failed post surfaces as a text notice. Silent failures were
+      // the root of the "buttons do nothing" reports (user testing).
+      this.options.logger.warn(`panel render failed, reposting: ${String(error)}`);
+      try {
+        const sent = await this.options.transport.sendCard(chatId, card);
+        this.panelMessageIds.set(chatId, sent.messageId);
+      } catch (fallbackError: unknown) {
+        this.options.logger.error(`panel card could not be posted: ${String(fallbackError)}`);
+        await this.options.transport
+          .sendText(chatId, '⚠️ The panel card could not be displayed — see the bot log.')
+          .catch(() => {});
+      }
     }
     this.syncCard(chatId);
   }
@@ -1200,6 +1227,47 @@ export class Bridge {
           );
         }
         return buildSessionDetailCard(detail, this.options.apiProxy !== undefined);
+      }
+      case 'picker': {
+        if (view.picker === 'repo') {
+          const projects = await listProjects(this.options.repoRoots ?? []);
+          return buildRepoPickerCard(projects, this.options.repoRoots ?? [], view.page);
+        }
+        if (view.picker === 'model') {
+          const options = await this.loadModelOptions();
+          const current = this.currentModelSelection(chatId);
+          const withCurrent = (options ?? []).map((option) => ({
+            ...option,
+            current: option.value === current,
+          }));
+          return buildModelPickerCard(withCurrent, current);
+        }
+        // permission
+        const service = this.options.permissionPresets;
+        if (service === undefined) {
+          return {
+            config: { wide_screen_mode: true },
+            header: { title: { tag: 'plain_text', content: '🔐 Permission' }, template: 'wathet' },
+            elements: [
+              {
+                tag: 'markdown',
+                content: 'Permission presets are unavailable on this deployment.',
+              },
+            ],
+          };
+        }
+        const agent = await this.ensureAgent(chatId);
+        const currentPreset = service.current(agent.session.events);
+        const presets: PermissionPresetView[] = service.names.map((name) => {
+          const option = service.optionOf(name);
+          return {
+            name,
+            label: option.name ?? name,
+            description: option.description,
+            current: name === currentPreset,
+          };
+        });
+        return buildPermissionPickerCard(presets);
       }
     }
   }
@@ -2087,11 +2155,6 @@ export class Bridge {
           await this.options.transport.sendText(action.chatId, 'Invalid project selection.');
           break;
         }
-        // A pick consumes the picker: only the active picker card may select.
-        if (action.messageId !== this.pickerMessageIds.get(action.chatId)) {
-          this.options.logger.info(`ignoring stale repo pick from card ${action.messageId}`);
-          break;
-        }
         const resolved = resolveDirectory(path);
         if (!resolved.ok) {
           await this.options.transport.sendText(action.chatId, `⚠️ ${resolved.error}`);
@@ -2103,35 +2166,13 @@ export class Bridge {
           action.chatId,
           `Working directory set to ${resolved.path} (session restarts on your next message).`,
         );
-        // Disable the picker card: replace it with a static confirmation so
-        // further taps do nothing (feedback: multiple selections felt off).
-        this.pickerMessageIds.delete(action.chatId);
-        try {
-          await this.options.transport.updateCard(
-            action.messageId,
-            buildRepoPickedCard(resolved.path),
-          );
-        } catch (error: unknown) {
-          this.options.logger.warn(`picker disable update failed: ${String(error)}`);
-        }
+        await this.showPanel(action.chatId, { kind: 'menu', page: 0 });
         break;
       }
       case 'repo-page': {
-        if (action.messageId !== this.pickerMessageIds.get(action.chatId)) {
-          this.options.logger.info(`ignoring stale repo page from card ${action.messageId}`);
-          break;
-        }
         const page = Number(action.value.page);
         if (!Number.isInteger(page) || page < 0) break;
-        const projects = await listProjects(this.options.repoRoots ?? []);
-        try {
-          await this.options.transport.updateCard(
-            action.messageId,
-            buildRepoPickerCard(projects, this.options.repoRoots ?? [], page),
-          );
-        } catch (error: unknown) {
-          this.options.logger.warn(`repo picker page refresh failed: ${String(error)}`);
-        }
+        await this.showPanel(action.chatId, { kind: 'picker', picker: 'repo', page });
         break;
       }
       case 'row-details': {
@@ -2170,18 +2211,14 @@ export class Bridge {
         // Page flips only apply to the menu root; other views ignore them.
         const view = this.panelViewFor(action.chatId);
         if (view.kind !== 'menu') break;
-        if (this.panelMessageIds.get(action.chatId) !== action.messageId) {
-          // A stale/unknown panel card: re-post the menu instead.
-          await this.showPanel(action.chatId, { kind: 'menu', page });
-          break;
-        }
         await this.showPanel(action.chatId, { kind: 'menu', page });
         break;
       }
       case 'panel-back': {
         // POP to the parent view (stack semantics): a session detail pops
         // to the session list, a rename input pops to its detail, everything
-        // else pops to the menu root.
+        // else (inputs, confirms, pickers, the session list) pops to the
+        // menu root.
         const view = this.panelViewFor(action.chatId);
         if (view.kind === 'session-detail') {
           await this.showPanel(action.chatId, { kind: 'sessions', page: 0, archived: false });
@@ -2292,6 +2329,10 @@ export class Bridge {
           await this.showPanel(action.chatId, { kind: 'sessions', page: 0, archived: false });
           break;
         }
+        if (name === 'repo' || name === 'model' || name === 'permission') {
+          await this.showPanel(action.chatId, { kind: 'picker', picker: name, page: 0 });
+          break;
+        }
         if (name === 'clear' || name === 'compact') {
           await this.showPanel(action.chatId, { kind: 'confirm', command: name });
           break;
@@ -2323,16 +2364,25 @@ export class Bridge {
       case 'resume-session': {
         const sessionId = action.value.sessionId;
         if (sessionId === undefined || sessionId === '') break;
-        // The session detail card (the panel) is the only resume source now;
-        // a stale panel card is ignored.
-        if (action.messageId !== this.panelMessageIds.get(action.chatId)) {
-          this.options.logger.info(`ignoring stale session resume from card ${action.messageId}`);
+        // Resume comes from the session detail view. The card callback's
+        // message id is the OPEN message id (never equal to the stored
+        // message id), so the guard checks the panel view instead.
+        if (this.panelViewFor(action.chatId).kind !== 'session-detail') {
+          this.options.logger.info(`ignoring session resume outside the detail view`);
+          break;
+        }
+        if (this.refuseWhileWorking(action.chatId)) {
+          await this.replyCommandResult(action.chatId, {
+            kind: 'error',
+            text: 'a turn is running — stop it first.',
+          });
           break;
         }
         // The detail row carries the session's cwd so the resumed chat
         // adopts it as its pinned working directory.
         const result = await this.resumeSession(action.chatId, sessionId, action.value.cwd);
         await this.replyCommandResult(action.chatId, result);
+        await this.showPanel(action.chatId, { kind: 'menu', page: 0 });
         break;
       }
       case 'sessions-page': {
@@ -2401,11 +2451,6 @@ export class Bridge {
         // fallback stamps the preset in `value.preset`.
         const preset = action.option ?? action.value.preset;
         if (preset === undefined || preset === '') break;
-        // Only the active permission picker may select (stale-card guard).
-        if (action.messageId !== this.permissionPickerMessageIds.get(action.chatId)) {
-          this.options.logger.info(`ignoring stale permission pick from card ${action.messageId}`);
-          break;
-        }
         if (this.refuseWhileWorking(action.chatId)) {
           await this.replyCommandResult(action.chatId, {
             kind: 'error',
@@ -2437,6 +2482,7 @@ export class Bridge {
           action.chatId,
           `Permission preset switched to ${option.name ?? preset}.`,
         );
+        await this.showPanel(action.chatId, { kind: 'menu', page: 0 });
         break;
       }
       case 'model-pick': {
@@ -2444,11 +2490,6 @@ export class Bridge {
         // button fallback stamps it in `value.selection`.
         const selection = action.option ?? action.value.selection;
         if (selection === undefined || selection === '') break;
-        // Only the active model picker may select (stale-card guard).
-        if (action.messageId !== this.modelPickerMessageIds.get(action.chatId)) {
-          this.options.logger.info(`ignoring stale model pick from card ${action.messageId}`);
-          break;
-        }
         if (this.refuseWhileWorking(action.chatId)) {
           await this.replyCommandResult(action.chatId, {
             kind: 'error',
@@ -2474,27 +2515,13 @@ export class Bridge {
           action.chatId,
           `Default model set to ${parsed.selection.provider} · ${parsed.selection.model} (applies to new sessions).`,
         );
+        await this.showPanel(action.chatId, { kind: 'menu', page: 0 });
         break;
       }
       case 'model-page': {
-        if (action.messageId !== this.modelPickerMessageIds.get(action.chatId)) {
-          this.options.logger.info(`ignoring stale model page from card ${action.messageId}`);
-          break;
-        }
         const page = Number(action.value.page);
         if (!Number.isInteger(page) || page < 0) break;
-        const options = await this.loadModelOptions();
-        if (options === undefined) break;
-        const current = this.currentModelSelection(action.chatId);
-        try {
-          const sent = await this.options.transport.sendCard(
-            action.chatId,
-            buildModelPickerCard(options, current, page),
-          );
-          this.modelPickerMessageIds.set(action.chatId, sent.messageId);
-        } catch (error: unknown) {
-          this.options.logger.warn(`model picker page refresh failed: ${String(error)}`);
-        }
+        await this.showPanel(action.chatId, { kind: 'picker', picker: 'model', page });
         break;
       }
       case 'approval': {
@@ -2643,7 +2670,6 @@ export class Bridge {
       category: 'session',
       buttonLabel: '📚 Pick project',
       handler: async (invocation) => {
-        const roots = this.options.repoRoots ?? [];
         // Direct path selection stays supported: /repo <abs-path>.
         const raw = invocation.rawInput.trim();
         if (raw.startsWith('/') || raw.startsWith('~')) {
@@ -2656,29 +2682,9 @@ export class Bridge {
             text: `Working directory set to ${resolved.path} (session restarts on your next message).`,
           };
         }
-        const projects = await listProjects(roots);
-        try {
-          const sent = await options.transport.sendCard(
-            invocation.chatId,
-            buildRepoPickerCard(projects, roots),
-          );
-          // Record the active picker card so a pick can consume it (and so
-          // stale callbacks from an older picker are rejected).
-          this.pickerMessageIds.set(invocation.chatId, sent.messageId);
-          return { kind: 'success', text: '' };
-        } catch (_error: unknown) {
-          if (projects.length === 0) {
-            return {
-              kind: 'error',
-              text: 'no candidate projects found under repoRoots — use /cd <path> to set a directory, or configure repoRoots.',
-            };
-          }
-          const lines = projects
-            .slice(0, 20)
-            .map((project, index) => `${index + 1}. ${project.path}`)
-            .join('\n');
-          return { kind: 'success', text: `Projects:\n${lines}` };
-        }
+        // The picker renders INSIDE the panel state machine (single card).
+        await this.showPanel(invocation.chatId, { kind: 'picker', picker: 'repo', page: 0 });
+        return { kind: 'success', text: '' };
       },
     });
     this.commands.register({
@@ -2783,10 +2789,9 @@ export class Bridge {
         const raw = invocation.rawInput.trim();
         if (raw === '') {
           if (this.options.llm !== undefined) {
-            // A bare /model (or the panel button) opens the picker so the
-            // user can actually CHOOSE a model — the button must not just
-            // pass through (user report).
-            await this.openModelPicker(invocation.chatId);
+            // A bare /model (or the panel button) opens the picker INSIDE
+            // the panel state machine.
+            await this.showPanel(invocation.chatId, { kind: 'picker', picker: 'model', page: 0 });
             return { kind: 'success', text: '' };
           }
           // No catalog: fall back to the text display.
@@ -2887,7 +2892,7 @@ export class Bridge {
       handler: async (invocation) => {
         const target = invocation.rawInput.trim();
         if (target === '') {
-          await this.openSessionsPicker(invocation.chatId);
+          await this.showPanel(invocation.chatId, { kind: 'sessions', page: 0, archived: false });
           return { kind: 'success', text: '' };
         }
         const result = await this.resumeSession(invocation.chatId, target);
@@ -2979,7 +2984,8 @@ export class Bridge {
           );
           return this.runHarnessCommand(invocation, 'permission');
         }
-        await this.openPermissionPicker(invocation.chatId);
+        // The picker renders INSIDE the panel state machine.
+        await this.showPanel(invocation.chatId, { kind: 'picker', picker: 'permission', page: 0 });
         return { kind: 'success', text: '' };
       },
     });

@@ -124,6 +124,16 @@ export function buildSessionsCard(
         ? 'No archived sessions.'
         : 'No sessions yet — send a message to start the first one.',
     });
+    elements.push({
+      tag: 'action',
+      actions: [
+        {
+          tag: 'button',
+          text: { tag: 'plain_text', content: '⬅ Back' },
+          value: actionValue({ kind: 'panel-back' }),
+        },
+      ],
+    });
     return {
       config: { wide_screen_mode: true },
       header: { title: { tag: 'plain_text', content: '🗂️ Sessions' }, template: 'wathet' },
@@ -193,6 +203,17 @@ export function buildSessionsCard(
     }
     elements.push({ tag: 'action', actions: nav });
   }
+  // Every sub-view can return to the panel menu root (stack semantics).
+  elements.push({
+    tag: 'action',
+    actions: [
+      {
+        tag: 'button',
+        text: { tag: 'plain_text', content: '⬅ Back' },
+        value: actionValue({ kind: 'panel-back' }),
+      },
+    ],
+  });
   return {
     config: { wide_screen_mode: true },
     header: { title: { tag: 'plain_text', content: '🗂️ Sessions' }, template: 'wathet' },

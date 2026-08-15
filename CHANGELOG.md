@@ -129,6 +129,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Panel state machine made complete and failure-proof** (user testing):
+  - ALL pickers now render INSIDE the panel card — `/repo`, `/model`,
+    `/permission` (and their panel buttons and slash commands) open their
+    picker as a panel sub-view instead of posting a separate card.
+  - Every sub-view has a Back button (sessions list, all pickers); Back
+    pops to the parent view (stack semantics).
+  - `showPanel` never silently fails: a failed in-place update falls back
+    to posting a fresh card (re-recording its id), a failed post surfaces
+    as a text notice, and a render error is logged and reported — the
+    "buttons do nothing" state/card divergence is gone.
+  - Panel action guards no longer compare the callback's OPEN message id
+    against the stored message id (they can never match); the panel view
+    is the guard instead.
+  - `resume-session` now requires the session detail view and the working
+    gate, and returns to the menu after resuming.
+
 - **Answered multi-select question cards kept their buttons** (user
   report): a toggle re-posts the card and retargets the interaction, but
   the finalize update used the INITIAL card's message id, so the card the

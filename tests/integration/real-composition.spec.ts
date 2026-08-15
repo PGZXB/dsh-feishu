@@ -832,16 +832,38 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
           .some((r) => JSON.stringify(r.card?.elements).includes(sessionA)),
       ).toBe(true);
 
-      // Resume A's session from B through the picker's Resume button. The
-      // picker's message id comes from its own outbox record (not a computed
-      // counter — the process may have sent other cards in between).
+      // Resume A's session from B: Details → the detail card → Resume. The
+      // message ids come from the outbox records (not computed counters).
       const pickerRecord = [...readOutbox()]
         .reverse()
-        .find((r) => r.kind === 'card' && r.card?.header?.title.content === '🗂️ Sessions');
+        .find(
+          (r) =>
+            (r.kind === 'card' || r.kind === 'patch') &&
+            r.card?.header?.title.content === '🗂️ Sessions',
+        );
       expect(pickerRecord?.messageId).toBeDefined();
       const pickerId = pickerRecord?.messageId ?? '';
       writeAction({
         messageId: pickerId,
+        chatId: chatB,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'session-select', sessionId: sessionA },
+      });
+      await waitFor(
+        'the session detail card',
+        () =>
+          readOutbox().some(
+            (r) =>
+              (r.kind === 'card' || r.kind === 'patch') &&
+              r.card?.header?.title.content === '🗂️ Session',
+          ),
+        30_000,
+      );
+      const detailRecord = [...readOutbox()]
+        .reverse()
+        .find((r) => r.card?.header?.title.content === '🗂️ Session');
+      writeAction({
+        messageId: detailRecord?.messageId ?? '',
         chatId: chatB,
         operatorOpenId: 'ou_mock',
         value: { kind: 'resume-session', sessionId: sessionA },
@@ -1624,13 +1646,15 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         30_000,
       );
 
-      // /panel opens the control panel card from this (fresh) chat.
+      // /panel opens the control panel card from this (fresh) chat — the
+      // same single panel card, updated in place (patch after the first
+      // post).
       sendMessage(chatId, '/panel');
       await waitFor(
         'the panel card via /panel',
         () =>
           readOutbox()
-            .filter((r) => r.kind === 'card')
+            .filter((r) => r.kind === 'card' || r.kind === 'patch')
             .some((r) => r.card?.header?.title.content === '⚙️ dsh-feishu panel'),
         30_000,
       );

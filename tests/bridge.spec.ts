@@ -1493,16 +1493,12 @@ describe('working directory commands', () => {
       option: join(root, 'proj-b'),
     });
     expect(h.sessionMap.cwdFor('oc_chat')).toBe(join(root, 'proj-b'));
-    // The picker card is disabled: patched to a static confirmation with no
-    // actions, so further taps do nothing (feedback: repeated picks felt off).
-    const disabled = h.transport.updatedCards.at(-1);
-    expect(disabled?.elements.some((el) => el.tag === 'action')).toBe(false);
-    expect(
-      disabled?.elements.some(
-        (el) =>
-          el.tag === 'markdown' && 'content' in el && el.content.includes(join(root, 'proj-b')),
-      ),
-    ).toBe(true);
+    // The pick lands, notifies, and the panel returns to the menu root.
+    expect(h.transport.sentTexts.some((t) => t.text.includes('Working directory set to'))).toBe(
+      true,
+    );
+    const menu = h.transport.updatedCards.at(-1);
+    expect(menu?.header?.title.content).toBe('⚙️ dsh-feishu panel');
   });
 
   it('/repo with an empty root list posts an empty picker (no crash, no dropdown)', async () => {
@@ -1512,8 +1508,15 @@ describe('working directory commands', () => {
       c.header?.title.content.includes('Pick a project'),
     );
     expect(picker).toBeDefined();
-    // No options and no dropdown: just the guidance markdown.
-    expect(picker?.elements.some((el) => el.tag === 'action')).toBe(false);
+    // No dropdown options — only the guidance markdown and the Back row.
+    expect(
+      picker?.elements.some(
+        (el) =>
+          el.tag === 'action' &&
+          'actions' in el &&
+          el.actions.some((a) => a.tag === 'select_static'),
+      ),
+    ).toBe(false);
   });
 
   it('/repo without repoRoots configured still posts the picker (empty)', async () => {
@@ -1523,18 +1526,23 @@ describe('working directory commands', () => {
       c.header?.title.content.includes('Pick a project'),
     );
     expect(picker).toBeDefined();
-    expect(picker?.elements.some((el) => el.tag === 'action')).toBe(false);
+    expect(
+      picker?.elements.some(
+        (el) =>
+          el.tag === 'action' &&
+          'actions' in el &&
+          el.actions.some((a) => a.tag === 'select_static'),
+      ),
+    ).toBe(false);
   });
 
-  it('rejects a stale repo pick from a superseded picker card', async () => {
+  it('a repo pick applies from the panel picker view', async () => {
     const h = makeHarness({ repoRoots: [join(SCRATCH, 'projects')] });
     const { mkdirSync, writeFileSync } = await import('node:fs');
     const root = join(SCRATCH, 'projects');
     mkdirSync(join(root, 'proj-a', '.git'), { recursive: true });
     writeFileSync(join(root, 'proj-a', '.git', 'HEAD'), 'ref: refs/heads/main\n');
     await h.bridge.handleMessage(message({ text: '/repo' }));
-    // A stale callback (messageId not matching the active picker card) must
-    // not change the working directory.
     await h.bridge.handleCardAction({
       messageId: 'msg-999',
       chatId: 'oc_chat',
@@ -1542,7 +1550,8 @@ describe('working directory commands', () => {
       value: { kind: 'repo-pick' },
       option: join(root, 'proj-a'),
     });
-    expect(h.sessionMap.cwdFor('oc_chat')).toBeUndefined();
+    expect(h.sessionMap.cwdFor('oc_chat')).toBe(join(root, 'proj-a'));
+    expect(h.transport.updatedCards.at(-1)?.header?.title.content).toBe('⚙️ dsh-feishu panel');
   });
 
   it('/repo discovers nested git checkouts recursively (botmux depth-3 scan)', async () => {
@@ -1892,6 +1901,13 @@ describe('session commands (/sessions /resume /clear /new)', () => {
     await h.bridge.handleMessage(message());
     await finishTurn(h);
     await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/sessions' }));
+    // Resume lives in the session detail view.
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'session-select', sessionId: 'feishu-session-9' },
+    });
     await h.bridge.handleCardAction({
       messageId: lastCardId(h),
       chatId: 'oc_chat',
@@ -1907,12 +1923,12 @@ describe('session commands (/sessions /resume /clear /new)', () => {
     expect(h.sessionMap.chatFor('feishu-session-1')).toBeUndefined();
   });
 
-  it('rejects a stale resume from a superseded sessions card', async () => {
+  it('rejects a stale resume outside the session detail view', async () => {
     const h = makeHarness({ listSessions: async () => sessionRows() });
     await h.bridge.handleMessage(message());
     await finishTurn(h);
     await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/sessions' }));
-    // A callback from an older card id is ignored.
+    // A resume callback while NOT in the detail view is ignored.
     await h.bridge.handleCardAction({
       messageId: 'msg-1',
       chatId: 'oc_chat',
@@ -2567,6 +2583,13 @@ describe('state machine matrix extension (command / resume-session actions)', ()
     const h = makeHarness({ listSessions: async () => sessionRows() });
     await h.bridge.handleMessage(message());
     await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/sessions' }));
+    // Enter the detail view first (resume only fires there).
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'session-select', sessionId: 'feishu-session-9' },
+    });
     await h.bridge.handleCardAction({
       messageId: lastCardId(h),
       chatId: 'oc_chat',
@@ -2665,18 +2688,20 @@ describe('stateful web wrappers (/permission picker, /plan toggle)', () => {
     expect(h.transport.sentTexts.some((t) => t.text.includes('switched to read-only'))).toBe(true);
   });
 
-  it('rejects a stale permission pick from a superseded picker card', async () => {
+  it('a permission pick applies from the panel picker view', async () => {
     const service = new FakePermissionService();
     const h = makeHarness({ permissionPresets: service });
     await h.bridge.handleMessage(message({ text: '/permission' }));
     await h.bridge.handleCardAction({
-      messageId: 'msg-0',
+      messageId: lastCardId(h),
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'permission-pick' },
       option: 'read-only',
     });
-    expect(service.applied).toHaveLength(0);
+    expect(service.applied).toEqual(['read-only']);
+    // The panel returns to the menu root.
+    expect(h.transport.updatedCards.at(-1)?.header?.title.content).toBe('⚙️ dsh-feishu panel');
   });
 
   it('a permission pick while a turn runs is refused', async () => {
@@ -2937,19 +2962,19 @@ describe('/model picker', () => {
     ).toBe(true);
   });
 
-  it('rejects a stale model pick from a superseded picker card', async () => {
+  it('a model pick applies from the panel picker view', async () => {
     const llm = new FakeLlmService();
     const defaults = new FakeAgentDefaultModelService();
     const h = makeHarness({ llm, agentDefaultModel: defaults });
     await h.bridge.handleMessage(message({ text: '/model' }));
     await h.bridge.handleCardAction({
-      messageId: 'msg-0',
+      messageId: lastCardId(h),
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'model-pick' },
       option: 'deepseek-official/deepseek-r1',
     });
-    expect(defaults.saved).toHaveLength(0);
+    expect(defaults.saved).toEqual([{ provider: 'deepseek-official', model: 'deepseek-r1' }]);
   });
 
   it('a model pick while a turn runs is refused', async () => {
@@ -3090,11 +3115,17 @@ describe('working-directory gate (requireWorkingDir)', () => {
       ],
     });
     await h.bridge.handleMessage(message({ text: '/sessions' }));
+    // Enter the detail view: the detail card carries the cwd on Resume.
     await h.bridge.handleCardAction({
       messageId: lastCardId(h),
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
-      // The picker stamps the session's cwd into the button value.
+      value: { kind: 'session-select', sessionId: 'feishu-session-9' },
+    });
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
       value: { kind: 'resume-session', sessionId: 'feishu-session-9', cwd: '/work/old' },
     });
     expect(h.sessionMap.cwdFor('oc_chat')).toBe('/work/old');

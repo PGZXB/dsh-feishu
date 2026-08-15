@@ -136,15 +136,15 @@ describe('buildSessionsCard', () => {
         ? el.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
         : [],
     );
-    // Row 0: the archive toggle plus the Next nav button.
-    expect(nav).toEqual(['🗄️ Archived', 'Next ›']);
+    // Row 0: the archive toggle plus the Next nav button plus Back.
+    expect(nav).toEqual(['🗄️ Archived', 'Next ›', '⬅ Back']);
     const last = buildSessionsCard(many, 1);
     const lastNav = last.elements.flatMap((el) =>
       el.tag === 'action'
         ? el.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
         : [],
     );
-    expect(lastNav).toEqual(['🗄️ Archived', '‹ Prev']);
+    expect(lastNav).toEqual(['🗄️ Archived', '‹ Prev', '⬅ Back']);
     // Out-of-range pages clamp to the last page.
     const clamped = buildSessionsCard(many, 99);
     expect(
