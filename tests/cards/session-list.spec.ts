@@ -78,49 +78,46 @@ describe('buildSessionsCard', () => {
     ).toBe(true);
   });
 
-  it('renders one row per session with a Resume button (except current)', () => {
+  it('renders one row per session with a Details button and the archive toggle', () => {
     const card = buildSessionsCard([
       row({ sessionId: 'a', title: 'A' }),
       row({ sessionId: 'b', title: 'B', current: true }),
     ]);
     const rows = card.elements.filter((el) => el.tag === 'column_set');
     expect(rows).toHaveLength(2);
-    // Row 'a' carries a resume button with the session id payload.
-    const rowA = rows[0];
-    const buttons =
-      rowA && 'columns' in rowA
-        ? rowA.columns.flatMap((column) =>
-            column.elements.filter((element) => element.tag === 'button'),
-          )
-        : [];
-    expect(buttons).toHaveLength(1);
-    expect(buttons[0] && 'value' in buttons[0] ? buttons[0].value : undefined).toEqual({
-      kind: 'resume-session',
-      sessionId: 'a',
-      cwd: '/work/my-project',
+    // Every row carries a Details button with the session id payload.
+    const expectedIds = ['a', 'b'];
+    rows.forEach((r, index) => {
+      const buttons =
+        r && 'columns' in r
+          ? r.columns.flatMap((column) =>
+              column.elements.filter((element) => element.tag === 'button'),
+            )
+          : [];
+      expect(buttons).toHaveLength(1);
+      expect(buttons[0] && 'value' in buttons[0] ? buttons[0].value.kind : undefined).toBe(
+        'session-select',
+      );
+      expect(buttons[0] && 'value' in buttons[0] ? buttons[0].value.sessionId : undefined).toBe(
+        expectedIds[index],
+      );
     });
-    // A session without a known cwd omits it from the payload.
-    const noCwd = buildSessionsCard([row({ sessionId: 'x', title: 'X', cwd: undefined })]);
-    const noCwdRow = noCwd.elements.find((el) => el.tag === 'column_set');
-    const noCwdButton =
-      noCwdRow && 'columns' in noCwdRow
-        ? noCwdRow.columns.flatMap((column) =>
-            column.elements.filter((element) => element.tag === 'button'),
-          )[0]
-        : undefined;
-    expect(noCwdButton && 'value' in noCwdButton ? noCwdButton.value : undefined).toEqual({
-      kind: 'resume-session',
-      sessionId: 'x',
-    });
-    // The current row has no resume button.
-    const rowB = rows[1];
-    const buttonsB =
-      rowB && 'columns' in rowB
-        ? rowB.columns.flatMap((column) =>
-            column.elements.filter((element) => element.tag === 'button'),
-          )
-        : [];
-    expect(buttonsB).toHaveLength(0);
+    // The archive toggle row is present.
+    expect(
+      card.elements.some(
+        (el) =>
+          el.tag === 'action' &&
+          'actions' in el &&
+          el.actions.some(
+            (a) =>
+              'value' in a &&
+              (a.value as Record<string, string>).kind === 'sessions-archived-toggle',
+          ),
+      ),
+    ).toBe(true);
+    // The archived view flips the toggle label.
+    const archived = buildSessionsCard([row({ sessionId: 'a', title: 'A' })], 0, true);
+    expect(JSON.stringify(archived.elements)).toContain('Active sessions');
   });
 
   it('paginates rows and page nav at bounds', () => {
@@ -139,14 +136,15 @@ describe('buildSessionsCard', () => {
         ? el.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
         : [],
     );
-    expect(nav).toEqual(['Next ›']);
+    // Row 0: the archive toggle plus the Next nav button.
+    expect(nav).toEqual(['🗄️ Archived', 'Next ›']);
     const last = buildSessionsCard(many, 1);
     const lastNav = last.elements.flatMap((el) =>
       el.tag === 'action'
         ? el.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
         : [],
     );
-    expect(lastNav).toEqual(['‹ Prev']);
+    expect(lastNav).toEqual(['🗄️ Archived', '‹ Prev']);
     // Out-of-range pages clamp to the last page.
     const clamped = buildSessionsCard(many, 99);
     expect(

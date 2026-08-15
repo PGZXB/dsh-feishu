@@ -211,6 +211,7 @@ function makeHarness(
     transportMode?: 'lark' | 'memory';
     reactions?: NonNullable<BridgeOptions['reactions']>;
     readSession?: NonNullable<BridgeOptions['readSession']>;
+    apiProxy?: NonNullable<BridgeOptions['apiProxy']>;
   } = {},
 ): Harness {
   const transport = new RecordingTransport();
@@ -257,6 +258,7 @@ function makeHarness(
     ...(options.llm !== undefined ? { llm: options.llm } : {}),
     ...(options.reactions !== undefined ? { reactions: options.reactions } : {}),
     ...(options.readSession !== undefined ? { readSession: options.readSession } : {}),
+    ...(options.apiProxy !== undefined ? { apiProxy: options.apiProxy } : {}),
     // Tests default the working-directory gate OFF (production defaults it
     // ON); the gate's own tests enable it explicitly.
     requireWorkingDir: options.requireWorkingDir ?? false,
@@ -1719,7 +1721,7 @@ describe('session commands (/sessions /resume /clear /new)', () => {
     ).toBe(true);
   });
 
-  it('/sessions lists sessions with resume buttons and marks the current one', async () => {
+  it('/sessions lists sessions with Details buttons and marks the current one', async () => {
     const h = makeHarness({ listSessions: async () => sessionRows() });
     await h.bridge.handleMessage(message());
     await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/sessions' }));
@@ -1738,8 +1740,8 @@ describe('session commands (/sessions /resume /clear /new)', () => {
             : false,
         ),
     ).toBe(true);
-    // Resume buttons exist for non-current rows with the session id payload.
-    const resumeValues =
+    // Rows carry Details buttons with the session id payload.
+    const detailsValues =
       card?.elements.flatMap((el) =>
         el.tag === 'column_set'
           ? el.columns.flatMap((column) =>
@@ -1749,13 +1751,104 @@ describe('session commands (/sessions /resume /clear /new)', () => {
             )
           : [],
       ) ?? [];
-    expect(resumeValues).toContainEqual({
-      kind: 'resume-session',
-      sessionId: 'feishu-session-9',
-      cwd: '/work/old',
+    expect(detailsValues).toContainEqual({ kind: 'session-select', sessionId: 'feishu-session-9' });
+    // The detail view holds Resume for a non-current session.
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'session-select', sessionId: 'feishu-session-9' },
     });
-    // The current row offers no Resume button.
-    expect(resumeValues.some((v) => v.sessionId === 'feishu-session-1')).toBe(false);
+    const detail = h.transport.updatedCards.at(-1);
+    expect(JSON.stringify(detail?.elements)).toContain('▶️ Resume');
+    expect(JSON.stringify(detail?.elements)).toContain('feishu-session-9');
+  });
+
+  it('session detail renames and archives through the host seam', async () => {
+    const renamed: Array<{ sessionId: string; title: string }> = [];
+    const archived: string[] = [];
+    const h = makeHarness({
+      listSessions: async () => sessionRows(),
+      apiProxy: {
+        sessions: {
+          rename: async (request) => {
+            renamed.push(request);
+          },
+        },
+        workspace: {
+          list: async () => ({ archivedSessionIds: [] }),
+          archiveSession: async (request) => {
+            archived.push(request.sessionId);
+          },
+        },
+      },
+    });
+    // Detail → Rename → input form → submit the new title.
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel' },
+    });
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'session-select', sessionId: 'feishu-session-9' },
+    });
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'session-rename', sessionId: 'feishu-session-9' },
+    });
+    const inputCard = h.transport.updatedCards.at(-1);
+    expect(inputCard?.header?.title.content).toBe('✏️ Rename session');
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: {
+        kind: 'panel-input-submit',
+        command: 'rename-session',
+        sessionId: 'feishu-session-9',
+      },
+      formValue: { title: 'New Title' },
+    });
+    expect(renamed).toEqual([{ sessionId: 'feishu-session-9', title: 'New Title' }]);
+    expect(h.transport.sentTexts.some((t) => t.text.includes('Renamed session'))).toBe(true);
+    // Detail again → Archive.
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'session-select', sessionId: 'feishu-session-9' },
+    });
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'session-archive', sessionId: 'feishu-session-9' },
+    });
+    expect(archived).toEqual(['feishu-session-9']);
+    expect(h.transport.sentTexts.some((t) => t.text.includes('Archived session'))).toBe(true);
+    // The detail view without the seam hides rename/archive.
+    const noSeam = makeHarness({ listSessions: async () => sessionRows() });
+    await noSeam.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel' },
+    });
+    await noSeam.bridge.handleCardAction({
+      messageId: lastCardId(noSeam),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'session-select', sessionId: 'feishu-session-9' },
+    });
+    const noSeamDetail = noSeam.transport.updatedCards.at(-1);
+    expect(JSON.stringify(noSeamDetail?.elements)).not.toContain('✏️ Rename');
+    expect(JSON.stringify(noSeamDetail?.elements)).not.toContain('🗄️ Archive');
   });
 
   it('paginates the sessions card beyond one page', async () => {
@@ -1773,7 +1866,7 @@ describe('session commands (/sessions /resume /clear /new)', () => {
     expect(
       card?.elements.some(
         (el) =>
-          el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 1/3'),
+          el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 1/5'),
       ),
     ).toBe(true);
     await h.bridge.handleCardAction({
@@ -1788,7 +1881,7 @@ describe('session commands (/sessions /resume /clear /new)', () => {
         .at(-1)
         ?.elements.some(
           (el) =>
-            el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 2/3'),
+            el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 2/5'),
         ),
     ).toBe(true);
     expect(h.transport.sentCards).toHaveLength(1);
@@ -1940,11 +2033,8 @@ describe('session commands (/sessions /resume /clear /new)', () => {
     await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/sessions' }));
     const card = h.transport.sentCards.at(-1);
     expect(card?.header?.title.content).toBe('🗂️ Sessions');
-    expect(
-      card?.elements.some(
-        (el) => el.tag === 'markdown' && 'content' in el && el.content.includes('this chat'),
-      ),
-    ).toBe(true);
+    // The bound session row labels this chat's session as 'this chat'.
+    expect(JSON.stringify(card?.elements)).toContain('this chat');
   });
 });
 
@@ -1971,7 +2061,9 @@ describe('panel command palette', () => {
     // /clear is the same action as /new and stays slash-only (one panel
     // button, user report) — its button is hidden.
     expect(labels).not.toContain('✨ Fresh start');
-    expect(labels).toContain('↩️ Resume session');
+    // Resume lives inside the Sessions flow; a standalone button is
+    // redundant (user report).
+    expect(labels).not.toContain('↩️ Resume session');
     await h.bridge.handleCardAction({
       messageId: lastCardId(h),
       chatId: 'oc_chat',

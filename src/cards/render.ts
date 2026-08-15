@@ -117,7 +117,13 @@ export type SurfaceAction =
   // Panel state machine (Phase 1): input/confirm sub-views.
   | { readonly kind: 'panel-back' }
   | { readonly kind: 'panel-input-submit'; readonly command: string }
-  | { readonly kind: 'panel-confirm'; readonly command: string };
+  | { readonly kind: 'panel-confirm'; readonly command: string }
+  // Session detail sub-view (Phase 2).
+  | { readonly kind: 'session-select'; readonly sessionId: string }
+  | { readonly kind: 'sessions-archived-toggle' }
+  | { readonly kind: 'session-archive'; readonly sessionId: string }
+  | { readonly kind: 'session-rename'; readonly sessionId: string }
+  | { readonly kind: 'session-export'; readonly sessionId: string };
 
 /**
  * Projects per picker card page (the button-based fallback, used only when

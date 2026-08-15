@@ -153,6 +153,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Session detail view (dsh web parity).** The Sessions button opens a
+  paginated list (6 per page, mobile-friendly) with an archive/active
+  toggle; each row's Details opens a session detail card (title, cwd, age,
+  message count, last answer) with **Resume**, **Rename** (input form →
+  host `apiProxy.sessions.rename`), **Archive** (→
+  `apiProxy.workspace.archiveSession`, reversible), and **Export** actions.
+  The standalone Resume panel button is gone (the Sessions flow owns it).
+  Rename/Archive hide when the host seam is absent.
 - **Panel is now a state machine (single card, in-place updates).** The
   panel card keeps one authoritative `PanelView` (menu / input / confirm)
   rendered through a single path and updated IN PLACE — no card stacking

@@ -47,7 +47,12 @@ import {
   type ToolRow,
   type TurnRow,
 } from './cards/render.js';
-import { buildSessionsCard, type SessionRowView } from './cards/session-list.js';
+import {
+  buildSessionDetailCard,
+  buildSessionsCard,
+  type SessionDetailView,
+  type SessionRowView,
+} from './cards/session-list.js';
 import type { StreamingCardManager } from './cards/streaming.js';
 import { toolRowSummary } from './cards/tool-summary.js';
 import { CommandRegistry, type CommandResult, parseSlash } from './commands.js';
@@ -88,15 +93,23 @@ function isCompactionLifecycleEvent(event: SessionEvent): boolean {
  */
 export type PanelView =
   | { readonly kind: 'menu'; readonly page: number }
-  | { readonly kind: 'input'; readonly command: PanelInputCommand }
-  | { readonly kind: 'confirm'; readonly command: 'clear' | 'compact' };
+  | { readonly kind: 'input'; readonly command: PanelInputCommand; readonly sessionId?: string }
+  | { readonly kind: 'confirm'; readonly command: 'clear' | 'compact' }
+  | { readonly kind: 'sessions'; readonly page: number; readonly archived: boolean }
+  | { readonly kind: 'session-detail'; readonly sessionId: string };
 
 /** Commands whose panel button opens a text-input sub-view. */
-export type PanelInputCommand = 'cd' | 'group' | 'goal' | 'feedback';
+export type PanelInputCommand = 'cd' | 'group' | 'goal' | 'feedback' | 'rename-session';
 
 /** Narrow a panel command marker to the input commands. */
 function isPanelInputCommand(value: string | undefined): value is PanelInputCommand {
-  return value === 'cd' || value === 'group' || value === 'goal' || value === 'feedback';
+  return (
+    value === 'cd' ||
+    value === 'group' ||
+    value === 'goal' ||
+    value === 'feedback' ||
+    value === 'rename-session'
+  );
 }
 
 /** Text-input sub-view copy per command. */
@@ -137,6 +150,13 @@ const PANEL_INPUT_SPEC: Record<
     fieldName: 'feedback',
     placeholder: 'Type feedback…',
     submitLabel: 'Send feedback',
+  },
+  'rename-session': {
+    title: '✏️ Rename session',
+    hint: 'Send the new title for this session.',
+    fieldName: 'title',
+    placeholder: 'New title',
+    submitLabel: 'Rename',
   },
 };
 
@@ -353,6 +373,20 @@ export interface BridgeOptions {
     readonly session: { readonly id: string };
     readonly events: readonly SessionExportEvent[];
   }>;
+  /**
+   * Host session-management seam (`ctx.apiProxy`, structural subset): lets
+   * the session detail view rename and archive sessions (dsh web parity).
+   * Absent, the detail view hides those buttons.
+   */
+  readonly apiProxy?: {
+    readonly sessions: {
+      rename(request: { readonly sessionId: string; readonly title: string }): Promise<unknown>;
+    };
+    readonly workspace: {
+      list(): Promise<{ readonly archivedSessionIds?: readonly string[] }>;
+      archiveSession(request: { readonly sessionId: string }): Promise<unknown>;
+    };
+  };
   /**
    * Permission-preset service (`ctx.permissionPresets`, mounted by
    * dsh-base): `/permission` renders a preset picker from it and applies
@@ -913,19 +947,23 @@ export class Bridge {
    * @param chatId - the requesting chat.
    * @returns session rows, or `undefined` when listing is unavailable.
    */
-  private async loadSessions(chatId: string): Promise<readonly SessionRowView[] | undefined> {
+  private async loadSessions(
+    chatId: string,
+    archived = false,
+  ): Promise<readonly SessionRowView[] | undefined> {
+    let rows: SessionRowView[] | undefined;
     if (this.options.listSessions === undefined) {
       this.options.logger.warn(
         '[feishu] listSessions unavailable; /sessions degraded to bound sessions',
       );
       const current = this.options.sessionMap.get(chatId);
       const seen = new Set<string>();
-      const rows: SessionRowView[] = [];
+      const bound: SessionRowView[] = [];
       for (const chat of this.options.sessionMap.chats()) {
         const sessionId = this.options.sessionMap.get(chat);
         if (sessionId === undefined || seen.has(sessionId)) continue;
         seen.add(sessionId);
-        rows.push({
+        bound.push({
           sessionId,
           title: chat === chatId ? 'this chat' : `chat ${chat}`,
           cwd: this.options.sessionMap.cwdFor(chat),
@@ -935,15 +973,104 @@ export class Bridge {
           current: sessionId === current,
         });
       }
-      return rows;
+      rows = bound;
+    } else {
+      const listed = await this.options.listSessions();
+      if (listed === undefined) return undefined;
+      const current = this.options.sessionMap.get(chatId);
+      rows = listed.map((row) => ({
+        ...row,
+        current: row.sessionId === current,
+      }));
     }
-    const listed = await this.options.listSessions();
-    if (listed === undefined) return undefined;
-    const current = this.options.sessionMap.get(chatId);
-    return listed.map((row) => ({
-      ...row,
-      current: row.sessionId === current,
-    }));
+    // Archive filtering needs the host archive set; without the seam every
+    // session is active.
+    const archivedIds = await this.loadArchivedSessionIds();
+    if (archivedIds.size === 0) return rows;
+    return archived
+      ? rows.filter((row) => archivedIds.has(row.sessionId))
+      : rows.filter((row) => !archivedIds.has(row.sessionId));
+  }
+
+  /** The host's archived session id set, or empty when the seam is absent. */
+  private async loadArchivedSessionIds(): Promise<Set<string>> {
+    try {
+      const workspace = this.options.apiProxy?.workspace;
+      if (workspace === undefined) return new Set();
+      const view = await workspace.list();
+      return new Set(view.archivedSessionIds ?? []);
+    } catch (error: unknown) {
+      this.options.logger.warn(`archived session list failed: ${String(error)}`);
+      return new Set();
+    }
+  }
+
+  /** Build one session's detail view for the panel detail sub-view. */
+  private async sessionDetailView(
+    chatId: string,
+    sessionId: string,
+  ): Promise<SessionDetailView | undefined> {
+    const rows = await this.loadSessions(chatId);
+    const row = rows?.find((entry) => entry.sessionId === sessionId);
+    let messageCount = 0;
+    let lastSummary: string | undefined;
+    if (this.options.readSession !== undefined) {
+      try {
+        const log = await this.options.readSession(sessionId);
+        messageCount = log.events.length;
+        for (let index = log.events.length - 1; index >= 0; index -= 1) {
+          const event = log.events[index];
+          if (event?.type !== 'assistant/message') continue;
+          const text = (event.data?.message?.content ?? [])
+            .filter((block) => block?.type === 'text')
+            .map((block) => block.text ?? '')
+            .join('');
+          if (text !== '') {
+            lastSummary = text;
+            break;
+          }
+        }
+      } catch (error: unknown) {
+        this.options.logger.warn(`session detail read failed: ${String(error)}`);
+      }
+    }
+    if (row === undefined) return undefined;
+    const archivedIds = await this.loadArchivedSessionIds();
+    return {
+      sessionId,
+      title: row.title,
+      cwd: row.cwd,
+      createdAt: row.createdAt,
+      messageCount,
+      lastSummary,
+      live: row.live,
+      current: row.current,
+      archived: archivedIds.has(sessionId),
+    };
+  }
+
+  /** Export ANY session's log as a file message (session detail action). */
+  private async exportSessionLog(chatId: string, sessionId: string): Promise<CommandResult> {
+    if (this.options.readSession === undefined) {
+      return {
+        kind: 'error',
+        text: 'session export unavailable — the session query service is not mounted.',
+      };
+    }
+    try {
+      const log = await this.options.readSession(sessionId);
+      const transcript = buildSessionExport(log.events);
+      const fileName = `session-${sessionId}.md`;
+      await this.options.transport.sendFile(chatId, fileName, transcript);
+      return { kind: 'success', text: `Exported ${log.events.length} events to ${fileName}.` };
+    } catch (error: unknown) {
+      this.options.logger.warn(`session export failed: ${String(error)}`);
+      const detail = String(error);
+      const scopeHint = detail.includes('im:resource')
+        ? ' — the Feishu app needs the im:resource:upload permission scope (developer console → Permissions).'
+        : '';
+      return { kind: 'error', text: `session export failed: ${detail}${scopeHint}` };
+    }
   }
 
   /** Post the /sessions picker card (the resume-by-button surface). */
@@ -1002,7 +1129,7 @@ export class Bridge {
    */
   private async showPanel(chatId: string, view: PanelView): Promise<void> {
     this.panelViews.set(chatId, view);
-    const card = this.renderPanelView(chatId, view);
+    const card = await this.renderPanelView(chatId, view);
     const existing = this.panelMessageIds.get(chatId);
     try {
       if (existing !== undefined) {
@@ -1023,7 +1150,7 @@ export class Bridge {
   }
 
   /** Render the card for one panel view (the single panel render path). */
-  private renderPanelView(chatId: string, view: PanelView): CardJson {
+  private async renderPanelView(chatId: string, view: PanelView): Promise<CardJson> {
     switch (view.kind) {
       case 'menu':
         return this.buildPanelCardFor(chatId, view.page);
@@ -1046,6 +1173,33 @@ export class Bridge {
           confirmLabel: spec.confirmLabel,
           command: view.command,
         });
+      }
+      case 'sessions': {
+        const rows = await this.loadSessions(chatId, view.archived);
+        if (rows === undefined) {
+          return buildSessionsCard([], view.page, view.archived);
+        }
+        return buildSessionsCard(rows, view.page, view.archived);
+      }
+      case 'session-detail': {
+        const detail = await this.sessionDetailView(chatId, view.sessionId);
+        if (detail === undefined) {
+          return buildSessionDetailCard(
+            {
+              sessionId: view.sessionId,
+              title: '(unknown)',
+              cwd: undefined,
+              createdAt: 0,
+              messageCount: 0,
+              lastSummary: undefined,
+              live: false,
+              current: false,
+              archived: false,
+            },
+            this.options.apiProxy !== undefined,
+          );
+        }
+        return buildSessionDetailCard(detail, this.options.apiProxy !== undefined);
       }
     }
   }
@@ -2044,10 +2198,35 @@ export class Bridge {
           });
           break;
         }
-        const command = this.commands.find(commandName);
-        if (command === undefined) break;
         const fieldName = PANEL_INPUT_SPEC[commandName].fieldName;
         const rawInput = action.formValue?.[fieldName] ?? '';
+        if (commandName === 'rename-session') {
+          // Rename goes through the host session seam (dsh web parity).
+          const sessionId = action.value.sessionId;
+          if (sessionId === undefined || sessionId === '') break;
+          const sessions = this.options.apiProxy?.sessions;
+          if (sessions === undefined) {
+            await this.options.transport.sendText(
+              action.chatId,
+              'Renaming sessions is unavailable on this deployment.',
+            );
+            break;
+          }
+          try {
+            await sessions.rename({ sessionId, title: rawInput });
+            await this.options.transport.sendText(action.chatId, `Renamed session ${sessionId}.`);
+          } catch (error: unknown) {
+            this.options.logger.warn(`session rename failed: ${String(error)}`);
+            await this.options.transport.sendText(
+              action.chatId,
+              `Rename failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+          await this.showPanel(action.chatId, { kind: 'session-detail', sessionId });
+          break;
+        }
+        const command = this.commands.find(commandName);
+        if (command === undefined) break;
         const result = await command.handler({
           chatId: action.chatId,
           senderOpenId: action.operatorOpenId,
@@ -2093,6 +2272,10 @@ export class Bridge {
           await this.showPanel(action.chatId, { kind: 'input', command: name });
           break;
         }
+        if (name === 'sessions') {
+          await this.showPanel(action.chatId, { kind: 'sessions', page: 0, archived: false });
+          break;
+        }
         if (name === 'clear' || name === 'compact') {
           await this.showPanel(action.chatId, { kind: 'confirm', command: name });
           break;
@@ -2124,37 +2307,77 @@ export class Bridge {
       case 'resume-session': {
         const sessionId = action.value.sessionId;
         if (sessionId === undefined || sessionId === '') break;
-        // Only the active /sessions card may resume (stale-card guard).
-        if (action.messageId !== this.sessionPickerMessageIds.get(action.chatId)) {
+        // The session detail card (the panel) is the only resume source now;
+        // a stale panel card is ignored.
+        if (action.messageId !== this.panelMessageIds.get(action.chatId)) {
           this.options.logger.info(`ignoring stale session resume from card ${action.messageId}`);
           break;
         }
-        // The picker row carries the session's cwd so the resumed chat
+        // The detail row carries the session's cwd so the resumed chat
         // adopts it as its pinned working directory.
         const result = await this.resumeSession(action.chatId, sessionId, action.value.cwd);
         await this.replyCommandResult(action.chatId, result);
         break;
       }
       case 'sessions-page': {
-        if (action.messageId !== this.sessionPickerMessageIds.get(action.chatId)) {
-          this.options.logger.info(`ignoring stale sessions page from card ${action.messageId}`);
-          break;
-        }
         const page = Number(action.value.page);
         if (!Number.isInteger(page) || page < 0) break;
-        const rows = await this.loadSessions(action.chatId);
-        if (rows === undefined) {
+        const view = this.panelViewFor(action.chatId);
+        if (view.kind !== 'sessions') break;
+        await this.showPanel(action.chatId, { kind: 'sessions', page, archived: view.archived });
+        break;
+      }
+      case 'session-select': {
+        const sessionId = action.value.sessionId;
+        if (sessionId === undefined || sessionId === '') break;
+        await this.showPanel(action.chatId, { kind: 'session-detail', sessionId });
+        break;
+      }
+      case 'sessions-archived-toggle': {
+        const view = this.panelViewFor(action.chatId);
+        const archived = view.kind === 'sessions' ? !view.archived : false;
+        await this.showPanel(action.chatId, { kind: 'sessions', page: 0, archived });
+        break;
+      }
+      case 'session-rename': {
+        const sessionId = action.value.sessionId;
+        if (sessionId === undefined || sessionId === '') break;
+        await this.showPanel(action.chatId, {
+          kind: 'input',
+          command: 'rename-session',
+          sessionId,
+        });
+        break;
+      }
+      case 'session-archive': {
+        const sessionId = action.value.sessionId;
+        if (sessionId === undefined || sessionId === '') break;
+        const workspace = this.options.apiProxy?.workspace;
+        if (workspace === undefined) {
           await this.options.transport.sendText(
             action.chatId,
-            'Session list unavailable — the session query service is not mounted.',
+            'Archiving sessions is unavailable on this deployment.',
           );
           break;
         }
         try {
-          await this.options.transport.updateCard(action.messageId, buildSessionsCard(rows, page));
+          await workspace.archiveSession({ sessionId });
+          await this.options.transport.sendText(action.chatId, `Archived session ${sessionId}.`);
         } catch (error: unknown) {
-          this.options.logger.warn(`sessions picker page refresh failed: ${String(error)}`);
+          this.options.logger.warn(`session archive failed: ${String(error)}`);
+          await this.options.transport.sendText(
+            action.chatId,
+            `Archiving failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
         }
+        await this.showPanel(action.chatId, { kind: 'sessions', page: 0, archived: false });
+        break;
+      }
+      case 'session-export': {
+        const sessionId = action.value.sessionId;
+        if (sessionId === undefined || sessionId === '') break;
+        const exported = await this.exportSessionLog(action.chatId, sessionId);
+        await this.replyCommandResult(action.chatId, exported);
         break;
       }
       case 'permission-pick': {
@@ -2628,11 +2851,12 @@ export class Bridge {
     });
     this.commands.register({
       name: 'sessions',
-      description: 'List saved sessions and resume one in this chat',
+      description: 'List saved sessions and act on one in this chat',
       category: 'session',
       buttonLabel: '🗂️ Sessions',
       handler: async (invocation) => {
-        await this.openSessionsPicker(invocation.chatId);
+        // The panel state machine owns the session list/detail flow.
+        await this.showPanel(invocation.chatId, { kind: 'sessions', page: 0, archived: false });
         return { kind: 'success', text: '' };
       },
     });
@@ -2641,6 +2865,9 @@ export class Bridge {
       description: 'Resume a saved session (no id opens the session list)',
       category: 'session',
       buttonLabel: '↩️ Resume session',
+      // The Sessions button owns the list/detail flow; a separate resume
+      // button is redundant (user report).
+      hiddenFromPanel: true,
       handler: async (invocation) => {
         const target = invocation.rawInput.trim();
         if (target === '') {

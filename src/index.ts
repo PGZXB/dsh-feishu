@@ -187,7 +187,22 @@ export function defaultDataDir(): string {
  */
 
 /**
- * Structural subset of the `ctx.sessionQuery` service (`@deepseek-ai/dsh-session-query`,
+ * Structural subset of the host `ctx.apiProxy` service (dsh web parity for
+ * session rename/archive). The full ApiProxy lives on the host plane; the
+ * plugin only needs the two session actions.
+ */
+type ApiProxyLike = {
+  readonly sessions: {
+    rename(request: { readonly sessionId: string; readonly title: string }): Promise<unknown>;
+  };
+  readonly workspace: {
+    list(): Promise<{ readonly archivedSessionIds?: readonly string[] }>;
+    archiveSession(request: { readonly sessionId: string }): Promise<unknown>;
+  };
+};
+
+/**
+ * Structural subset of `ctx.sessionQuery` (`@deepseek-ai/dsh-session-query`,
  * mounted by dsh-base's `session-query-sqlite` row). Kept local so the plugin
  * compiles without a dependency on the query package; `ctx.get('sessionQuery')`
  * returns the full engine at runtime.
@@ -443,6 +458,10 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
         readonly events: readonly SessionExportEvent[];
       }>;
     },
+    // Host session-management seam (dsh web parity for rename/archive). The
+    // apiProxy service lives on the host plane of the dsh process; absent,
+    // the session detail view hides those actions.
+    ...(ctx.get('apiProxy') !== undefined ? { apiProxy: ctx.get('apiProxy') as ApiProxyLike } : {}),
     // Feature-detect the two stateful web-command services (both mounted by
     // dsh-base); absent, the /permission and /plan wrappers degrade.
     ...(ctx.get('permissionPresets') !== undefined

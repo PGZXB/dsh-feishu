@@ -30,8 +30,8 @@ export interface SessionRowView {
   readonly current: boolean;
 }
 
-/** Session rows per card page. */
-export const SESSION_PAGE_SIZE = 10;
+/** Session rows per card page (mobile-friendly: 6, not 10). */
+export const SESSION_PAGE_SIZE = 6;
 
 /**
  * Relative age label for a `createdAt` timestamp, or `''` when unknown.
@@ -80,25 +80,49 @@ export function sessionRowLine(row: SessionRowView): string {
 
 /**
  * Build the `/sessions` picker card: one row per session (title, id, cwd,
- * age, live/saved badges) with a Resume button; the current session's row is
- * marked and offers no Resume. Paginated beyond {@link SESSION_PAGE_SIZE}.
+ * age, live/saved badges) with a Details button (the detail sub-view holds
+ * Resume/Rename/Archive/Export); the current session's row is marked.
+ * Archived sessions are hidden unless `archived` (then only archived ones
+ * show). Paginated beyond {@link SESSION_PAGE_SIZE}.
  * @param sessions - the session rows, newest-first.
  * @param page - zero-based page index.
+ * @param archived - whether to show the archived view instead of active.
  * @returns Feishu interactive card JSON (v1 layout).
  */
-export function buildSessionsCard(sessions: readonly SessionRowView[], page = 0): CardJson {
+export function buildSessionsCard(
+  sessions: readonly SessionRowView[],
+  page = 0,
+  archived = false,
+): CardJson {
   const elements: CardElement[] = [
     {
       tag: 'markdown',
-      content:
-        '**Saved sessions** — pick one to resume it in this chat (the previous binding moves here).',
+      content: archived
+        ? '**Archived sessions** — pick one to view and restore.'
+        : '**Saved sessions** — pick one to view details and act on it.',
+    },
+    { tag: 'hr' },
+    {
+      tag: 'action',
+      actions: [
+        {
+          tag: 'button',
+          text: {
+            tag: 'plain_text',
+            content: archived ? '◀️ Active sessions' : '🗄️ Archived',
+          },
+          value: actionValue({ kind: 'sessions-archived-toggle' }),
+        },
+      ],
     },
     { tag: 'hr' },
   ];
   if (sessions.length === 0) {
     elements.push({
       tag: 'markdown',
-      content: 'No sessions yet — send a message to start the first one.',
+      content: archived
+        ? 'No archived sessions.'
+        : 'No sessions yet — send a message to start the first one.',
     });
     return {
       config: { wide_screen_mode: true },
@@ -122,28 +146,20 @@ export function buildSessionsCard(sessions: readonly SessionRowView[], page = 0)
           { tag: 'div', text: { tag: 'lark_md', content: sessionMetaLine(row) } },
         ],
       },
-    ];
-    if (!row.current) {
-      columns.push({
+      {
         tag: 'column',
         width: 'auto',
         vertical_align: 'center',
         elements: [
           {
             tag: 'button',
-            text: { tag: 'plain_text', content: 'Resume' },
+            text: { tag: 'plain_text', content: 'Details' },
             type: 'default',
-            // The cwd rides along so the resumed chat pins this directory
-            // (the working-directory gate would otherwise refuse turns).
-            value: actionValue({
-              kind: 'resume-session',
-              sessionId: row.sessionId,
-              ...(row.cwd !== undefined ? { cwd: row.cwd } : {}),
-            }),
+            value: actionValue({ kind: 'session-select', sessionId: row.sessionId }),
           },
         ],
-      });
-    }
+      },
+    ];
     elements.push({
       tag: 'column_set',
       flex_mode: 'flow',
@@ -181,5 +197,90 @@ export function buildSessionsCard(sessions: readonly SessionRowView[], page = 0)
     config: { wide_screen_mode: true },
     header: { title: { tag: 'plain_text', content: '🗂️ Sessions' }, template: 'wathet' },
     elements,
+  };
+}
+
+/** One session's detail view content. */
+export interface SessionDetailView {
+  readonly sessionId: string;
+  readonly title: string | undefined;
+  readonly cwd: string | undefined;
+  readonly createdAt: number;
+  readonly messageCount: number;
+  /** The most recent turn's final answer text (truncated), or undefined. */
+  readonly lastSummary: string | undefined;
+  readonly live: boolean;
+  readonly current: boolean;
+  readonly archived: boolean;
+}
+
+/**
+ * Build the session detail card: the session's info plus action buttons —
+ * Resume / Rename / Archive (or Restore when archived) / Export / Back.
+ * Rename and Archive are hidden when the host seam is unavailable (the
+ * bridge decides and passes `canMutate`).
+ */
+export function buildSessionDetailCard(view: SessionDetailView, canMutate: boolean): CardJson {
+  const rows = [
+    `**${stripAngleBrackets(view.title ?? '(untitled)')}**`,
+    `\`${view.sessionId}\``,
+    view.cwd !== undefined ? `cwd: \`${view.cwd}\`` : 'cwd: —',
+    view.createdAt > 0 ? `created: ${ageLabel(view.createdAt)}` : 'created: —',
+    `messages: ${view.messageCount}`,
+    ...(view.lastSummary !== undefined && view.lastSummary !== ''
+      ? ['', `**Last answer**`, view.lastSummary.slice(0, 200)]
+      : []),
+  ];
+  const actions: Array<{
+    readonly tag: 'button';
+    readonly text: { readonly tag: 'plain_text'; readonly content: string };
+    readonly type?: 'primary' | 'danger' | 'default';
+    readonly value: Record<string, string>;
+  }> = [];
+  if (!view.current) {
+    actions.push({
+      tag: 'button',
+      text: { tag: 'plain_text', content: '▶️ Resume' },
+      type: 'primary',
+      value: actionValue({
+        kind: 'resume-session',
+        sessionId: view.sessionId,
+        ...(view.cwd !== undefined ? { cwd: view.cwd } : {}),
+      }),
+    });
+  }
+  if (canMutate) {
+    actions.push({
+      tag: 'button',
+      text: { tag: 'plain_text', content: '✏️ Rename' },
+      value: actionValue({ kind: 'session-rename', sessionId: view.sessionId }),
+    });
+    actions.push({
+      tag: 'button',
+      text: {
+        tag: 'plain_text',
+        content: view.archived ? '♻️ Restore' : '🗄️ Archive',
+      },
+      value: actionValue({ kind: 'session-archive', sessionId: view.sessionId }),
+    });
+  }
+  actions.push({
+    tag: 'button',
+    text: { tag: 'plain_text', content: '📤 Export' },
+    value: actionValue({ kind: 'session-export', sessionId: view.sessionId }),
+  });
+  actions.push({
+    tag: 'button',
+    text: { tag: 'plain_text', content: '⬅ Back' },
+    value: actionValue({ kind: 'panel-back' }),
+  });
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: '🗂️ Session' }, template: 'wathet' },
+    elements: [
+      { tag: 'markdown', content: rows.join('\n') },
+      { tag: 'hr' },
+      { tag: 'action', actions },
+    ],
   };
 }
