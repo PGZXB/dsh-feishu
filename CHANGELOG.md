@@ -153,6 +153,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Streaming card throttle default raised 150 → 400 ms** (user report:
+  cards refreshed too fast on the Feishu mobile client). Patch coalescing
+  (latest-wins) is unchanged; `cardThrottleMs` still overrides.
 
 - **`dsh plugin add` failed under pnpm ≥ 11** (user report): pnpm 11
   blocks dependency build scripts by default, so installing the plugin

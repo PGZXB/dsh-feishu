@@ -56,7 +56,7 @@ export class StreamingCardManager {
     private readonly transport: FeishuTransport,
     options: StreamingCardOptions = {},
   ) {
-    this.throttleMs = options.throttleMs ?? 150;
+    this.throttleMs = options.throttleMs ?? 400;
     this.logger = options.logger ?? { warn: () => {} };
   }
 

@@ -377,7 +377,7 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
   const transportFactory = deps.createTransport ?? defaultTransportFactory(dataDir);
   const transport = transportFactory(credentials, logger);
   const cards = new StreamingCardManager(transport, {
-    throttleMs: config.cardThrottleMs ?? 150,
+    throttleMs: config.cardThrottleMs ?? 400,
     logger,
   });
   // Agents need an explicit provider/model; config overrides win, otherwise
