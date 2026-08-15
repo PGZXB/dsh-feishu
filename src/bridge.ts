@@ -2291,10 +2291,15 @@ export class Bridge {
         break;
       }
       case 'command': {
-        // A panel palette button: commands with a text dimension open their
-        // input sub-view; destructive commands confirm first; everything
-        // else runs the same handler as the slash line (with the same
-        // working-state gate for mutating commands — matrix rule).
+        // A panel palette button. Every path goes through the panel state
+        // machine: commands with a text dimension open their input sub-view,
+        // destructive commands confirm first, and everything else runs the
+        // same handler as the slash line — then the FINAL outcome leaves the
+        // panel as a pure-information result card and the panel returns to
+        // the menu root (the single completion exit, same as panel-confirm
+        // and panel-input-submit). That exit PATCHES the panel card, which is
+        // what keeps Lark from restoring the pre-click (page-1) card — a
+        // button click with no panel patch reverts the panel (user report).
         const name = action.value.name;
         if (name === 'cd' || name === 'group' || name === 'goal' || name === 'feedback') {
           await this.pushPanel(action.chatId, { kind: 'input', command: name });
@@ -2333,7 +2338,8 @@ export class Bridge {
           senderOpenId: action.operatorOpenId,
           rawInput: '',
         });
-        await this.replyCommandResult(action.chatId, result);
+        await this.replyResultCard(action.chatId, result);
+        await this.popToMenu(action.chatId);
         break;
       }
       case 'resume-session': {

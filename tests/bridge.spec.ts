@@ -2392,6 +2392,45 @@ describe('panel command palette', () => {
     expect(h.transport.sentCards).toHaveLength(1);
   });
 
+  it('a direct-result button on page 2 keeps the panel on page 2 (no pre-click revert)', async () => {
+    const h = makeHarness();
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel' },
+    });
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel-page', page: '1' },
+    });
+    // help/status/plan are direct-result commands: no input/confirm/picker
+    // sub-view. The state-machine completion exit MUST patch the panel card
+    // back to the menu root — that patch is what stops Lark from restoring
+    // the pre-click (page-1) card (user report: clicking help on page 2
+    // jumped back to page 1).
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'command', name: 'help' },
+    });
+    const afterHelp = h.transport.updatedCards.at(-1);
+    expect(
+      afterHelp?.elements.some(
+        (el) =>
+          el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 2/2'),
+      ),
+    ).toBe(true);
+    // The panel card itself was never re-posted — only the inert result card
+    // is new (panel card + result card).
+    expect(h.transport.sentCards).toHaveLength(2);
+    // The outcome left the panel as an inert result card (panel principle).
+    expect(resultCardTexts(h).some((t) => t.includes('dsh-feishu commands'))).toBe(true);
+  });
+
   it('a text-input command opens the input form; submit runs it with the value', async () => {
     const h = makeHarness();
     const { mkdirSync } = await import('node:fs');
@@ -2436,16 +2475,20 @@ describe('panel command palette', () => {
       operatorOpenId: 'ou_user',
       value: { kind: 'command', name: 'help' },
     });
-    expect(h.transport.sentTexts.some((t) => t.text.includes('dsh-feishu commands'))).toBe(true);
+    // The outcome leaves the panel as a pure-information result card and the
+    // panel returns to the menu root (state-machine completion exit; a fresh
+    // panel posts its first card here).
+    expect(resultCardTexts(h).some((t) => t.includes('dsh-feishu commands'))).toBe(true);
+    expect(h.transport.sentCards.at(-1)?.header?.title.content).toBe('⚙️ dsh-feishu panel');
     // clear is destructive: the panel button first shows the confirm view
-    // (first panel render posts a card)…
+    // (the panel card already exists after the help exit, so it updates)…
     await h.bridge.handleCardAction({
       messageId: 'mem-1',
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'command', name: 'clear' },
     });
-    const confirmCard = h.transport.sentCards.at(-1);
+    const confirmCard = h.transport.updatedCards.at(-1);
     expect(JSON.stringify(confirmCard?.elements)).toContain('Start new chat');
     // …and the confirm button runs the command (no session → nothing to clear).
     await h.bridge.handleCardAction({
@@ -2491,7 +2534,7 @@ describe('panel command palette', () => {
       operatorOpenId: 'ou_user',
       value: { kind: 'command', name: 'help' },
     });
-    expect(h.transport.sentTexts.some((t) => t.text.includes('dsh-feishu commands'))).toBe(true);
+    expect(resultCardTexts(h).some((t) => t.includes('dsh-feishu commands'))).toBe(true);
   });
 
   it('an unknown command button is logged and ignored', async () => {
@@ -2770,7 +2813,9 @@ describe('stateful web wrappers (/permission picker, /plan toggle)', () => {
       operatorOpenId: 'ou_user',
       value: { kind: 'command', name: 'plan' },
     });
-    expect(h.transport.sentTexts.some((t) => t.text.includes('Plan mode on'))).toBe(true);
+    expect(resultCardTexts(h).some((t) => t.includes('Plan mode on'))).toBe(true);
+    // The completion exit pops to the menu root (a fresh panel posts here).
+    expect(h.transport.sentCards.at(-1)?.header?.title.content).toBe('⚙️ dsh-feishu panel');
   });
 
   it('/plan reports queued wording when the controller queues the flip', async () => {

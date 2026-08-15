@@ -1006,8 +1006,8 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         ) ?? [];
       expect(commandPayloads.length).toBeGreaterThan(0);
 
-      // Tap the /status button: the status text arrives (same handler as
-      // typing /status).
+      // Tap the /status button: the outcome arrives as a result card (the
+      // state-machine completion exit posts an inert card and pops to menu).
       writeAction({
         messageId: 'mem-2',
         chatId,
@@ -1015,8 +1015,8 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         value: { kind: 'command', name: 'status' },
       });
       await waitFor(
-        'the status command reply',
-        () => readOutbox().some((r) => r.kind === 'text' && r.text?.includes(`chat: ${chatId}`)),
+        'the status command result card',
+        () => resultCardTexts().some((t) => t.includes(`chat: ${chatId}`)),
         30_000,
       );
     } catch (error) {

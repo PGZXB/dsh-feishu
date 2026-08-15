@@ -447,10 +447,16 @@ fresh chat posts a new card and resets the stack to `[menu(page 0)]`.
 - **Result cards (the panel principle, user requirement).** Panel actions
   whose outcome is FINAL leave the panel as a NEW pure-information card
   (`✅ Done` / `⚠️ Action failed`, no buttons/inputs): repo/model/permission
-  picks, rename, archive, input/confirm submissions, resume, and export.
-  Intermediate steps (input forms, confirm prompts, pickers) stay inside the
-  panel card and update in place — a button that needs more interaction
-  jumps the panel, a button that needs none notifies with an inert card.
+  picks, rename, archive, input/confirm submissions, resume, export — and
+  every palette command without a sub-view (help, status, plan, surface
+  status, …). Intermediate steps (input forms, confirm prompts, pickers)
+  stay inside the panel card and update in place — a button that needs more
+  interaction jumps the panel, a button that needs none notifies with an
+  inert card. ALL completions share one exit (`replyResultCard` +
+  `popToMenu`): the exit PATCHES the panel card back to the menu root,
+  which is what keeps Lark from restoring the pre-click (page-1) card when
+  the callback carried no panel update (user report: a direct-result button
+  on page 2 jumped back to page 1).
 
 ### 8.7 State-machine matrix for the new actions
 

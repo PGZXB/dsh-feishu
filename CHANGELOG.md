@@ -203,10 +203,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   user requirement).** A panel action whose outcome is FINAL posts a NEW
   inert card (`✅ Done` / `⚠️ Action failed`, no buttons/inputs) — repo/
   model/permission picks, rename, archive, input/confirm submissions,
-  resume, and export. Intermediate steps (input forms, confirm prompts,
-  pickers) stay inside the panel card and update in place: a button that
-  needs more interaction jumps the panel, a button that needs none
-  notifies with a new card.
+  resume, export, and every palette command without a sub-view (help,
+  status, plan, surface status, …). Intermediate steps (input forms,
+  confirm prompts, pickers) stay inside the panel card and update in place:
+  a button that needs more interaction jumps the panel, a button that needs
+  none notifies with a new card. ALL completions share one exit
+  (`replyResultCard` + `popToMenu`) — the exit PATCHES the panel card back
+  to the menu root, which keeps Lark from restoring the pre-click (page-1)
+  card when a direct-result button click carried no panel update (user
+  report: clicking help on page 2 jumped back to page 1; regression test).
 - **Streaming card throttle default raised 150 → 400 ms** (user report:
   cards refreshed too fast on the Feishu mobile client). Patch coalescing
   (latest-wins) is unchanged; `cardThrottleMs` still overrides.
