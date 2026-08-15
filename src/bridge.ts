@@ -2179,8 +2179,24 @@ export class Bridge {
         break;
       }
       case 'panel-back': {
-        // POP to the menu root (the panel state machine's parent view).
-        await this.showPanel(action.chatId, { kind: 'menu', page: 0 });
+        // POP to the parent view (stack semantics): a session detail pops
+        // to the session list, a rename input pops to its detail, everything
+        // else pops to the menu root.
+        const view = this.panelViewFor(action.chatId);
+        if (view.kind === 'session-detail') {
+          await this.showPanel(action.chatId, { kind: 'sessions', page: 0, archived: false });
+        } else if (
+          view.kind === 'input' &&
+          view.command === 'rename-session' &&
+          view.sessionId !== undefined
+        ) {
+          await this.showPanel(action.chatId, {
+            kind: 'session-detail',
+            sessionId: view.sessionId,
+          });
+        } else {
+          await this.showPanel(action.chatId, { kind: 'menu', page: 0 });
+        }
         break;
       }
       case 'panel-input-submit': {

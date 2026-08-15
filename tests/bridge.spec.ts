@@ -2039,6 +2039,184 @@ describe('session commands (/sessions /resume /clear /new)', () => {
 });
 
 describe('panel command palette', () => {
+  it('panel-back pops to the PARENT view (stack semantics)', async () => {
+    const h = makeHarness({ listSessions: async () => sessionRows() });
+    // menu → sessions (via the Sessions button) → detail → back → sessions.
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'command', name: 'sessions' },
+    });
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'session-select', sessionId: 'feishu-session-9' },
+    });
+    expect(h.transport.updatedCards.at(-1)?.header?.title.content).toBe('🗂️ Session');
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel-back' },
+    });
+    // Back from detail → the sessions list.
+    expect(h.transport.updatedCards.at(-1)?.header?.title.content).toBe('🗂️ Sessions');
+    // Back from the list → menu.
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel-back' },
+    });
+    expect(h.transport.updatedCards.at(-1)?.header?.title.content).toBe('⚙️ dsh-feishu panel');
+    // Back from the menu → still the menu (no-op).
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel-back' },
+    });
+    expect(h.transport.updatedCards.at(-1)?.header?.title.content).toBe('⚙️ dsh-feishu panel');
+  });
+
+  it('panel-page is ignored outside the menu root', async () => {
+    const h = makeHarness({ listSessions: async () => sessionRows() });
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'command', name: 'cd' },
+    });
+    const before = h.transport.updatedCards.length;
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel-page', page: '1' },
+    });
+    expect(h.transport.updatedCards.length).toBe(before);
+    // The cd input card (first panel render) is untouched.
+    expect(h.transport.sentCards.at(-1)?.header?.title.content).toBe('📁 Change working directory');
+  });
+
+  it('an empty input submit runs the command with an empty argument', async () => {
+    const h = makeHarness();
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'command', name: 'cd' },
+    });
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel-input-submit', command: 'cd' },
+      formValue: { path: '' },
+    });
+    // /cd with no argument → usage error, and the panel returns to menu.
+    expect(h.transport.sentTexts.some((t) => t.text.includes('usage: /cd'))).toBe(true);
+    expect(h.transport.updatedCards.at(-1)?.header?.title.content).toBe('⚙️ dsh-feishu panel');
+  });
+
+  it('archive failure notifies and returns to the active list', async () => {
+    const h = makeHarness({
+      listSessions: async () => sessionRows(),
+      apiProxy: {
+        sessions: { rename: async () => {} },
+        workspace: {
+          list: async () => ({ archivedSessionIds: [] }),
+          archiveSession: async () => {
+            throw new Error('archive backend down');
+          },
+        },
+      },
+    });
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'command', name: 'sessions' },
+    });
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'session-select', sessionId: 'feishu-session-9' },
+    });
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'session-archive', sessionId: 'feishu-session-9' },
+    });
+    expect(h.transport.sentTexts.some((t) => t.text.includes('Archiving failed'))).toBe(true);
+    expect(h.transport.updatedCards.at(-1)?.header?.title.content).toBe('🗂️ Sessions');
+  });
+
+  it('the archived toggle filters the list by the host archive set', async () => {
+    const h = makeHarness({
+      listSessions: async () => sessionRows(),
+      apiProxy: {
+        sessions: { rename: async () => {} },
+        workspace: {
+          list: async () => ({ archivedSessionIds: ['feishu-session-9'] }),
+          archiveSession: async () => {},
+        },
+      },
+    });
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'command', name: 'sessions' },
+    });
+    // Active view hides the archived session.
+    const active = h.transport.sentCards.at(-1);
+    expect(JSON.stringify(active?.elements)).not.toContain('feishu-session-9');
+    // Toggle to archived: only the archived session shows.
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'sessions-archived-toggle' },
+    });
+    const archived = h.transport.updatedCards.at(-1);
+    expect(JSON.stringify(archived?.elements)).toContain('feishu-session-9');
+    expect(JSON.stringify(archived?.elements)).not.toContain('feishu-session-1');
+  });
+
+  it('an unknown session detail renders an unknown card and export failure notifies', async () => {
+    const h = makeHarness({
+      listSessions: async () => sessionRows(),
+      readSession: async () => {
+        throw new Error('corrupt log');
+      },
+    });
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'command', name: 'sessions' },
+    });
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'session-select', sessionId: 'nope' },
+    });
+    expect(JSON.stringify(h.transport.updatedCards.at(-1)?.elements)).toContain('(unknown)');
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'session-export', sessionId: 'nope' },
+    });
+    expect(h.transport.sentTexts.some((t) => t.text.includes('session export failed'))).toBe(true);
+  });
+
   it('includes every registered command as a button', async () => {
     const h = makeHarness();
     await h.bridge.handleCardAction({

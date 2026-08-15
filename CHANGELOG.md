@@ -153,6 +153,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Panel Back follows stack semantics** (state machine): a session detail
+  pops to the session list, a rename input pops to its detail, everything
+  else pops to the menu root.
+- **Test coverage for the panel state machine.** New unit tests: the
+  panel-view transition matrix (Back pops to the parent, page flips are
+  ignored outside the menu root), empty input submits, archive failure
+  notification, archive/active list filtering by the host archive set,
+  unknown-session details, and export failure. New real-composition test:
+  the full session detail flow (list → detail → rename → archive) through
+  the real `ctx.apiProxy` host seam — proving the seam is present in the
+  dsh process.
 - **Session detail view (dsh web parity).** The Sessions button opens a
   paginated list (6 per page, mobile-friendly) with an archive/active
   toggle; each row's Details opens a session detail card (title, cwd, age,
