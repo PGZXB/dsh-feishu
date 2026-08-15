@@ -6,10 +6,20 @@ import { describe, expect, it } from 'vitest';
 import {
   ageLabel,
   buildSessionsCard,
-  SESSION_PAGE_SIZE,
+  SESSION_SELECT_MAX,
   type SessionRowView,
   sessionRowLine,
 } from '../../src/cards/session-list.js';
+import type { CardElement } from '../../src/feishu/types.js';
+
+/** The option rows of the sessions dropdown (a no-op when the element is
+ *  not the select action — tests pass the filtered element). */
+function dropdownOptions(element: CardElement | undefined) {
+  if (element === undefined || !('actions' in element)) return [];
+  const action = element.actions[0];
+  if (action === undefined || action.tag !== 'select_static') return [];
+  return action.options;
+}
 
 function row(overrides: Partial<SessionRowView> = {}): SessionRowView {
   return {
@@ -78,30 +88,27 @@ describe('buildSessionsCard', () => {
     ).toBe(true);
   });
 
-  it('renders one row per session with a Details button and the archive toggle', () => {
+  it('renders a dropdown with one option per session and the archive toggle', () => {
     const card = buildSessionsCard([
       row({ sessionId: 'a', title: 'A' }),
       row({ sessionId: 'b', title: 'B', current: true }),
     ]);
-    const rows = card.elements.filter((el) => el.tag === 'column_set');
-    expect(rows).toHaveLength(2);
-    // Every row carries a Details button with the session id payload.
-    const expectedIds = ['a', 'b'];
-    rows.forEach((r, index) => {
-      const buttons =
-        r && 'columns' in r
-          ? r.columns.flatMap((column) =>
-              column.elements.filter((element) => element.tag === 'button'),
-            )
-          : [];
-      expect(buttons).toHaveLength(1);
-      expect(buttons[0] && 'value' in buttons[0] ? buttons[0].value.kind : undefined).toBe(
-        'session-select',
-      );
-      expect(buttons[0] && 'value' in buttons[0] ? buttons[0].value.sessionId : undefined).toBe(
-        expectedIds[index],
-      );
+    const selects = card.elements.filter(
+      (el) => el.tag === 'action' && 'actions' in el && el.actions[0]?.tag === 'select_static',
+    );
+    expect(selects).toHaveLength(1);
+    const select = selects[0];
+    expect(select && 'actions' in select ? select.actions[0] : undefined).toMatchObject({
+      tag: 'select_static',
+      placeholder: { tag: 'plain_text', content: 'Choose a session…' },
     });
+    const options = dropdownOptions(select);
+    expect(options.map((o) => o.value)).toEqual(['a', 'b']);
+    // The current/live badges survive in the option label (row b is current).
+    expect(options.map((o) => o.text.content)).toEqual(['A · a', 'B ★ · b']);
+    // The marker stamps the dropdown kind; the chosen id arrives in `option`.
+    const marker = select && 'actions' in select ? select.actions[0]?.value : undefined;
+    expect(marker).toMatchObject({ kind: 'session-select' });
     // The archive toggle row is present.
     expect(
       card.elements.some(
@@ -116,42 +123,34 @@ describe('buildSessionsCard', () => {
       ),
     ).toBe(true);
     // The archived view flips the toggle label.
-    const archived = buildSessionsCard([row({ sessionId: 'a', title: 'A' })], 0, true);
+    const archived = buildSessionsCard([row({ sessionId: 'a', title: 'A' })], true);
     expect(JSON.stringify(archived.elements)).toContain('Active sessions');
   });
 
-  it('paginates rows and page nav at bounds', () => {
-    const many = Array.from({ length: SESSION_PAGE_SIZE + 5 }, (_, index) =>
+  it('caps the dropdown at SESSION_SELECT_MAX and notes the remainder, with no page nav', () => {
+    const many = Array.from({ length: SESSION_SELECT_MAX + 5 }, (_, index) =>
       row({ sessionId: `s${index}`, title: `S${index}` }),
     );
-    const card = buildSessionsCard(many, 0);
+    const card = buildSessionsCard(many);
+    const selects = card.elements.filter(
+      (el) => el.tag === 'action' && 'actions' in el && el.actions[0]?.tag === 'select_static',
+    );
+    const options = dropdownOptions(selects[0]);
+    expect(options).toHaveLength(SESSION_SELECT_MAX);
     expect(
       card.elements.some(
         (el) =>
-          el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 1/2'),
+          el.tag === 'note' &&
+          'elements' in el &&
+          el.elements[0]?.content.includes(`${many.length - SESSION_SELECT_MAX} more`),
       ),
     ).toBe(true);
+    // The dropdown view has exactly the archive toggle and Back — no page nav.
     const nav = card.elements.flatMap((el) =>
       el.tag === 'action'
         ? el.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
         : [],
     );
-    // Row 0: the archive toggle plus the Next nav button plus Back.
-    expect(nav).toEqual(['🗄️ Archived', 'Next ›', '⬅ Back']);
-    const last = buildSessionsCard(many, 1);
-    const lastNav = last.elements.flatMap((el) =>
-      el.tag === 'action'
-        ? el.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
-        : [],
-    );
-    expect(lastNav).toEqual(['🗄️ Archived', '‹ Prev', '⬅ Back']);
-    // Out-of-range pages clamp to the last page.
-    const clamped = buildSessionsCard(many, 99);
-    expect(
-      clamped.elements.some(
-        (el) =>
-          el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 2/2'),
-      ),
-    ).toBe(true);
+    expect(nav).toEqual(['🗄️ Archived', '⬅ Back']);
   });
 });

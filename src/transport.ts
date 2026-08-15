@@ -60,7 +60,7 @@ FEISHU_HTTP.interceptors.request.use(
   { synchronous: true },
 );
 FEISHU_HTTP.interceptors.response.use((resp) => {
-  if ((resp.config as unknown as { $return_headers?: boolean })['$return_headers']) {
+  if ((resp.config as unknown as { $return_headers?: boolean }).$return_headers) {
     return { data: resp.data, headers: resp.headers };
   }
   return resp.data;

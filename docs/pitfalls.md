@@ -200,8 +200,9 @@ The harness sandbox (and this checkout's environment) has specific rules:
 - The surface refuses turns in a chat with no pinned working directory
   (/repo or /cd); `defaultCwd` is a fallback, never an implicit choice.
   New chat-state flows must respect it: `/resume` adopts the resumed
-  session's cwd (the /sessions Resume button carries it in its value; a
-  typed `/resume` looks it up from the session list), or the resumed chat
+  session's cwd (the session detail's Resume button carries it in its
+  value; a typed `/resume` looks it up from the session list), or the
+  resumed chat
   is stuck behind the gate.
 
 ## Integration-test traps

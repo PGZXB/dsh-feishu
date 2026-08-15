@@ -181,7 +181,7 @@ harness 沙箱（以及本 checkout 的环境）有一些特定规则：
 
 - 在没有固定工作目录（/repo 或 /cd）的聊天中，表面拒绝轮次；
   `defaultCwd` 是回退，绝不是隐式选择。新的聊天状态流程必须尊重它：
-  `/resume` 采用被恢复会话的 cwd（/sessions 的 Resume 按钮在它的 value
+  `/resume` 采用被恢复会话的 cwd（会话详情页的 Resume 按钮在它的 value
   中携带它；键入的 `/resume` 从会话列表中查找它），否则被恢复的聊天会
   卡在门禁后面。
 

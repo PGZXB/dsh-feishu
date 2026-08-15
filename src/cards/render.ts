@@ -101,7 +101,6 @@ export type SurfaceAction =
   | { readonly kind: 'command'; readonly name: string }
   | { readonly kind: 'resume-session'; readonly sessionId: string }
   | { readonly kind: 'panel-page'; readonly page: string }
-  | { readonly kind: 'sessions-page'; readonly page: string }
   // `preset` is optional: the dropdown stamps the marker only (the choice
   // arrives in the callback's `option`); the legacy button carried it.
   | { readonly kind: 'permission-pick'; readonly preset?: string }
@@ -118,8 +117,10 @@ export type SurfaceAction =
   | { readonly kind: 'panel-back' }
   | { readonly kind: 'panel-input-submit'; readonly command: string }
   | { readonly kind: 'panel-confirm'; readonly command: string }
-  // Session detail sub-view (Phase 2).
-  | { readonly kind: 'session-select'; readonly sessionId: string }
+  // Session detail sub-view (Phase 2). `sessionId` is optional: the
+  // sessions dropdown stamps the marker only (the choice arrives in the
+  // callback's `option`); the legacy button carried the id.
+  | { readonly kind: 'session-select'; readonly sessionId?: string }
   | { readonly kind: 'sessions-archived-toggle' }
   | { readonly kind: 'session-archive'; readonly sessionId: string }
   | { readonly kind: 'session-rename'; readonly sessionId: string }
@@ -811,6 +812,9 @@ export function buildInputCard(options: PanelInputCardOptions): CardJson {
             tag: 'button',
             text: { tag: 'plain_text', content: options.submitLabel },
             type: 'primary',
+            // Feishu requires a name for form-container buttons (ErrCode
+            // 200530, user-tested).
+            name: 'panel-input-submit',
             action_type: 'form_submit',
             value: actionValue({ kind: 'panel-input-submit', command: options.command }),
           },
@@ -860,6 +864,49 @@ export function buildConfirmCard(options: {
         ],
       },
     ],
+  };
+}
+
+/**
+ * A pure-information panel sub-view card (no interactive controls — e.g. a
+ * text-input step that awaits the next chat message, or a notice). Feishu's
+ * v1 layout rejects `form`/`input` (HTTP 400 on send — user-tested), so
+ * text entry goes through the chat message instead.
+ */
+export function buildPanelNoticeCard(options: {
+  readonly title: string;
+  readonly hint: string;
+}): CardJson {
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: options.title }, template: 'wathet' },
+    elements: [
+      { tag: 'markdown', content: options.hint },
+      { tag: 'hr' },
+      {
+        tag: 'action',
+        actions: [
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '⬅ Back' },
+            value: actionValue({ kind: 'panel-back' }),
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * A pure-information RESULT card (no buttons/inputs — the final outcome of a
+ * panel action posts as a NEW card, per the panel principle: intermediate
+ * steps live in the panel card, results leave it as an inert card).
+ */
+export function buildResultCard(title: string, text: string, error = false): CardJson {
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: title }, template: error ? 'red' : 'green' },
+    elements: [{ tag: 'markdown', content: text }],
   };
 }
 

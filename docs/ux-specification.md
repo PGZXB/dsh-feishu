@@ -299,7 +299,7 @@ palette idea). `category` groups the panel palette.
 | `/cd <path>` | session | set the chat's working directory, rebind a fresh session |
 | `/repo [<path>]` | session | project picker card (dropdown ≤ 50, buttons + pages above) |
 | `/group [<name>]` | chat | create a group with the bot and sender |
-| `/sessions` | session | session list card (title/id/cwd/age/live/saved), paginated, per-row Resume buttons |
+| `/sessions` | session | sessions picker card: a **dropdown** of saved sessions (title · id, ★ current / ● live badges); picking opens the session detail sub-view (Resume / Rename / Archive / Export) |
 | `/feishu-status` | system | **surface diagnostic card**: app id, live long-connection state (`✅ ready` / `⚠️ reconnecting` / `❌ error`, `🧪 memory` for the test transport), session count, last inbound activity. Read-only (allowed while a turn runs) |
 | `/schedule` | system | list this chat's **active reminders** (folding the session log with the dsh-schedule pure functions; degraded to a hint when the package is absent). Reminders are created in chat by the agent through its `schedule_create`/`schedule_delete`/`schedule_list` tools — no surface command needed |
 | `/model` | system | **model picker card** (catalog from `ctx.llm` `listProviders` × `listModels`, current preselected); a pick sets the default for new sessions. `/model <provider>/<model>` sets it directly. Surface-native — the web `/model` is a client popup with no host command |
@@ -388,14 +388,23 @@ session rebind/remint can never corrupt the live card.
 
 ### 8.5 Session lifecycle commands
 
-- `/sessions` rows are two lines: line 1 = `**title** · age · badges`
-  (the ★ current marker inline), line 2 = `` `id` · cwd `` (quiet identity);
-  page indicator is a `note`.
+- `/sessions` is a **dropdown picker** (mobile-friendly, user requirement —
+  no long list, no pagination): a `select_static` whose options are the
+  sessions (`title ★ ● · id`), capped at `SESSION_SELECT_MAX = 20` with a
+  `note` explaining the remainder. Selecting an option opens the **session
+  detail sub-view** inside the panel card (stack push); the choice arrives
+  in the callback's `option` field.
 - `/sessions` + `/resume` data: `ctx.sessionQuery` (mounted by dsh-base's
   `session-query-sqlite`), `listSessions()` newest-first + batch
   `readTitleSnapshots()` for titles. When the service is absent the surface
   degrades to a bound-sessions-only listing (loud log).
-- Resume flow (shared by `/resume <id>` and the picker's Resume button):
+- Session detail sub-view (`🗂️ Session`): the session's info (title, id,
+  cwd, created age, message count, last answer) plus **Resume** (hidden for
+  the current session), **Rename**, **Archive** (or **Restore** when
+  archived — the host `workspace.archiveSession` is reversible), **Export**,
+  and **Back** (stack pop). Rename/Archive exist only when the host
+  `apiProxy` seam is mounted (they degrade silently otherwise).
+- Resume flow (shared by `/resume <id>` and the detail's Resume button):
   the chat must be idle; the target session must not be running in another
   chat ("has an active turn — stop it in its chat first"); resuming the
   chat's own session reads "already active". Then `SessionMap.set` rebinds
@@ -408,21 +417,40 @@ session rebind/remint can never corrupt the live card.
   card, no copy/retry targets). The old session stays persisted → still
   listed by `/sessions` and resumable.
 
-### 8.6 Panel palette
+### 8.6 Panel palette and the panel state machine
 
-`buildPanelCard(statusLine, running, commands, page)`: the core row
-(Stop while running / Retry / Copy) stays first; below it the full command
-palette — all 16 commands as buttons, grouped by category with emoji
-headers (`🧩 Session` / `💬 Chat` / `⚙️ System`), `PANEL_PAGE_SIZE = 8`
-buttons per page, a quiet `note` page indicator (`Commands · page 1/2`),
-and ◀️/▶️ nav hidden at the bounds. Each category renders as its own block
-— the header line followed by THAT category's button row (headers never
-stack before all buttons). Each button stamps `{kind:'command',
-name}` and executes the same handler as the slash line. The status line
-carries the chat's session context (`session `id` · `cwd``) so a tap
-always shows what the buttons act on. The panel is stateless: every
-open/pager posts a fresh card built from the current authoritative state
-(no stale-guard needed).
+The panel is a **state machine**, not a stateless re-post: one authoritative
+view stack per chat (`PanelView[]`, menu root at the bottom) and one render
+path (`renderPanelView` → the single panel card). A button PUSHES a sub-view
+(`input` form, `confirm`, `sessions`, `session-detail`, `picker`); Back POPS;
+completion/refusal pops to the menu root (or back to the detail after a
+rename). Every transition updates the SAME panel card in place (patch); when
+an update fails the card is reposted and the new id recorded. `/panel` from a
+fresh chat posts a new card and resets the stack to `[menu(page 0)]`.
+
+- Menu (`⚙️ dsh-feishu panel`): `buildPanelCard(statusLine, running,
+  commands, page)` — the core row (Stop while running / Retry / Copy) stays
+  first; below it the full command palette, grouped by category with emoji
+  headers (`🧩 Session` / `💬 Chat` / `⚙️ System`), `PANEL_PAGE_SIZE = 8`
+  buttons per page, a quiet `note` page indicator (`Commands · page 1/2`),
+  and ◀️/▶️ nav hidden at the bounds. Each button stamps `{kind:'command',
+  name}` and executes the same handler as the slash line. The status line
+  carries the chat's session context (`session `id` · `cwd``).
+- **Input sub-view** (`📁 Change working directory`, `👥 Create group`,
+  `🎯 Goal`, `💬 Feedback`, `✏️ Rename session`): a root-level `form` with
+  one `input` and a `form_submit` button that carries a `name` (Feishu
+  rejects nameless form buttons — ErrCode 200530). The label lives outside
+  the form; submitting runs the command with the typed value and pops to
+  the menu.
+- **Confirm sub-view** (`✨ New chat`, `🧹 Compact`): the destructive action
+  states its consequence; confirming runs the command and pops to the menu.
+- **Result cards (the panel principle, user requirement).** Panel actions
+  whose outcome is FINAL leave the panel as a NEW pure-information card
+  (`✅ Done` / `⚠️ Action failed`, no buttons/inputs): repo/model/permission
+  picks, rename, archive, input/confirm submissions, resume, and export.
+  Intermediate steps (input forms, confirm prompts, pickers) stay inside the
+  panel card and update in place — a button that needs more interaction
+  jumps the panel, a button that needs none notifies with an inert card.
 
 ### 8.7 State-machine matrix for the new actions
 
@@ -431,7 +459,7 @@ open/pager posts a fresh card built from the current authoritative state
 | command (read-only) | allowed | **allowed** | allowed | allowed | allowed |
 | command (mutating) | allowed | **refused** "stop first" | allowed | allowed | allowed |
 | resume-session | allowed* | **refused** | allowed* | allowed* | allowed* |
-| panel-page / sessions-page | stateless page re-send (no card-state transition) | | | | |
+| panel-page | stateless page re-send (no card-state transition) | | | | |
 
 \* plus target-running → refused; target == current → already-active.
 All cells ACK `{}` and end in a consistent state through `syncCard`

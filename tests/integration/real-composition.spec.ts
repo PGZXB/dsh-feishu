@@ -127,6 +127,22 @@ async function pinWorkingDir(chatId: string): Promise<void> {
   );
 }
 
+/** The markdown body of every RESULT card posted (header ✅/⚠️) — panel
+ *  action outcomes now leave the panel as an inert card (user principle:
+ *  intermediate steps live in the panel, results notify as a new card). */
+function resultCardTexts(): string[] {
+  return readOutbox()
+    .filter((r) => {
+      const title = r.card?.header?.title.content;
+      return title === '✅ Done' || title === '⚠️ Action failed';
+    })
+    .flatMap((r) =>
+      (r.card?.elements ?? [])
+        .filter((el) => el.tag === 'markdown' && 'content' in el)
+        .map((el) => (el as { readonly content: string }).content),
+    );
+}
+
 /** Drop one inbound message into the message channel. */
 /** Drop a GROUP message with the given mention open ids (mention-gate
  *  tests). An un-@ group message is ignored under the default `always`
@@ -869,11 +885,8 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         value: { kind: 'resume-session', sessionId: sessionA },
       });
       await waitFor(
-        'the resume confirmation text',
-        () =>
-          readOutbox().some(
-            (r) => r.kind === 'text' && r.text?.includes(`Resumed session ${sessionA}`),
-          ),
+        'the resume confirmation card',
+        () => resultCardTexts().some((t) => t.includes(`Resumed session ${sessionA}`)),
         30_000,
       );
 
@@ -1109,19 +1122,17 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         30_000,
       );
 
-      // The transaction settles: either a "Compacted …" result message or
-      // the failure notice — never a permanently working card.
+      // The transaction settles: either a "Compacted …" result card or the
+      // failure notice — never a permanently working card.
       await waitFor(
         'the compaction outcome',
         () =>
-          readOutbox().some(
-            (r) =>
-              r.chatId === chatId &&
-              r.kind === 'text' &&
-              (r.text?.includes('Compacted') ||
-                r.text?.includes('No compactable history') ||
-                r.text?.includes('Compaction failed') ||
-                r.text?.includes('unavailable on this deployment')),
+          resultCardTexts().some(
+            (t) =>
+              t.includes('Compacted') ||
+              t.includes('No compactable history') ||
+              t.includes('Compaction failed') ||
+              t.includes('unavailable on this deployment'),
           ),
         90_000,
       );
@@ -1480,9 +1491,8 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         option: 'read-only',
       });
       await waitFor(
-        'the preset switch text',
-        () =>
-          readOutbox().some((r) => r.kind === 'text' && r.text?.includes('switched to read-only')),
+        'the preset switch result card',
+        () => resultCardTexts().some((t) => t.includes('switched to read-only')),
         30_000,
       );
     } catch (error) {
@@ -1615,12 +1625,10 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         option: 'deepseek-official/deepseek-v4-pro',
       });
       await waitFor(
-        'the model-switch text',
+        'the model-switch result card',
         () =>
-          readOutbox().some(
-            (r) =>
-              r.kind === 'text' &&
-              r.text?.includes('Default model set to deepseek-official · deepseek-v4-pro'),
+          resultCardTexts().some((t) =>
+            t.includes('Default model set to deepseek-official · deepseek-v4-pro'),
           ),
         30_000,
       );
@@ -1636,12 +1644,10 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         option: 'deepseek-official/deepseek-v4-flash',
       });
       await waitFor(
-        'the model-restore text',
+        'the model-restore result card',
         () =>
-          readOutbox().some(
-            (r) =>
-              r.kind === 'text' &&
-              r.text?.includes('Default model set to deepseek-official · deepseek-v4-flash'),
+          resultCardTexts().some((t) =>
+            t.includes('Default model set to deepseek-official · deepseek-v4-flash'),
           ),
         30_000,
       );
@@ -3045,9 +3051,8 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         value: { kind: 'panel-confirm', command: 'compact' },
       });
       await waitFor(
-        'the no-compactable-history reply',
-        () =>
-          readOutbox().some((r) => r.kind === 'text' && r.text?.includes('No compactable history')),
+        'the no-compactable-history result card',
+        () => resultCardTexts().some((t) => t.includes('No compactable history')),
         60_000,
       );
       // The chat was not wedged: a command still works.
@@ -3373,26 +3378,28 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
           ),
         30_000,
       );
-      // Open the first row's detail (any session).
+      // Open the first row's detail (any session). The sessions view is a
+      // dropdown: the marker stamps the kind, the chosen id arrives in the
+      // callback `option`.
       const listCard = [...readOutbox()]
         .reverse()
         .find((r) => r.card?.header?.title.content === '🗂️ Sessions');
       const list = listCard?.card;
-      const detailsButton = list?.elements
-        .flatMap((el) => (el.tag === 'column_set' ? el.columns : []))
-        .flatMap((column) => column.elements)
-        .find((element) => element.tag === 'button');
-      expect(detailsButton && 'value' in detailsButton ? detailsButton.value.kind : undefined).toBe(
+      const dropdown = list?.elements
+        .flatMap((el) => (el.tag === 'action' ? el.actions : []))
+        .find((a) => a.tag === 'select_static');
+      expect(dropdown && 'value' in dropdown ? dropdown.value.kind : undefined).toBe(
         'session-select',
       );
-      const sessionId =
-        detailsButton && 'value' in detailsButton ? detailsButton.value.sessionId : undefined;
-      expect(sessionId).toBeDefined();
+      const firstOption =
+        dropdown && 'options' in dropdown ? dropdown.options[0]?.value : undefined;
+      expect(firstOption).toBeDefined();
       writeAction({
         messageId: listCard?.messageId ?? '',
         chatId,
         operatorOpenId: 'ou_mock',
-        value: { kind: 'session-select', sessionId: sessionId ?? '' },
+        value: { kind: 'session-select' },
+        option: firstOption ?? '',
       });
       await waitFor(
         'the session detail card',
@@ -3441,13 +3448,13 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
           value: {
             kind: 'panel-input-submit',
             command: 'rename-session',
-            sessionId: sessionId ?? '',
+            sessionId: firstOption ?? '',
           },
           formValue: { title: 'Renamed by integration test' },
         });
         await waitFor(
           'the rename confirmation',
-          () => readOutbox().some((r) => r.kind === 'text' && r.text?.includes('Renamed session')),
+          () => resultCardTexts().some((t) => t.includes('Renamed session')),
           30_000,
         );
         // Back to detail → Archive.
@@ -3477,7 +3484,7 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         });
         await waitFor(
           'the archive confirmation',
-          () => readOutbox().some((r) => r.kind === 'text' && r.text?.includes('Archived session')),
+          () => resultCardTexts().some((t) => t.includes('Archived session')),
           30_000,
         );
       } else {

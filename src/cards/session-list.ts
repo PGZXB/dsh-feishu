@@ -10,7 +10,7 @@
  * @module @dsh-feishu/dsh-feishu/cards/session-list
  */
 
-import type { CardElement, CardJson, ColumnContainer } from '../feishu/types.js';
+import type { CardElement, CardJson } from '../feishu/types.js';
 import { actionValue, stripAngleBrackets } from './render.js';
 
 /** One `/sessions` row (the surface projection of a dsh session). */
@@ -30,8 +30,8 @@ export interface SessionRowView {
   readonly current: boolean;
 }
 
-/** Session rows per card page (mobile-friendly: 6, not 10). */
-export const SESSION_PAGE_SIZE = 6;
+/** Max sessions in the dropdown picker (Feishu select option cap). */
+export const SESSION_SELECT_MAX = 20;
 
 /**
  * Relative age label for a `createdAt` timestamp, or `''` when unknown.
@@ -79,21 +79,15 @@ export function sessionRowLine(row: SessionRowView): string {
 }
 
 /**
- * Build the `/sessions` picker card: one row per session (title, id, cwd,
- * age, live/saved badges) with a Details button (the detail sub-view holds
- * Resume/Rename/Archive/Export); the current session's row is marked.
- * Archived sessions are hidden unless `archived` (then only archived ones
- * show). Paginated beyond {@link SESSION_PAGE_SIZE}.
+ * Build the `/sessions` picker card: a dropdown of saved sessions (title, id,
+ * current/live badges) — pick one to open its detail sub-view (Resume/
+ * Rename/Archive/Export); the current session's option is marked ★. Archived
+ * sessions are hidden unless `archived` (then only archived ones show).
  * @param sessions - the session rows, newest-first.
- * @param page - zero-based page index.
  * @param archived - whether to show the archived view instead of active.
  * @returns Feishu interactive card JSON (v1 layout).
  */
-export function buildSessionsCard(
-  sessions: readonly SessionRowView[],
-  page = 0,
-  archived = false,
-): CardJson {
+export function buildSessionsCard(sessions: readonly SessionRowView[], archived = false): CardJson {
   const elements: CardElement[] = [
     {
       tag: 'markdown',
@@ -140,68 +134,36 @@ export function buildSessionsCard(
       elements,
     };
   }
-  const total = Math.ceil(sessions.length / SESSION_PAGE_SIZE);
-  const index = Math.min(Math.max(page, 0), total - 1);
-  const start = index * SESSION_PAGE_SIZE;
-  for (const row of sessions.slice(start, start + SESSION_PAGE_SIZE)) {
-    const columns: ColumnContainer[] = [
+  // A dropdown picks the session to inspect/edit (mobile-friendly: no long
+  // list, no pagination — user requirement). Selecting opens the detail view.
+  const selectSessions = sessions.slice(0, SESSION_SELECT_MAX);
+  elements.push({
+    tag: 'action',
+    actions: [
       {
-        tag: 'column',
-        width: 'weighted',
-        weight: 1,
-        vertical_align: 'top',
-        // Two stacked lines: the title line, then the quiet id · cwd line.
-        elements: [
-          { tag: 'div', text: { tag: 'lark_md', content: sessionTitleLine(row) } },
-          { tag: 'div', text: { tag: 'lark_md', content: sessionMetaLine(row) } },
-        ],
-      },
-      {
-        tag: 'column',
-        width: 'auto',
-        vertical_align: 'center',
-        elements: [
-          {
-            tag: 'button',
-            text: { tag: 'plain_text', content: 'Details' },
-            type: 'default',
-            value: actionValue({ kind: 'session-select', sessionId: row.sessionId }),
+        tag: 'select_static',
+        placeholder: { tag: 'plain_text', content: 'Choose a session…' },
+        options: selectSessions.map((row) => ({
+          text: {
+            tag: 'plain_text',
+            content: `${stripAngleBrackets(row.title === undefined || row.title.trim() === '' ? '(untitled)' : row.title.trim())}${row.current ? ' ★' : ''}${row.live ? ' ●' : ''} · ${row.sessionId}`,
           },
-        ],
+          value: row.sessionId,
+        })),
+        value: actionValue({ kind: 'session-select' }),
       },
-    ];
-    elements.push({
-      tag: 'column_set',
-      flex_mode: 'flow',
-      horizontal_spacing: 'default',
-      columns,
-    });
-  }
-  if (total > 1) {
+    ],
+  });
+  if (sessions.length > SESSION_SELECT_MAX) {
     elements.push({
       tag: 'note',
-      elements: [{ tag: 'plain_text', content: `page ${index + 1}/${total}` }],
+      elements: [
+        {
+          tag: 'plain_text',
+          content: `${sessions.length - SESSION_SELECT_MAX} more — archiving or resuming frees the list.`,
+        },
+      ],
     });
-    const nav: Array<{
-      readonly tag: 'button';
-      readonly text: { readonly tag: 'plain_text'; readonly content: string };
-      readonly value: Record<string, string>;
-    }> = [];
-    if (index > 0) {
-      nav.push({
-        tag: 'button',
-        text: { tag: 'plain_text', content: '‹ Prev' },
-        value: actionValue({ kind: 'sessions-page', page: String(index - 1) }),
-      });
-    }
-    if (index < total - 1) {
-      nav.push({
-        tag: 'button',
-        text: { tag: 'plain_text', content: 'Next ›' },
-        value: actionValue({ kind: 'sessions-page', page: String(index + 1) }),
-      });
-    }
-    elements.push({ tag: 'action', actions: nav });
   }
   // Every sub-view can return to the panel menu root (stack semantics).
   elements.push({

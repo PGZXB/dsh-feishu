@@ -19,7 +19,7 @@ file exists before committing.
 | 5 | `question.png` | A question card (wathet): the question + option buttons (single-select) | "Questions, in the chat" |
 | 6 | `question-answered.png` | The same card answered: static `Answer: …` confirmation | same paragraph |
 | 7 | `panel.png` | The control panel card: status line + the grouped command-palette buttons (and pagination if visible) | "Control panel" |
-| 8 | `sessions.png` | The `/sessions` list: rows with title/id/cwd/age badges and Resume buttons | "Sessions" |
+| 8 | `sessions.png` | The `/sessions` picker: a dropdown of sessions (title · id, ★ current / ● live badges) and the session detail sub-view | "Sessions" |
 | 9 | `export.png` | The exported session log as a file message in the chat | "Export" |
 | 10 | `group.png` | A group chat: an @-mention answer (and ideally a failing turn's @-mention notice) | "Groups" |
 | 11 | `demo.gif` | A short screen recording (≈15 s): message → card streams → green finalize → tap Allow once → question → answer. Desktop client, real bot | hero, below the surface model |

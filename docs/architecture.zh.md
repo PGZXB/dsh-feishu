@@ -44,17 +44,18 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 | `src/memory-transport.ts` | 文件通道的内存 transport（`FEISHU_TRANSPORT=memory`）：集成测试/调试用的 seam——`inbox/` 投递消息，`outbox/` 记录每一次发送。 |
 | `src/message-dedup.ts` | 有界的内存消息 id 去重（平台重投）。 |
 | `src/session-map.ts` | 持久的 chat ↔ session 映射（原子 JSON 写入），供事件反向查找。 |
-| `src/cards/render.ts` | 纯渲染：session 事件 → 卡片 JSON（v1 布局）、markdown 转义、尾部截断、控制面板调色板（分组、分页、分类块），以及权限/模型选择器卡片（带 `initial_option` 的下拉框）。 |
-| `src/cards/session-list.ts` | `/sessions` 选择器卡片：带每行 Resume 按钮的分页行（纯渲染）。 |
+| `src/cards/render.ts` | 纯渲染：session 事件 → 卡片 JSON（v1 布局）、markdown 转义、尾部截断、控制面板调色板（分组、分页、分类块）、权限/模型选择器卡片（带 `initial_option` 的下拉框），以及纯信息**结果卡片**（`✅ Done` / `⚠️ Action failed`）。 |
+| `src/cards/session-list.ts` | `/sessions` 选择器卡片：已保存会话的**下拉框**（上限 `SESSION_SELECT_MAX = 20`），以及会话详情子视图卡片（Resume / Rename / Archive / Export / Back）——纯渲染。 |
 | `src/cards/streaming.ts` | 每轮一张卡片：打开时 POST，节流/合并的 `message.patch` 更新，终态 finalize。 |
 | `src/cards/interactions.ts` | 由审批和提问共享的 pending-interaction 注册表：仅解析一次、超时、过期回调拒绝、中止、释放。 |
-| `src/bridge.ts` | 编排器：消息 → session → `agent.followup`；`session/event` → 卡片 patch；回合结束 → 就地 finalize。agent 解析阶梯：live → 恢复已映射 session → 新建 → 冲突时重绑新 id。拥有 surface 命令注册表（20 个已注册，19 个在调色板中——`/panel` 隐藏）、卡片状态机（`ChatCardState` + 单一 `syncCard` 路径）、工作状态和工作目录 gate、session 生命周期（`/sessions /resume /clear`），以及交互式审批/提问流程（渲染在 `render.ts`，结算经由 `interactions.ts`）。 |
+| `src/bridge.ts` | 编排器：消息 → session → `agent.followup`；`session/event` → 卡片 patch；回合结束 → 就地 finalize。agent 解析阶梯：live → 恢复已映射 session → 新建 → 冲突时重绑新 id。拥有 surface 命令注册表（20 个已注册，19 个在调色板中——`/panel` 隐藏）、卡片状态机（`ChatCardState` + 单一 `syncCard` 路径）、**面板状态机**（`PanelView` 视图栈 + 单一 `renderPanelView` 路径）、工作状态和工作目录 gate、session 生命周期（`/sessions /resume /clear`），以及交互式审批/提问流程（渲染在 `render.ts`，结算经由 `interactions.ts`）。 |
 | `src/index.ts` | 插件入口：配置、凭据解析、agent 选项（配置或 `agentDefaultModel`）、接线、`feishu-status` 命令。 |
 
 ## 关键行为
 
 - **带按钮对等的斜杠命令。** 所有 surface 命令（`/help /status /cancel /cd /repo /group /sessions /resume /clear /new /export /model /feishu-status /schedule`，外加五个 dsh web 包装 `/plan /goal /compact /feedback /permission`，以及 `/panel`——仅斜杠，其调色板按钮隐藏）在斜杠行和面板调色板按钮之间共享同一个处理器。`ctx.commands.execute` 透传处理其余任何命令。`/export` 以文件消息发送会话日志，`/model` 是 surface 原生的（web 的 `/model` 是一个没有宿主命令的客户端弹窗）。
-- **Session 生命周期。** `/sessions` 通过 `ctx.sessionQuery.listSessions()` + 批量 `readTitleSnapshots()` 列出持久化语料（当服务缺失时退化为 bound-sessions 兜底）。当没有 live agent 时，`/resume <id>` 和选择器的 Resume 按钮会重绑该聊天（`SessionMap.set`——1:1 模型）并 `agents.resume`；正在运行的目标会被拒绝；resume 会重置卡片状态（不重放历史）。`/clear`/`/new` 非破坏性地重新铸造一个新 session（旧 session 保持已保存且可恢复）。
+- **Session 生命周期。** `/sessions` 打开持久化语料的**下拉选择器**（`ctx.sessionQuery.listSessions()` + 批量 `readTitleSnapshots()`，服务缺失时退化为 bound-sessions 兜底）；选择选项后在面板状态机栈上推入**会话详情子视图**。当没有 live agent 时，`/resume <id>` 和详情的 Resume 按钮会重绑该聊天（`SessionMap.set`——1:1 模型）并 `agents.resume`；正在运行的目标会被拒绝；resume 会重置卡片状态（不重放历史）。Rename/Archive 经由宿主 `apiProxy` seam（`sessions.rename`、`workspace.archiveSession`——可逆）。`/clear`/`/new` 非破坏性地重新铸造一个新 session（旧 session 保持已保存且可恢复）。
+- **面板状态机。** 控制面板是每个聊天的一份权威视图栈（`PanelView[]`，菜单根在栈底）加单一渲染路径：按钮 PUSH 子视图（输入表单、确认、sessions、会话详情、选择器），Back POPS，完成时回到菜单。中间步骤原地更新**同一张**面板卡片；最终结果发布一张**新的纯信息结果卡片**（面板原则——用户需求）。
 - **工作状态 gate。** 回合运行期间，只有只读命令可以执行（`/help /status /feishu-status /schedule /sessions /cancel /group /model /panel`）；变更类命令会带着解释被拒绝，以保持状态机一致（见 ux-spec §8.4）。
 - **工作目录 gate。** 没有显式固定 cwd（/repo 或 /cd）的聊天会带着指引拒绝回合——不创建 session/卡片，消息也不会被记住；`defaultCwd` 永远不会是隐式选择（`requireWorkingDir`，默认为 true）。`/clear` 保留固定；`/resume` 采用被恢复 session 的 cwd（选择器按钮值，或 session-list 查找），使恢复后的聊天保持可用（见 ux-spec §8.3）。
 - **交互式审批。** `ctx.on('approval/request')` 发布一张审批卡片（工具 + 原因，Allow once / Reject），并通过共享的 `InteractionRegistry` 结算——来自卡片回调的 `'allowed-once'` / `'rejected'`，信号中止或超时时的 `'cancelled'`，当聊天未知或卡片失败时 fail-closed 的 `'unavailable'`。已决定的卡片是一张静态的无按钮卡片。

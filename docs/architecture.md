@@ -53,11 +53,11 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 | `src/memory-transport.ts` | File-channel in-memory transport (`FEISHU_TRANSPORT=memory`): the integration-test / debugging seam — `inbox/` delivers messages, `outbox/` records every send. |
 | `src/message-dedup.ts` | Bounded in-memory message-id dedup (platform redelivery). |
 | `src/session-map.ts` | Durable chat ↔ session mapping (atomic JSON writes), reverse lookup for events. |
-| `src/cards/render.ts` | Pure rendering: session events → card JSON (v1 layout), markdown escaping, tail truncation, the control-panel palette (grouped, paginated, category blocks), and the permission/model picker cards (dropdown with `initial_option`). |
-| `src/cards/session-list.ts` | The `/sessions` picker card: paginated rows with per-row Resume buttons (pure rendering). |
+| `src/cards/render.ts` | Pure rendering: session events → card JSON (v1 layout), markdown escaping, tail truncation, the control-panel palette (grouped, paginated, category blocks), the permission/model picker cards (dropdown with `initial_option`), and the pure-information **result cards** (`✅ Done` / `⚠️ Action failed`). |
+| `src/cards/session-list.ts` | The `/sessions` picker card: a **dropdown** of saved sessions (capped at `SESSION_SELECT_MAX = 20`), and the session detail sub-view card (Resume / Rename / Archive / Export / Back) — pure rendering. |
 | `src/cards/streaming.ts` | One card per turn: POST on open, throttled/coalesced `message.patch` updates, terminal finalize. |
 | `src/cards/interactions.ts` | Pending-interaction registry shared by approvals and questions: resolve-once, timeout, stale-callback rejection, abort, disposal. |
-| `src/bridge.ts` | Orchestrator: message → session → `agent.followup`; `session/event` → card patches; turn end → finalize in place. Agent resolution ladder: live → resume mapped session → create → rebind fresh id on collision. Owns the surface command registry (20 registered, 19 in the palette — `/panel` is hidden), the card state machine (`ChatCardState` + one `syncCard` path), the working-state and working-directory gates, the session lifecycle (`/sessions /resume /clear`), and the interactive approval/question flows (rendering in `render.ts`, settlement through `interactions.ts`). |
+| `src/bridge.ts` | Orchestrator: message → session → `agent.followup`; `session/event` → card patches; turn end → finalize in place. Agent resolution ladder: live → resume mapped session → create → rebind fresh id on collision. Owns the surface command registry (20 registered, 19 in the palette — `/panel` is hidden), the card state machine (`ChatCardState` + one `syncCard` path), the **panel state machine** (`PanelView` view stack + one `renderPanelView` path), the working-state and working-directory gates, the session lifecycle (`/sessions /resume /clear`), and the interactive approval/question flows (rendering in `render.ts`, settlement through `interactions.ts`). |
 | `src/index.ts` | Plugin entry: config, credential resolution, agent options (config or `agentDefaultModel`), wiring, `feishu-status` command. |
 
 ## Key behaviors
@@ -71,14 +71,23 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
   anything else. `/export` ships the session log as a file message and
   `/model` is surface-native (the web `/model` is a client popup with no
   host command).
-- **Session lifecycle.** `/sessions` lists the persisted corpus through
-  `ctx.sessionQuery.listSessions()` + batch `readTitleSnapshots()` (degraded
-  bound-sessions fallback when the service is absent). `/resume <id>` and
-  the picker's Resume button rebind the chat (`SessionMap.set` — 1:1
-  model) and `agents.resume` when no live agent exists; a running target is
-  refused; resume resets the card state (no history replay).
-  `/clear`/`/new` remint a fresh session non-destructively (the old session
-  stays saved and resumable).
+- **Session lifecycle.** `/sessions` opens a **dropdown picker** of the
+  persisted corpus (`ctx.sessionQuery.listSessions()` + batch
+  `readTitleSnapshots()`, degraded bound-sessions fallback when the service
+  is absent); selecting an option pushes the **session detail sub-view** on
+  the panel state-machine stack. `/resume <id>` and the detail's Resume
+  button rebind the chat (`SessionMap.set` — 1:1 model) and `agents.resume`
+  when no live agent exists; a running target is refused; resume resets the
+  card state (no history replay). Rename/Archive go through the host
+  `apiProxy` seam (`sessions.rename`, `workspace.archiveSession` —
+  reversible). `/clear`/`/new` remint a fresh session non-destructively (the
+  old session stays saved and resumable).
+- **Panel state machine.** The control panel is one authoritative view stack
+  per chat (`PanelView[]`, menu root at the bottom) with a single render
+  path: buttons PUSH sub-views (input form, confirm, sessions, session
+  detail, pickers), Back POPS, completion pops to the menu. Intermediate
+  steps update the SAME panel card in place; a final outcome posts a NEW
+  pure-information result card (the panel principle — user requirement).
 - **Working-state gate.** While a turn runs, only read-only commands run
   (`/help /status /feishu-status /schedule /sessions /cancel /group /model /panel`);
   mutating commands refuse with

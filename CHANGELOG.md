@@ -181,22 +181,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the real `ctx.apiProxy` host seam — proving the seam is present in the
   dsh process.
 - **Session detail view (dsh web parity).** The Sessions button opens a
-  paginated list (6 per page, mobile-friendly) with an archive/active
-  toggle; each row's Details opens a session detail card (title, cwd, age,
-  message count, last answer) with **Resume**, **Rename** (input form →
-  host `apiProxy.sessions.rename`), **Archive** (→
-  `apiProxy.workspace.archiveSession`, reversible), and **Export** actions.
-  The standalone Resume panel button is gone (the Sessions flow owns it).
-  Rename/Archive hide when the host seam is absent.
+  **dropdown** picker (up to `SESSION_SELECT_MAX = 20` sessions, ★ current /
+  ● live badges; a note explains the remainder — no list, no pagination,
+  mobile-friendly) with an archive/active toggle; picking an option opens a
+  session detail card (title, cwd, age, message count, last answer) with
+  **Resume**, **Rename** (input form → host `apiProxy.sessions.rename`),
+  **Archive** (→ `apiProxy.workspace.archiveSession`, reversible), and
+  **Export** actions. The standalone Resume panel button is gone (the
+  Sessions flow owns it). Rename/Archive hide when the host seam is absent.
 - **Panel is now a state machine (single card, in-place updates).** The
-  panel card keeps one authoritative `PanelView` (menu / input / confirm)
-  rendered through a single path and updated IN PLACE — no card stacking
-  (mobile UX, user report). Commands with a text dimension
-  (`/cd`, `/group`, `/goal`, `/feedback`) open a root-level v1
-  `form`+`input` sub-view (botmux v1 schema: the form holds only
-  `input` + a `form_submit` button; the submit callback delivers
-  `form_value`). Destructive commands (`/clear`, `/compact`) confirm first.
-  Results notify as a message and the panel returns to the menu.
+  panel card keeps one authoritative view **stack** per chat (menu root at
+  the bottom; sub-views push, Back pops) rendered through a single path and
+  updated IN PLACE — no card stacking (mobile UX, user report). Commands
+  with a text dimension (`/cd`, `/group`, `/goal`, `/feedback`,
+  `/rename-session`) open a root-level v1 `form`+`input` sub-view (botmux
+  v1 schema: the form holds only `input` + a `form_submit` button that
+  carries a `name` — Feishu rejects nameless form buttons with ErrCode
+  200530; the submit callback delivers `form_value`). Destructive commands
+  (`/clear`, `/compact`) confirm first.
+- **Panel results notify as pure-information cards (the panel principle,
+  user requirement).** A panel action whose outcome is FINAL posts a NEW
+  inert card (`✅ Done` / `⚠️ Action failed`, no buttons/inputs) — repo/
+  model/permission picks, rename, archive, input/confirm submissions,
+  resume, and export. Intermediate steps (input forms, confirm prompts,
+  pickers) stay inside the panel card and update in place: a button that
+  needs more interaction jumps the panel, a button that needs none
+  notifies with a new card.
 - **Streaming card throttle default raised 150 → 400 ms** (user report:
   cards refreshed too fast on the Feishu mobile client). Patch coalescing
   (latest-wins) is unchanged; `cardThrottleMs` still overrides.

@@ -217,7 +217,7 @@ done|stopped|error --any action--->  same (state unchanged; card re-synced)
 | `/cd <path>` | session | 设置聊天的 working directory，重新绑定全新会话 |
 | `/repo [<path>]` | session | 项目选择器卡片（≤ 50 用下拉框，以上用按钮 + 分页） |
 | `/group [<name>]` | chat | 与机器人和发送者创建一个群组 |
-| `/sessions` | session | 会话列表卡片（title/id/cwd/age/live/saved），分页，每行带 Resume 按钮 |
+| `/sessions` | session | 会话选择器卡片：一个**下拉框**（会话 `title ★ ● · id`）；选择后打开会话详情子视图（Resume / Rename / Archive / Export） |
 | `/feishu-status` | system | **surface 诊断卡片**：app id、实时长连接状态（`✅ ready` / `⚠️ reconnecting` / `❌ error`，测试传输用 `🧪 memory`）、会话数、最近入站活动。只读（回合运行期间允许） |
 | `/schedule` | system | 列出本聊天的**活动提醒**（用 dsh-schedule 的纯函数折叠会话日志；包缺失时降级为提示）。提醒由 agent 在聊天中通过其 `schedule_create`/`schedule_delete`/`schedule_list` 工具创建 —— 无需 surface 命令 |
 | `/model` | system | **模型选择器卡片**（目录来自 `ctx.llm` 的 `listProviders` × `listModels`，当前模型预选）；选择后为新会话设置默认模型。`/model <provider>/<model>` 直接设置。surface 原生 —— web 的 `/model` 是客户端弹窗，没有宿主命令 |
@@ -252,14 +252,20 @@ harness 的裸 `/plan` 和 `/permission` 形式无法*选择*或*切换*：不�
 
 ### 8.5 会话生命周期命令
 
-- `/sessions` 行有两行：第 1 行 = `**title** · age · badges`（★ current 标记内联），第 2 行 = `` `id` · cwd ``（安静的标识）；页码指示器是一个 `note`。
+- `/sessions` 是**下拉选择器**（移动端友好，用户需求 —— 无长列表、无分页）：一个 `select_static`，选项为各会话（`title ★ ● · id`），上限 `SESSION_SELECT_MAX = 20`，超出部分用 `note` 说明。选择后打开**会话详情子视图**（面板卡片内入栈）；所选会话 id 通过回调的 `option` 字段送达。
 - `/sessions` + `/resume` 数据：`ctx.sessionQuery`（由 dsh-base 的 `session-query-sqlite` 挂载）、`listSessions()` 最新优先 + 批量 `readTitleSnapshots()` 获取标题。服务缺失时 surface 降级为仅列出已绑定会话（响亮日志）。
-- Resume 流程（`/resume <id>` 与选择器的 Resume 按钮共用）：聊天必须空闲；目标会话不得在另一个聊天中运行（"has an active turn — stop it in its chat first"）；恢复聊天自身的会话会提示 "already active"。然后 `SessionMap.set` 重新绑定（先前绑定解除 —— 1:1 chat↔session 模型），当没有存活的 agent 时 `agents.resume` 加载持久化的 agent。恢复失败（没有持久化日志）报告 ⚠️ 并保持 map 不变。Resume **不会**改变聊天固定的 cwd（那归 `/cd` 管），并且它会重置卡片状态，使历史永远不会被重放到卡片中。
+- 会话详情子视图（`🗂️ Session`）：会话信息（标题、id、cwd、创建时长、消息数、最后回答）加 **Resume**（当前会话隐藏）、**Rename**、**Archive**（归档时显示 **Restore** —— 宿主 `workspace.archiveSession` 可逆）、**Export**、**Back**（出栈）。仅当宿主 `apiProxy` seam 挂载时才有 Rename/Archive（否则静默降级）。
+- Resume 流程（`/resume <id>` 与详情页的 Resume 按钮共用）：聊天必须空闲；目标会话不得在另一个聊天中运行（"has an active turn — stop it in its chat first"）；恢复聊天自身的会话会提示 "already active"。然后 `SessionMap.set` 重新绑定（先前绑定解除 —— 1:1 chat↔session 模型），当没有存活的 agent 时 `agents.resume` 加载持久化的 agent。恢复失败（没有持久化日志）报告 ⚠️ 并保持 map 不变。Resume **不会**改变聊天固定的 cwd（那归 `/cd` 管），并且它会重置卡片状态，使历史永远不会被重放到卡片中。
 - `/clear`/`/new`：`SessionMap.remint` + 完整卡片状态重置（无活动卡片，无 copy/retry 目标）。旧会话保持持久化 → 仍会被 `/sessions` 列出且可恢复。
 
-### 8.6 面板调色板
+### 8.6 面板调色板与面板状态机
 
-`buildPanelCard(statusLine, running, commands, page)`：核心行（运行中显示 Stop / Retry / Copy）保持最前；其下是完整命令调色板 —— 全部 16 个命令作为按钮，按类别分组并带 emoji 标题（`🧩 Session` / `💬 Chat` / `⚙️ System`），每页 `PANEL_PAGE_SIZE = 8` 个按钮，一个安静的 `note` 页码指示器（`Commands · page 1/2`），◀️/▶️ 导航在边界处隐藏。每个类别渲染为独立的块 —— 先是标题行，接着是该类别自己的按钮行（标题绝不会在所有按钮之前堆叠）。每个按钮标记 `{kind:'command', name}` 并执行与斜杠命令相同的处理器。状态行携带聊天的会话上下文（`` session `id` · `cwd` ``），因此一次点击总能显示按钮作用于什么。面板是无状态的：每次打开/翻页都发布一张基于当前权威状态构建的新卡片（无需 stale-guard）。
+面板是一个**状态机**，而不是无状态重发：每个聊天只有一份权威视图栈（`PanelView[]`，菜单根在栈底）和一条渲染路径（`renderPanelView` → 同一张面板卡片）。按钮 PUSH 子视图（`input` 表单、`confirm`、`sessions`、`session-detail`、`picker`）；Back POPS；完成/拒绝回到菜单根（重命名后回到详情）。每次转换都在**同一张**面板卡片上原地更新（patch）；更新失败时重发卡片并记录新 id。全新聊天发送 `/panel` 时发布新卡片并重置栈为 `[menu(page 0)]`。
+
+- 菜单（`⚙️ dsh-feishu panel`）：`buildPanelCard(statusLine, running, commands, page)` —— 核心行（运行中显示 Stop / Retry / Copy）保持最前；其下是完整命令调色板，按类别分组并带 emoji 标题（`🧩 Session` / `💬 Chat` / `⚙️ System`），每页 `PANEL_PAGE_SIZE = 8` 个按钮，一个安静的 `note` 页码指示器（`Commands · page 1/2`），◀️/▶️ 导航在边界处隐藏。每个按钮标记 `{kind:'command', name}` 并执行与斜杠命令相同的处理器。状态行携带聊天的会话上下文（`` session `id` · `cwd` ``）。
+- **输入子视图**（`📁 Change working directory`、`👥 Create group`、`🎯 Goal`、`💬 Feedback`、`✏️ Rename session`）：根级 `form`，含一个 `input` 和一个带 `name` 的 `form_submit` 按钮（飞书拒绝无名字的表单按钮 —— ErrCode 200530）。标签在 `form` 之外；提交后以输入值执行命令并回到菜单。
+- **确认子视图**（`✨ New chat`、`🧹 Compact`）：破坏性操作先说明后果；确认后执行命令并回到菜单。
+- **结果卡片（面板原则，用户需求）**。面板操作若结果是**最终**的，则以一张**新的纯信息卡片**（`✅ Done` / `⚠️ Action failed`，无按钮/输入框）通知：repo/model/permission 选择、重命名、归档、输入/确认提交、恢复、导出。中间步骤（输入表单、确认提示、选择器）留在面板卡片内并原地更新 —— 需要继续操作的按钮跳转面板，无需再操作的按钮以惰性新卡通知。
 
 ### 8.7 新操作的状态机矩阵
 
@@ -268,7 +274,7 @@ harness 的裸 `/plan` 和 `/permission` 形式无法*选择*或*切换*：不�
 | command（只读） | allowed | **allowed** | allowed | allowed | allowed |
 | command（变更性） | allowed | **refused** "stop first" | allowed | allowed | allowed |
 | resume-session | allowed* | **refused** | allowed* | allowed* | allowed* |
-| panel-page / sessions-page | 无状态翻页重发（无卡片状态转换） | | | | |
+| panel-page | 无状态翻页重发（无卡片状态转换） | | | | |
 
 \* 另有目标运行中 → 拒绝；目标 == 当前 → already-active。所有单元格都 ACK `{}` 并通过 `syncCard` 结束于一致状态（既有规则）；该矩阵在 `tests/bridge.spec.ts` 的 "state machine matrix extension" 中有单元测试。
 

@@ -24,6 +24,7 @@ import {
   type SessionListRow,
   turnTitle,
 } from '../src/bridge.js';
+import { SESSION_SELECT_MAX } from '../src/cards/session-list.js';
 import { StreamingCardManager } from '../src/cards/streaming.js';
 import type { CommandResult } from '../src/commands.js';
 import type {
@@ -1493,10 +1494,9 @@ describe('working directory commands', () => {
       option: join(root, 'proj-b'),
     });
     expect(h.sessionMap.cwdFor('oc_chat')).toBe(join(root, 'proj-b'));
-    // The pick lands, notifies, and the panel returns to the menu root.
-    expect(h.transport.sentTexts.some((t) => t.text.includes('Working directory set to'))).toBe(
-      true,
-    );
+    // The pick lands, notifies as a result card, and the panel returns to
+    // the menu root.
+    expect(resultCardTexts(h).some((t) => t.includes('Working directory set to'))).toBe(true);
     const menu = h.transport.updatedCards.at(-1);
     expect(menu?.header?.title.content).toBe('⚙️ dsh-feishu panel');
   });
@@ -1717,6 +1717,21 @@ function lastCardId(h: Harness): string {
   return `msg-${h.transport.sentCards.length}`;
 }
 
+/** The markdown body of every RESULT card posted (header ✅/⚠️), used to
+ *  assert panel-action outcomes that now leave the panel as an inert card. */
+function resultCardTexts(h: Harness): string[] {
+  return h.transport.sentCards
+    .filter((card) => {
+      const title = card.header?.title.content;
+      return title === '✅ Done' || title === '⚠️ Action failed';
+    })
+    .flatMap((card) =>
+      card.elements
+        .filter((el) => el.tag === 'markdown' && 'content' in el)
+        .map((el) => (el as { readonly content: string }).content),
+    );
+}
+
 describe('session commands (/sessions /resume /clear /new)', () => {
   it('/sessions on an empty corpus shows the empty state card', async () => {
     const h = makeHarness({ listSessions: async () => [] });
@@ -1730,43 +1745,33 @@ describe('session commands (/sessions /resume /clear /new)', () => {
     ).toBe(true);
   });
 
-  it('/sessions lists sessions with Details buttons and marks the current one', async () => {
+  it('/sessions lists sessions in a dropdown and marks the current one', async () => {
     const h = makeHarness({ listSessions: async () => sessionRows() });
     await h.bridge.handleMessage(message());
     await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/sessions' }));
     const card = h.transport.sentCards.at(-1);
-    // The current session's row carries the ★ current badge (row text is a
-    // lark_md div inside the column_set).
-    expect(
-      card?.elements.some((el) => el.tag === 'column_set') &&
-        card?.elements.some((el) =>
-          el.tag === 'column_set'
-            ? el.columns.some((column) =>
-                column.elements.some(
-                  (element) => element.tag === 'div' && element.text.content.includes('★ current'),
-                ),
-              )
-            : false,
-        ),
-    ).toBe(true);
-    // Rows carry Details buttons with the session id payload.
-    const detailsValues =
-      card?.elements.flatMap((el) =>
-        el.tag === 'column_set'
-          ? el.columns.flatMap((column) =>
-              column.elements
-                .filter((element) => element.tag === 'button')
-                .map((button) => button.value),
-            )
-          : [],
-      ) ?? [];
-    expect(detailsValues).toContainEqual({ kind: 'session-select', sessionId: 'feishu-session-9' });
-    // The detail view holds Resume for a non-current session.
+    // The sessions view is a dropdown (user requirement: pick, don't page).
+    const select = card?.elements.find(
+      (el) => el.tag === 'action' && 'actions' in el && el.actions[0]?.tag === 'select_static',
+    );
+    expect(select && 'actions' in select ? select.actions[0]?.tag : undefined).toBe(
+      'select_static',
+    );
+    const options =
+      select && 'actions' in select && select.actions[0]?.tag === 'select_static'
+        ? select.actions[0].options
+        : [];
+    expect(options.map((o) => o.value)).toEqual(['feishu-session-9', 'feishu-session-1']);
+    // The current session's option carries the ★ marker.
+    const currentOption = options.find((o) => o.value === 'feishu-session-1');
+    expect(currentOption?.text.content).toContain('★');
+    // Selecting via the callback `option` opens the detail view.
     await h.bridge.handleCardAction({
       messageId: lastCardId(h),
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
-      value: { kind: 'session-select', sessionId: 'feishu-session-9' },
+      value: { kind: 'session-select' },
+      option: 'feishu-session-9',
     });
     const detail = h.transport.updatedCards.at(-1);
     expect(JSON.stringify(detail?.elements)).toContain('▶️ Resume');
@@ -1825,7 +1830,7 @@ describe('session commands (/sessions /resume /clear /new)', () => {
       formValue: { title: 'New Title' },
     });
     expect(renamed).toEqual([{ sessionId: 'feishu-session-9', title: 'New Title' }]);
-    expect(h.transport.sentTexts.some((t) => t.text.includes('Renamed session'))).toBe(true);
+    expect(resultCardTexts(h).some((t) => t.includes('Renamed session'))).toBe(true);
     // Detail again → Archive.
     await h.bridge.handleCardAction({
       messageId: lastCardId(h),
@@ -1840,7 +1845,7 @@ describe('session commands (/sessions /resume /clear /new)', () => {
       value: { kind: 'session-archive', sessionId: 'feishu-session-9' },
     });
     expect(archived).toEqual(['feishu-session-9']);
-    expect(h.transport.sentTexts.some((t) => t.text.includes('Archived session'))).toBe(true);
+    expect(resultCardTexts(h).some((t) => t.includes('Archived session'))).toBe(true);
     // The detail view without the seam hides rename/archive.
     const noSeam = makeHarness({ listSessions: async () => sessionRows() });
     await noSeam.bridge.handleCardAction({
@@ -1860,7 +1865,7 @@ describe('session commands (/sessions /resume /clear /new)', () => {
     expect(JSON.stringify(noSeamDetail?.elements)).not.toContain('🗄️ Archive');
   });
 
-  it('paginates the sessions card beyond one page', async () => {
+  it('caps the sessions dropdown beyond SESSION_SELECT_MAX and never pages', async () => {
     const many = Array.from({ length: 25 }, (_, index) => ({
       sessionId: `feishu-session-${index}`,
       title: `Session ${index}`,
@@ -1872,28 +1877,25 @@ describe('session commands (/sessions /resume /clear /new)', () => {
     const h = makeHarness({ listSessions: async () => many });
     await h.bridge.handleMessage(message({ text: '/sessions' }));
     const card = h.transport.sentCards.at(-1);
+    const select = card?.elements.find(
+      (el) => el.tag === 'action' && 'actions' in el && el.actions[0]?.tag === 'select_static',
+    );
+    const options =
+      select && 'actions' in select && select.actions[0]?.tag === 'select_static'
+        ? select.actions[0].options
+        : [];
+    expect(options).toHaveLength(SESSION_SELECT_MAX);
+    // The overflow is explained, not paginated (user requirement).
     expect(
       card?.elements.some(
-        (el) =>
-          el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 1/5'),
+        (el) => el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('5 more'),
       ),
     ).toBe(true);
-    await h.bridge.handleCardAction({
-      messageId: lastCardId(h),
-      chatId: 'oc_chat',
-      operatorOpenId: 'ou_user',
-      value: { kind: 'sessions-page', page: '1' },
-    });
-    // The page flip updates the SAME card in place — no new card is posted.
     expect(
-      h.transport.updatedCards
-        .at(-1)
-        ?.elements.some(
-          (el) =>
-            el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 2/5'),
-        ),
-    ).toBe(true);
-    expect(h.transport.sentCards).toHaveLength(1);
+      card?.elements.some(
+        (el) => el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page '),
+      ),
+    ).toBe(false);
   });
 
   it('a resume button resumes a persisted session and rebinds the chat', async () => {
@@ -1916,9 +1918,9 @@ describe('session commands (/sessions /resume /clear /new)', () => {
     });
     expect(h.agentStore.resumed).toContain('feishu-session-9');
     expect(h.sessionMap.get('oc_chat')).toBe('feishu-session-9');
-    expect(
-      h.transport.sentTexts.some((t) => t.text.includes('Resumed session feishu-session-9')),
-    ).toBe(true);
+    expect(resultCardTexts(h).some((t) => t.includes('Resumed session feishu-session-9'))).toBe(
+      true,
+    );
     // The previous binding is detached (1:1 chat↔session model).
     expect(h.sessionMap.chatFor('feishu-session-1')).toBeUndefined();
   });
@@ -2132,8 +2134,9 @@ describe('panel command palette', () => {
       value: { kind: 'panel-input-submit', command: 'cd' },
       formValue: { path: '' },
     });
-    // /cd with no argument → usage error, and the panel returns to menu.
-    expect(h.transport.sentTexts.some((t) => t.text.includes('usage: /cd'))).toBe(true);
+    // /cd with no argument → usage error as a result card, and the panel
+    // returns to menu.
+    expect(resultCardTexts(h).some((t) => t.includes('usage: /cd'))).toBe(true);
     expect(h.transport.updatedCards.at(-1)?.header?.title.content).toBe('⚙️ dsh-feishu panel');
   });
 
@@ -2230,7 +2233,7 @@ describe('panel command palette', () => {
       operatorOpenId: 'ou_user',
       value: { kind: 'session-export', sessionId: 'nope' },
     });
-    expect(h.transport.sentTexts.some((t) => t.text.includes('session export failed'))).toBe(true);
+    expect(resultCardTexts(h).some((t) => t.includes('session export failed'))).toBe(true);
   });
 
   it('includes every registered command as a button', async () => {
@@ -2417,13 +2420,12 @@ describe('panel command palette', () => {
       formValue: { path: target },
     });
     expect(h.sessionMap.cwdFor('oc_chat')).toBe(target);
-    expect(h.transport.sentTexts.some((t) => t.text.includes('Working directory set to'))).toBe(
-      true,
-    );
-    // The panel returned to the menu root (same card, updated in place).
+    expect(resultCardTexts(h).some((t) => t.includes('Working directory set to'))).toBe(true);
+    // The panel returned to the menu root (same card, updated in place) and
+    // the outcome left the panel as an inert result card.
     const menu = h.transport.updatedCards.at(-1);
     expect(JSON.stringify(menu?.elements)).toContain('📁 Change dir');
-    expect(h.transport.sentCards).toHaveLength(1);
+    expect(h.transport.sentCards).toHaveLength(2); // input card + result card
   });
 
   it('a command button executes the same handler as the slash line', async () => {
@@ -2452,7 +2454,7 @@ describe('panel command palette', () => {
       operatorOpenId: 'ou_user',
       value: { kind: 'panel-confirm', command: 'clear' },
     });
-    expect(h.transport.sentTexts.some((t) => t.text.includes('nothing to clear'))).toBe(true);
+    expect(resultCardTexts(h).some((t) => t.includes('nothing to clear'))).toBe(true);
     // The panel returned to the menu root.
     const menu = h.transport.updatedCards.at(-1);
     expect(JSON.stringify(menu?.elements)).toContain('📁 Change dir');
@@ -2685,7 +2687,7 @@ describe('stateful web wrappers (/permission picker, /plan toggle)', () => {
       option: 'read-only',
     });
     expect(service.applied).toEqual(['read-only']);
-    expect(h.transport.sentTexts.some((t) => t.text.includes('switched to read-only'))).toBe(true);
+    expect(resultCardTexts(h).some((t) => t.includes('switched to read-only'))).toBe(true);
   });
 
   it('a permission pick applies from the panel picker view', async () => {
@@ -2956,8 +2958,8 @@ describe('/model picker', () => {
     });
     expect(defaults.saved).toEqual([{ provider: 'deepseek-official', model: 'deepseek-r1' }]);
     expect(
-      h.transport.sentTexts.some((t) =>
-        t.text.includes('Default model set to deepseek-official · deepseek-r1'),
+      resultCardTexts(h).some((t) =>
+        t.includes('Default model set to deepseek-official · deepseek-r1'),
       ),
     ).toBe(true);
   });
@@ -3904,7 +3906,7 @@ describe('compaction lifecycle (user report regression)', () => {
       operatorOpenId: 'ou_user',
       value: { kind: 'panel-confirm', command: 'compact' },
     });
-    expect(h.transport.sentTexts.some((t) => t.text.includes('No compactable history'))).toBe(true);
+    expect(resultCardTexts(h).some((t) => t.includes('No compactable history'))).toBe(true);
     expect(h.transport.sentCards.some((c) => c.header?.title.content === '🧹 Compacting…')).toBe(
       false,
     );

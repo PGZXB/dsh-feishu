@@ -66,6 +66,12 @@ export interface ButtonAction {
    * carries the form's `form_value`. Omit for plain action buttons.
    */
   readonly action_type?: 'form_submit' | 'form_reset';
+  /**
+   * Required INSIDE a `form` container (Feishu rejects form buttons without
+   * a name: ErrCode 200530 "the interactive element in the form container
+   * must have a name" — user-tested). Ignored outside forms.
+   */
+  readonly name?: string;
 }
 
 /** A text-input control inside a root-level `form` (botmux v1 schema). */
