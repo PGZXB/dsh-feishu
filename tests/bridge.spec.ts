@@ -789,7 +789,7 @@ describe('Bridge', () => {
         operatorOpenId: 'ou_user',
         value: { kind: 'panel' },
       });
-      const idlePanel = h.transport.sentCards.at(-1);
+      const idlePanel = h.transport.updatedCards.at(-1);
       const idleAction = idlePanel?.elements.find((el) => el.tag === 'action');
       const idleLabels =
         idleAction && 'actions' in idleAction
@@ -1973,12 +1973,12 @@ describe('panel command palette', () => {
     expect(labels).not.toContain('✨ Fresh start');
     expect(labels).toContain('↩️ Resume session');
     await h.bridge.handleCardAction({
-      messageId: 'mem-1',
+      messageId: lastCardId(h),
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'panel-page', page: '1' },
     });
-    const panel2 = h.transport.sentCards.at(-1);
+    const panel2 = h.transport.updatedCards.at(-1);
     const labels2 =
       panel2?.elements.flatMap((el) =>
         el.tag === 'action'
@@ -2032,12 +2032,12 @@ describe('panel command palette', () => {
       ) ?? [];
     expect(navLabels(panel)).toEqual(['Next ▶️']);
     await h.bridge.handleCardAction({
-      messageId: 'mem-1',
+      messageId: lastCardId(h),
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'panel-page', page: '1' },
     });
-    const panel2 = h.transport.sentCards.at(-1);
+    const panel2 = h.transport.updatedCards.at(-1);
     expect(
       panel2?.elements.some(
         (el) =>
@@ -2055,25 +2055,26 @@ describe('panel command palette', () => {
       operatorOpenId: 'ou_user',
       value: { kind: 'panel' },
     });
-    const before = h.transport.sentCards.length;
-    // A huge page number clamps to the last page — a panel is still posted.
+    const before = h.transport.updatedCards.length;
+    // A huge page number clamps to the last page — the panel card is updated
+    // in place (no crash, no new card).
     await h.bridge.handleCardAction({
-      messageId: 'mem-1',
+      messageId: lastCardId(h),
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'panel-page', page: '99' },
     });
-    expect(h.transport.sentCards.length).toBe(before + 1);
+    expect(h.transport.updatedCards.at(-1)?.elements.some((el) => el.tag === 'action')).toBe(true);
     // Non-numeric, fractional, and negative pages are ignored entirely.
     for (const page of ['abc', '1.5', '-1']) {
       await h.bridge.handleCardAction({
-        messageId: 'mem-1',
+        messageId: lastCardId(h),
         chatId: 'oc_chat',
         operatorOpenId: 'ou_user',
         value: { kind: 'panel-page', page },
       });
     }
-    expect(h.transport.sentCards.length).toBe(before + 1);
+    expect(h.transport.updatedCards.length).toBe(before + 1);
   });
 
   it('panel page flips update the panel card IN PLACE (no new card)', async () => {
@@ -2102,6 +2103,43 @@ describe('panel command palette', () => {
     expect(h.transport.sentCards).toHaveLength(1);
   });
 
+  it('a text-input command opens the input form; submit runs it with the value', async () => {
+    const h = makeHarness();
+    const { mkdirSync } = await import('node:fs');
+    const target = join(SCRATCH, 'cd-panel-input');
+    mkdirSync(target, { recursive: true });
+    // The cd button opens the input sub-view: a root-level form with one
+    // input and a form_submit button (botmux v1 schema).
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'command', name: 'cd' },
+    });
+    const inputCard = h.transport.sentCards.at(-1);
+    expect(inputCard?.header?.title.content).toBe('📁 Change working directory');
+    const form = inputCard?.elements.find((el) => el.tag === 'form');
+    expect(form && 'elements' in form ? form.elements.some((e) => e.tag === 'input') : false).toBe(
+      true,
+    );
+    // Submit carries the typed path in form_value (callback shape).
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel-input-submit', command: 'cd' },
+      formValue: { path: target },
+    });
+    expect(h.sessionMap.cwdFor('oc_chat')).toBe(target);
+    expect(h.transport.sentTexts.some((t) => t.text.includes('Working directory set to'))).toBe(
+      true,
+    );
+    // The panel returned to the menu root (same card, updated in place).
+    const menu = h.transport.updatedCards.at(-1);
+    expect(JSON.stringify(menu?.elements)).toContain('📁 Change dir');
+    expect(h.transport.sentCards).toHaveLength(1);
+  });
+
   it('a command button executes the same handler as the slash line', async () => {
     const h = makeHarness();
     await h.bridge.handleCardAction({
@@ -2111,25 +2149,54 @@ describe('panel command palette', () => {
       value: { kind: 'command', name: 'help' },
     });
     expect(h.transport.sentTexts.some((t) => t.text.includes('dsh-feishu commands'))).toBe(true);
+    // clear is destructive: the panel button first shows the confirm view
+    // (first panel render posts a card)…
     await h.bridge.handleCardAction({
       messageId: 'mem-1',
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'command', name: 'clear' },
     });
+    const confirmCard = h.transport.sentCards.at(-1);
+    expect(JSON.stringify(confirmCard?.elements)).toContain('Start new chat');
+    // …and the confirm button runs the command (no session → nothing to clear).
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel-confirm', command: 'clear' },
+    });
     expect(h.transport.sentTexts.some((t) => t.text.includes('nothing to clear'))).toBe(true);
+    // The panel returned to the menu root.
+    const menu = h.transport.updatedCards.at(-1);
+    expect(JSON.stringify(menu?.elements)).toContain('📁 Change dir');
   });
 
   it('a mutating command button is refused while working; read-only allowed', async () => {
     const h = makeHarness();
     await h.bridge.handleMessage(message());
+    // clear's panel button opens the confirm view even while working; the
+    // gate fires on the CONFIRM button (the mutating step).
     await h.bridge.handleCardAction({
       messageId: 'mem-1',
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'command', name: 'clear' },
     });
+    expect(h.transport.sentCards.at(-1)?.header?.title.content).toBe('✨ New chat');
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel-confirm', command: 'clear' },
+    });
     expect(h.transport.sentTexts.some((t) => t.text.includes('a turn is running'))).toBe(true);
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel-back' },
+    });
     await h.bridge.handleCardAction({
       messageId: 'mem-1',
       chatId: 'oc_chat',
@@ -3519,14 +3586,24 @@ describe('compaction lifecycle (user report regression)', () => {
     });
     await h.bridge.handleMessage(message());
     await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+    // compact's panel button opens the confirm view first (first panel
+    // render posts a card)…
     await h.bridge.handleCardAction({
       messageId: 'mem-1',
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'command', name: 'compact' },
     });
+    expect(h.transport.sentCards.at(-1)?.header?.title.content).toBe('🧹 Compact');
+    // …the confirm button runs it: informational reply, no compaction card,
+    // chat NOT left working.
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel-confirm', command: 'compact' },
+    });
     expect(h.transport.sentTexts.some((t) => t.text.includes('No compactable history'))).toBe(true);
-    // No compaction card was opened and the chat is NOT left working.
     expect(h.transport.sentCards.some((c) => c.header?.title.content === '🧹 Compacting…')).toBe(
       false,
     );

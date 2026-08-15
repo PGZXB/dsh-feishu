@@ -153,6 +153,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Panel is now a state machine (single card, in-place updates).** The
+  panel card keeps one authoritative `PanelView` (menu / input / confirm)
+  rendered through a single path and updated IN PLACE — no card stacking
+  (mobile UX, user report). Commands with a text dimension
+  (`/cd`, `/group`, `/goal`, `/feedback`) open a root-level v1
+  `form`+`input` sub-view (botmux v1 schema: the form holds only
+  `input` + a `form_submit` button; the submit callback delivers
+  `form_value`). Destructive commands (`/clear`, `/compact`) confirm first.
+  Results notify as a message and the panel returns to the menu.
 - **Streaming card throttle default raised 150 → 400 ms** (user report:
   cards refreshed too fast on the Feishu mobile client). Patch coalescing
   (latest-wins) is unchanged; `cardThrottleMs` still overrides.

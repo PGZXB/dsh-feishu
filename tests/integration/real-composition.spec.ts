@@ -671,7 +671,7 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
           return (
             action !== undefined &&
             'actions' in action &&
-            action.actions.some((a) => 'text' in a && a.text.content === '⏹ Stop current')
+            action.actions.some((a) => 'text' in a && a.text.content === '⏹ Stop current turn')
           );
         },
         30_000,
@@ -1055,6 +1055,27 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         operatorOpenId: 'ou_mock',
         value: { kind: 'command', name: 'compact' },
       });
+      // The compact button first shows the confirm sub-view (state machine);
+      // the panel card is updated IN PLACE (patch record, no chatId).
+      await waitFor(
+        'the compact confirm card',
+        () =>
+          readOutbox().some(
+            (r) =>
+              (r.kind === 'card' || r.kind === 'patch') &&
+              r.card?.header?.title.content === '🧹 Compact',
+          ),
+        30_000,
+      );
+      const confirmCard = [...readOutbox()]
+        .reverse()
+        .find((r) => r.card?.header?.title.content === '🧹 Compact');
+      writeAction({
+        messageId: confirmCard?.messageId ?? '',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'panel-confirm', command: 'compact' },
+      });
 
       // Immediate feedback: a Compacting card opens (not a silent wait).
       await waitFor(
@@ -1150,12 +1171,32 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         30_000,
       );
 
-      // Compact button (palette command) while running → refused.
+      // Compact button (palette command) while running → the confirm view
+      // opens, and CONFIRMING is refused.
       writeAction({
         messageId: 'mem-refuse-1',
         chatId,
         operatorOpenId: 'ou_mock',
         value: { kind: 'command', name: 'compact' },
+      });
+      await waitFor(
+        'the compact confirm card',
+        () =>
+          readOutbox().some(
+            (r) =>
+              (r.kind === 'card' || r.kind === 'patch') &&
+              r.card?.header?.title.content === '🧹 Compact',
+          ),
+        30_000,
+      );
+      const confirmCard = [...readOutbox()]
+        .reverse()
+        .find((r) => r.card?.header?.title.content === '🧹 Compact');
+      writeAction({
+        messageId: confirmCard?.messageId ?? '',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'panel-confirm', command: 'compact' },
       });
       await waitFor(
         'the compact refusal',
@@ -2215,7 +2256,7 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         'the page-2 panel card',
         () =>
           readOutbox()
-            .filter((r) => r.kind === 'card')
+            .filter((r) => r.kind === 'card' || r.kind === 'patch')
             .some(
               (r) =>
                 r.card?.elements.some(
@@ -2228,7 +2269,7 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         30_000,
       );
       const page2 = readOutbox()
-        .filter((r) => r.kind === 'card')
+        .filter((r) => r.kind === 'card' || r.kind === 'patch')
         .at(-1)?.card;
       const labels =
         page2?.elements.flatMap((el) =>
@@ -2958,6 +2999,27 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         operatorOpenId: 'ou_mock',
         value: { kind: 'command', name: 'compact' },
       });
+      // The panel button first shows the confirm sub-view; confirming runs
+      // the command (a brand-new chat has nothing to compact).
+      await waitFor(
+        'the compact confirm card',
+        () =>
+          readOutbox().some(
+            (r) =>
+              (r.kind === 'card' || r.kind === 'patch') &&
+              r.card?.header?.title.content === '🧹 Compact',
+          ),
+        30_000,
+      );
+      const confirmCard = [...readOutbox()]
+        .reverse()
+        .find((r) => r.card?.header?.title.content === '🧹 Compact');
+      writeAction({
+        messageId: confirmCard?.messageId ?? '',
+        chatId,
+        operatorOpenId: 'ou_mock',
+        value: { kind: 'panel-confirm', command: 'compact' },
+      });
       await waitFor(
         'the no-compactable-history reply',
         () =>
@@ -3027,7 +3089,8 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         30_000,
       );
       const before = readOutbox().filter((r) => r.kind === 'card').length;
-      // A huge page clamps to the last page: another panel card is posted.
+      // A huge page clamps to the last page — the SAME panel card is updated
+      // in place (a patch, not a new card).
       writeAction({
         messageId: 'mem-pc-2',
         chatId,
@@ -3036,9 +3099,13 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
       });
       await waitFor(
         'the clamped panel card',
-        () => readOutbox().filter((r) => r.kind === 'card').length > before,
+        () =>
+          readOutbox()
+            .filter((r) => r.kind === 'card' || r.kind === 'patch')
+            .some((r) => r.card?.header?.title.content === '⚙️ dsh-feishu panel'),
         30_000,
       );
+      expect(readOutbox().filter((r) => r.kind === 'card').length).toBe(before);
       // Garbage pages are ignored — the chat still answers commands.
       writeAction({
         messageId: 'mem-pc-3',

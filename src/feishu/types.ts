@@ -60,6 +60,32 @@ export interface ButtonAction {
   readonly type?: 'primary' | 'danger' | 'default';
   /** Surface action payload, echoed back in the card callback. */
   readonly value: Record<string, string>;
+  /**
+   * Form-control marker (botmux v1 schema): `form_submit` / `form_reset`
+   * buttons live INSIDE a root-level `form` element and their callback
+   * carries the form's `form_value`. Omit for plain action buttons.
+   */
+  readonly action_type?: 'form_submit' | 'form_reset';
+}
+
+/** A text-input control inside a root-level `form` (botmux v1 schema). */
+export interface InputElement {
+  readonly tag: 'input';
+  /** Form value key; the submit callback carries `formValue[name]`. */
+  readonly name: string;
+  readonly default_value?: string;
+  readonly placeholder?: { readonly tag: 'plain_text'; readonly content: string };
+}
+
+/**
+ * A root-level `form` element (botmux v1 schema, verified on device): the
+ * form may contain ONLY `input` + `form_submit` buttons — mixing in other
+ * elements makes the whole card render empty. Labels stay OUTSIDE the form.
+ */
+export interface FormElement {
+  readonly tag: 'form';
+  readonly name: string;
+  readonly elements: readonly (InputElement | ButtonAction)[];
 }
 
 /**
@@ -112,6 +138,7 @@ export type CardElement =
       readonly tag: 'action';
       readonly actions: readonly (ButtonAction | SelectAction)[];
     }
+  | FormElement
   | {
       readonly tag: 'table';
       /** Max data rows per page; Feishu supports [1, 10], default 5. */

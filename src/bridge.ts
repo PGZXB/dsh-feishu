@@ -25,6 +25,8 @@ import {
   buildApprovalCard,
   buildApprovalDecidedCard,
   buildCard,
+  buildConfirmCard,
+  buildInputCard,
   buildModelPickerCard,
   buildPanelCard,
   buildPermissionPickerCard,
@@ -77,6 +79,85 @@ function isCompactionLifecycleEvent(event: SessionEvent): boolean {
   const type = (event as { type?: unknown }).type;
   return type === 'compaction/start' || type === 'compaction/summary' || type === 'compaction/end';
 }
+
+/**
+ * The panel card state machine view (single authoritative panel state, one
+ * render path — the same rule as `ChatCardState`). `menu` is the root; a
+ * button PUSHES an `input`/`confirm` sub-view, completion/back POPS to
+ * `menu`. Every view renders in place on the SAME panel card.
+ */
+export type PanelView =
+  | { readonly kind: 'menu'; readonly page: number }
+  | { readonly kind: 'input'; readonly command: PanelInputCommand }
+  | { readonly kind: 'confirm'; readonly command: 'clear' | 'compact' };
+
+/** Commands whose panel button opens a text-input sub-view. */
+export type PanelInputCommand = 'cd' | 'group' | 'goal' | 'feedback';
+
+/** Narrow a panel command marker to the input commands. */
+function isPanelInputCommand(value: string | undefined): value is PanelInputCommand {
+  return value === 'cd' || value === 'group' || value === 'goal' || value === 'feedback';
+}
+
+/** Text-input sub-view copy per command. */
+const PANEL_INPUT_SPEC: Record<
+  PanelInputCommand,
+  {
+    readonly title: string;
+    readonly hint: string;
+    readonly fieldName: string;
+    readonly placeholder: string;
+    readonly submitLabel: string;
+  }
+> = {
+  cd: {
+    title: '📁 Change working directory',
+    hint: 'Send the absolute (or `~`) path to the project directory.',
+    fieldName: 'path',
+    placeholder: 'e.g. /home/user/projects/demo',
+    submitLabel: 'Set directory',
+  },
+  group: {
+    title: '👥 New group',
+    hint: 'Send the group name to create and join.',
+    fieldName: 'name',
+    placeholder: 'e.g. my team',
+    submitLabel: 'Create group',
+  },
+  goal: {
+    title: '🎯 Goal',
+    hint: 'Send the goal text for the ongoing task.',
+    fieldName: 'goal',
+    placeholder: 'e.g. fix the build',
+    submitLabel: 'Set goal',
+  },
+  feedback: {
+    title: '💬 Feedback',
+    hint: 'Send your feedback text.',
+    fieldName: 'feedback',
+    placeholder: 'Type feedback…',
+    submitLabel: 'Send feedback',
+  },
+};
+
+/** Confirm sub-view copy per command. */
+const PANEL_CONFIRM_SPEC: Record<
+  'clear' | 'compact',
+  { readonly title: string; readonly message: string; readonly confirmLabel: string }
+> = {
+  clear: {
+    title: '✨ New chat',
+    message:
+      'Start a NEW conversation? The previous session stays saved (resumable via /sessions).',
+    confirmLabel: 'Start new chat',
+  },
+  compact: {
+    title: '🧹 Compact',
+    message:
+      'Compact older conversation history into a summary? The chat is unavailable while it runs.',
+    confirmLabel: 'Compact now',
+  },
+};
 
 /** Minimal logger surface the bridge needs. */
 export interface BridgeLogger {
@@ -520,6 +601,8 @@ export class Bridge {
   /** The most recently opened panel card per chat (pagination updates it
    *  in place instead of posting a new card — mobile UX, user report). */
   private readonly panelMessageIds = new Map<string, string>();
+  /** The panel card state machine view per chat (menu root by default). */
+  private readonly panelViews = new Map<string, PanelView>();
   /** Active /sessions picker card message id per chat (stale-callback guard). */
   private readonly sessionPickerMessageIds = new Map<string, string>();
   /** Active /permission picker card message id per chat (stale-callback guard). */
@@ -906,12 +989,65 @@ export class Bridge {
    * @param page - zero-based palette page.
    */
   private async openPanel(chatId: string, page = 0): Promise<void> {
-    const sent = await this.options.transport.sendCard(
-      chatId,
-      this.buildPanelCardFor(chatId, page),
-    );
-    this.panelMessageIds.set(chatId, sent.messageId);
+    await this.showPanel(chatId, { kind: 'menu', page });
+  }
+
+  /**
+   * Render one panel view IN PLACE on the panel card (single render path
+   * for the panel state machine): the first show posts the card, every
+   * later transition updates the SAME card — no card stacking (mobile UX,
+   * user report).
+   * @param chatId - the chat.
+   * @param view - the new panel view to render.
+   */
+  private async showPanel(chatId: string, view: PanelView): Promise<void> {
+    this.panelViews.set(chatId, view);
+    const card = this.renderPanelView(chatId, view);
+    const existing = this.panelMessageIds.get(chatId);
+    try {
+      if (existing !== undefined) {
+        await this.options.transport.updateCard(existing, card);
+      } else {
+        const sent = await this.options.transport.sendCard(chatId, card);
+        this.panelMessageIds.set(chatId, sent.messageId);
+      }
+    } catch (error: unknown) {
+      this.options.logger.warn(`panel render failed: ${String(error)}`);
+    }
     this.syncCard(chatId);
+  }
+
+  /** The current panel view for a chat, defaulting to the menu root. */
+  private panelViewFor(chatId: string): PanelView {
+    return this.panelViews.get(chatId) ?? { kind: 'menu', page: 0 };
+  }
+
+  /** Render the card for one panel view (the single panel render path). */
+  private renderPanelView(chatId: string, view: PanelView): CardJson {
+    switch (view.kind) {
+      case 'menu':
+        return this.buildPanelCardFor(chatId, view.page);
+      case 'input': {
+        const spec = PANEL_INPUT_SPEC[view.command];
+        return buildInputCard({
+          title: spec.title,
+          hint: spec.hint,
+          fieldName: spec.fieldName,
+          placeholder: spec.placeholder,
+          submitLabel: spec.submitLabel,
+          command: view.command,
+        });
+      }
+      case 'confirm': {
+        const spec = PANEL_CONFIRM_SPEC[view.command];
+        return buildConfirmCard({
+          title: spec.title,
+          message: spec.message,
+          confirmLabel: spec.confirmLabel,
+          command: view.command,
+        });
+      }
+    }
   }
 
   /** Construct the panel card for a chat at the given command page. */
@@ -1871,34 +2007,96 @@ export class Bridge {
         break;
       }
       case 'panel': {
-        await this.openPanel(action.chatId);
+        await this.showPanel(action.chatId, { kind: 'menu', page: 0 });
         break;
       }
       case 'panel-page': {
         const page = Number(action.value.page);
         if (!Number.isInteger(page) || page < 0) break;
-        // Update the panel card IN PLACE — a page flip must not stack a new
-        // card (mobile UX, user report).
-        const existing = this.panelMessageIds.get(action.chatId);
-        if (existing === undefined || existing !== action.messageId) {
-          await this.openPanel(action.chatId, page);
+        // Page flips only apply to the menu root; other views ignore them.
+        const view = this.panelViewFor(action.chatId);
+        if (view.kind !== 'menu') break;
+        if (this.panelMessageIds.get(action.chatId) !== action.messageId) {
+          // A stale/unknown panel card: re-post the menu instead.
+          await this.showPanel(action.chatId, { kind: 'menu', page });
           break;
         }
-        try {
-          await this.options.transport.updateCard(
-            existing,
-            this.buildPanelCardFor(action.chatId, page),
-          );
-        } catch (error: unknown) {
-          this.options.logger.warn(`panel page refresh failed: ${String(error)}`);
+        await this.showPanel(action.chatId, { kind: 'menu', page });
+        break;
+      }
+      case 'panel-back': {
+        // POP to the menu root (the panel state machine's parent view).
+        await this.showPanel(action.chatId, { kind: 'menu', page: 0 });
+        break;
+      }
+      case 'panel-input-submit': {
+        // The input form's submit button: run the command with the entered
+        // value as its argument, notify the result as a message, POP to menu.
+        const commandName = action.value.command;
+        if (!isPanelInputCommand(commandName)) break;
+        if (
+          this.refuseWhileWorking(action.chatId) &&
+          !Bridge.ALLOWED_WHILE_WORKING.has(commandName)
+        ) {
+          await this.replyCommandResult(action.chatId, {
+            kind: 'error',
+            text: 'a turn is running — stop it first.',
+          });
+          break;
         }
-        this.syncCard(action.chatId);
+        const command = this.commands.find(commandName);
+        if (command === undefined) break;
+        const fieldName = PANEL_INPUT_SPEC[commandName].fieldName;
+        const rawInput = action.formValue?.[fieldName] ?? '';
+        const result = await command.handler({
+          chatId: action.chatId,
+          senderOpenId: action.operatorOpenId,
+          rawInput,
+        });
+        await this.replyCommandResult(action.chatId, result);
+        await this.showPanel(action.chatId, { kind: 'menu', page: 0 });
+        break;
+      }
+      case 'panel-confirm': {
+        // The confirm sub-view's confirm button: run the destructive command,
+        // notify, POP to menu.
+        const commandName = action.value.command;
+        const command = commandName === undefined ? undefined : this.commands.find(commandName);
+        if (command === undefined) break;
+        if (
+          commandName !== undefined &&
+          this.refuseWhileWorking(action.chatId) &&
+          !Bridge.ALLOWED_WHILE_WORKING.has(commandName)
+        ) {
+          await this.replyCommandResult(action.chatId, {
+            kind: 'error',
+            text: 'a turn is running — stop it first.',
+          });
+          break;
+        }
+        const result = await command.handler({
+          chatId: action.chatId,
+          senderOpenId: action.operatorOpenId,
+          rawInput: '',
+        });
+        await this.replyCommandResult(action.chatId, result);
+        await this.showPanel(action.chatId, { kind: 'menu', page: 0 });
         break;
       }
       case 'command': {
-        // A panel palette button: same handler as the slash line, with the
-        // same working-state gate for mutating commands (matrix rule).
+        // A panel palette button: commands with a text dimension open their
+        // input sub-view; destructive commands confirm first; everything
+        // else runs the same handler as the slash line (with the same
+        // working-state gate for mutating commands — matrix rule).
         const name = action.value.name;
+        if (name === 'cd' || name === 'group' || name === 'goal' || name === 'feedback') {
+          await this.showPanel(action.chatId, { kind: 'input', command: name });
+          break;
+        }
+        if (name === 'clear' || name === 'compact') {
+          await this.showPanel(action.chatId, { kind: 'confirm', command: name });
+          break;
+        }
         const command = name === undefined ? undefined : this.commands.find(name);
         if (command === undefined) {
           this.options.logger.warn(`command button for unknown command ${name ?? '(missing)'}`);

@@ -113,7 +113,11 @@ export type SurfaceAction =
   | { readonly kind: 'question'; readonly id: string; readonly answer: string }
   | { readonly kind: 'question-toggle'; readonly id: string; readonly option: string }
   | { readonly kind: 'question-submit'; readonly id: string }
-  | { readonly kind: 'question-cancel'; readonly id: string };
+  | { readonly kind: 'question-cancel'; readonly id: string }
+  // Panel state machine (Phase 1): input/confirm sub-views.
+  | { readonly kind: 'panel-back' }
+  | { readonly kind: 'panel-input-submit'; readonly command: string }
+  | { readonly kind: 'panel-confirm'; readonly command: string };
 
 /**
  * Projects per picker card page (the button-based fallback, used only when
@@ -750,6 +754,95 @@ export function buildPanelCard(
       template: 'wathet',
     },
     elements,
+  };
+}
+
+/** One panel sub-view (input form / confirm) renders as a card payload. */
+export interface PanelInputCardOptions {
+  readonly title: string;
+  readonly hint: string;
+  readonly fieldName: string;
+  readonly placeholder: string;
+  readonly submitLabel: string;
+  readonly command: string;
+}
+
+/**
+ * A panel text-input card: a root-level v1 `form` with ONE `input` plus a
+ * `form_submit` button (botmux v1 schema, verified on device — the form
+ * holds ONLY input+button; labels stay outside, or the whole card renders
+ * empty), followed by a Back action row. The submit callback carries
+ * `formValue[fieldName]` and the command marker in `value`.
+ */
+export function buildInputCard(options: PanelInputCardOptions): CardJson {
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: options.title }, template: 'wathet' },
+    elements: [
+      { tag: 'markdown', content: options.hint },
+      { tag: 'hr' },
+      {
+        tag: 'form',
+        name: 'panel-input',
+        elements: [
+          {
+            tag: 'input',
+            name: options.fieldName,
+            placeholder: { tag: 'plain_text', content: options.placeholder },
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: options.submitLabel },
+            type: 'primary',
+            action_type: 'form_submit',
+            value: actionValue({ kind: 'panel-input-submit', command: options.command }),
+          },
+        ],
+      },
+      {
+        tag: 'action',
+        actions: [
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '⬅ Back' },
+            value: actionValue({ kind: 'panel-back' }),
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/** One destructive-action confirmation card (panel confirm sub-view). */
+export function buildConfirmCard(options: {
+  readonly title: string;
+  readonly message: string;
+  readonly confirmLabel: string;
+  readonly command: string;
+}): CardJson {
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: options.title }, template: 'wathet' },
+    elements: [
+      { tag: 'markdown', content: options.message },
+      { tag: 'hr' },
+      {
+        tag: 'action',
+        actions: [
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: options.confirmLabel },
+            type: 'primary',
+            value: actionValue({ kind: 'panel-confirm', command: options.command }),
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '⬅ Back' },
+            value: actionValue({ kind: 'panel-back' }),
+          },
+        ],
+      },
+    ],
   };
 }
 
