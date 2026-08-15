@@ -389,7 +389,7 @@ describe('card buttons', () => {
   it('shows only the stop button while working', () => {
     const card = buildCard({ title: 'T', content: 'x', rows: [], status: 'working' });
     const action = card.elements.find((el) => el.tag === 'action');
-    expect(buttonLabels(action)).toEqual(['⏹ Stop']);
+    expect(buttonLabels(action)).toEqual(['⏹ Stop turn']);
   });
 });
 
@@ -464,7 +464,7 @@ describe('buildPanelCard', () => {
         ? action.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
         : [];
     };
-    expect(labelsOf(running)).toEqual(['⏹ Stop current', '🔁 Retry last', '📋 Copy last']);
+    expect(labelsOf(running)).toEqual(['⏹ Stop current turn', '🔁 Retry last', '📋 Copy last']);
     expect(labelsOf(idle)).toEqual(['🔁 Retry last', '📋 Copy last']);
   });
 });
@@ -675,7 +675,11 @@ describe('buildPanelCard palette', () => {
     expect(buttonLabels(idleCore)).toEqual(['🔁 Retry last', '📋 Copy last']);
     const running = buildPanelCard('**Running**', true, [], 0);
     const runningCore = running.elements.find((el) => el.tag === 'action');
-    expect(buttonLabels(runningCore)).toEqual(['⏹ Stop current', '🔁 Retry last', '📋 Copy last']);
+    expect(buttonLabels(runningCore)).toEqual([
+      '⏹ Stop current turn',
+      '🔁 Retry last',
+      '📋 Copy last',
+    ]);
   });
 
   it('renders no palette section when there are no commands', () => {

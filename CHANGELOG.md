@@ -129,12 +129,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Answered multi-select question cards kept their buttons** (user
+  report): a toggle re-posts the card and retargets the interaction, but
+  the finalize update used the INITIAL card's message id, so the card the
+  user actually saw was never replaced by the static answer. The
+  `questionState` now tracks the latest card and the finalize update lands
+  on it (regression test).
+- **Pagination posted a new card instead of updating in place** (user
+  report): panel, sessions, and repo page flips now `updateCard` the
+  current card (no card stacking on mobile; the panel tracks its message
+  id).
+- **Panel button semantics** (user report): Stop reads "⏹ Stop turn" /
+  "⏹ Stop current turn" (it stops the running turn, not the session);
+  `/clear` (Fresh start) is the same action as `/new` so only ➕ New chat
+  appears in the panel (`/clear` stays a slash alias); the Plan mode button
+  label flips to "🗺️ Leave plan mode" while active.
 - **`dsh-feishu-setup` exited silently through its npm bin link** (user
   report): the direct-execution entry check compared `process.argv[1]` —
   the bin SYMLINK path when invoked via `node_modules/.bin` — against the
   real module URL, so `main()` never ran and the CLI produced no output.
   The entry check now `realpathSync`s the argv path first. Verified end to
   end through a packed tarball's bin link.
+
+### Changed
+
 
 - **`dsh plugin add` failed under pnpm ≥ 11** (user report): pnpm 11
   blocks dependency build scripts by default, so installing the plugin

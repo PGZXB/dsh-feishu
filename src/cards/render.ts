@@ -286,7 +286,7 @@ function statusButtonRows(status: CardStatus, hasRows: boolean, collapsed: boole
   if (status === 'working') {
     actions.push({
       tag: 'button',
-      text: { tag: 'plain_text', content: '⏹ Stop' },
+      text: { tag: 'plain_text', content: '⏹ Stop turn' },
       type: 'danger',
       value: actionValue({ kind: 'stop' }),
     });
@@ -660,7 +660,7 @@ export function buildPanelCard(
   if (running) {
     core.push({
       tag: 'button',
-      text: { tag: 'plain_text', content: '⏹ Stop current' },
+      text: { tag: 'plain_text', content: '⏹ Stop current turn' },
       type: 'danger',
       value: actionValue({ kind: 'stop' }),
     });

@@ -49,7 +49,13 @@ import { buildSessionsCard, type SessionRowView } from './cards/session-list.js'
 import type { StreamingCardManager } from './cards/streaming.js';
 import { toolRowSummary } from './cards/tool-summary.js';
 import { CommandRegistry, type CommandResult, parseSlash } from './commands.js';
-import type { CardAction, FeishuMessage, FeishuTransport, SentCard } from './feishu/types.js';
+import type {
+  CardAction,
+  CardJson,
+  FeishuMessage,
+  FeishuTransport,
+  SentCard,
+} from './feishu/types.js';
 import { MessageDeduplicator } from './message-dedup.js';
 import { type ProjectInfo, scanMultipleProjects } from './projects.js';
 import { buildSessionExport, type SessionExportEvent } from './session-export.js';
@@ -511,6 +517,9 @@ export class Bridge {
   private readonly lastOutputs = new Map<string, string>();
   /** Active repo-picker card message id per chat; a pick consumes it. */
   private readonly pickerMessageIds = new Map<string, string>();
+  /** The most recently opened panel card per chat (pagination updates it
+   *  in place instead of posting a new card — mobile UX, user report). */
+  private readonly panelMessageIds = new Map<string, string>();
   /** Active /sessions picker card message id per chat (stale-callback guard). */
   private readonly sessionPickerMessageIds = new Map<string, string>();
   /** Active /permission picker card message id per chat (stale-callback guard). */
@@ -522,7 +531,16 @@ export class Bridge {
   /** Multi-select question state per request id (toggle + submit). */
   private readonly questionState = new Map<
     string,
-    { readonly chatId: string; readonly view: QuestionView; selection: string[] }
+    {
+      readonly chatId: string;
+      readonly view: QuestionView;
+      selection: string[];
+      /** The card the interaction currently targets — retargeted when the
+       *  multi-select card is re-posted with checkmarks, so the finalize
+       *  update lands on the newest card (user report: answered cards kept
+       *  their buttons because the initial message id went stale). */
+      messageId: string;
+    }
   >();
   /** Chats awaiting a free-text question answer (request id per chat). */
   private readonly awaitingQuestionAnswers = new Map<string, { readonly requestId: string }>();
@@ -888,6 +906,16 @@ export class Bridge {
    * @param page - zero-based palette page.
    */
   private async openPanel(chatId: string, page = 0): Promise<void> {
+    const sent = await this.options.transport.sendCard(
+      chatId,
+      this.buildPanelCardFor(chatId, page),
+    );
+    this.panelMessageIds.set(chatId, sent.messageId);
+    this.syncCard(chatId);
+  }
+
+  /** Construct the panel card for a chat at the given command page. */
+  private buildPanelCardFor(chatId: string, page: number): CardJson {
     const agent = this.liveAgent(chatId);
     const running = agent !== undefined && agent.status === 'running';
     const state = this.cardStates.get(chatId);
@@ -912,11 +940,26 @@ export class Bridge {
         : sessionId === undefined
           ? `No session yet · \`${cwd}\``
           : `session \`${sessionId}\` · \`${cwd}\``;
-    await this.options.transport.sendCard(
-      chatId,
-      buildPanelCard(`${statusLine}\n${contextLine}`, running, this.panelCommands(), page),
+    // Toggle commands show their CURRENT state on the button (plan mode is
+    // the one today — the label flips instead of staying static, user report).
+    const commands = this.panelCommands().map((command) =>
+      command.name === 'plan'
+        ? { ...command, buttonLabel: this.planModeButtonLabel(chatId) }
+        : command,
     );
-    this.syncCard(chatId);
+    return buildPanelCard(`${statusLine}\n${contextLine}`, running, commands, page);
+  }
+
+  /** The plan-mode toggle button label for a chat's current state. */
+  private planModeButtonLabel(chatId: string): string {
+    const planMode = this.options.planMode;
+    if (planMode === undefined) return '🗺️ Plan mode';
+    const sessionId = this.options.sessionMap.get(chatId);
+    const agent = sessionId === undefined ? undefined : this.options.agentStore.get(sessionId);
+    if (agent === undefined) return '🗺️ Plan mode';
+    const current = planMode.get(agent);
+    const active = current.pending ?? current.active;
+    return active ? '🗺️ Leave plan mode' : '🗺️ Plan mode';
   }
 
   /**
@@ -1065,11 +1108,12 @@ export class Bridge {
       const messageId = sent.messageId;
       // Once answered, the card becomes a static confirmation (no buttons —
       // further taps do nothing, user report). Deferred out of the card
-      // callback ACK.
-      const finalizeCard = (answerText: string): void => {
+      // callback ACK. The target is the LATEST card the interaction points
+      // at (a multi-select re-post retargets it), not the initial post.
+      const finalizeCard = (targetMessageId: string, answerText: string): void => {
         setTimeout(() => {
           void this.options.transport
-            .updateCard(messageId, buildQuestionAnsweredCard(question.question, answerText))
+            .updateCard(targetMessageId, buildQuestionAnsweredCard(question.question, answerText))
             .catch((error: unknown) => {
               this.options.logger.warn(`question card settle update failed: ${String(error)}`);
             });
@@ -1083,25 +1127,28 @@ export class Bridge {
           if (pending?.requestId === requestId) this.awaitingQuestionAnswers.delete(chatId);
           const cancelled = outcome === 'cancelled';
           const text = cancelled ? '' : outcome;
-          finalizeCard(cancelled ? 'cancelled' : outcome);
+          finalizeCard(messageId, cancelled ? 'cancelled' : outcome);
           settleOne({ id: question.id, selected: [], ...(text === '' ? {} : { custom: text }) });
         });
         continue;
       }
       if (view.multiSelect) {
-        this.questionState.set(requestId, { chatId, view, selection: [] });
+        this.questionState.set(requestId, { chatId, view, selection: [], messageId });
         this.interactions.register(requestId, chatId, messageId, () => {
           const state = this.questionState.get(requestId);
           this.questionState.delete(requestId);
           const selected = state?.selection ?? [];
-          finalizeCard(selected.length === 0 ? 'cancelled' : selected.join(', '));
+          finalizeCard(
+            state?.messageId ?? messageId,
+            selected.length === 0 ? 'cancelled' : selected.join(', '),
+          );
           settleOne({ id: question.id, selected });
         });
         continue;
       }
       // Single-select: the chosen option label is the outcome.
       this.interactions.register(requestId, chatId, messageId, (outcome) => {
-        finalizeCard(outcome);
+        finalizeCard(messageId, outcome);
         settleOne({ id: question.id, selected: [outcome] });
       });
     }
@@ -1788,12 +1835,10 @@ export class Bridge {
         if (!Number.isInteger(page) || page < 0) break;
         const projects = await listProjects(this.options.repoRoots ?? []);
         try {
-          const sent = await this.options.transport.sendCard(
-            action.chatId,
+          await this.options.transport.updateCard(
+            action.messageId,
             buildRepoPickerCard(projects, this.options.repoRoots ?? [], page),
           );
-          // The page flip posts a fresh picker card — it becomes the active one.
-          this.pickerMessageIds.set(action.chatId, sent.messageId);
         } catch (error: unknown) {
           this.options.logger.warn(`repo picker page refresh failed: ${String(error)}`);
         }
@@ -1832,7 +1877,22 @@ export class Bridge {
       case 'panel-page': {
         const page = Number(action.value.page);
         if (!Number.isInteger(page) || page < 0) break;
-        await this.openPanel(action.chatId, page);
+        // Update the panel card IN PLACE — a page flip must not stack a new
+        // card (mobile UX, user report).
+        const existing = this.panelMessageIds.get(action.chatId);
+        if (existing === undefined || existing !== action.messageId) {
+          await this.openPanel(action.chatId, page);
+          break;
+        }
+        try {
+          await this.options.transport.updateCard(
+            existing,
+            this.buildPanelCardFor(action.chatId, page),
+          );
+        } catch (error: unknown) {
+          this.options.logger.warn(`panel page refresh failed: ${String(error)}`);
+        }
+        this.syncCard(action.chatId);
         break;
       }
       case 'command': {
@@ -1893,12 +1953,7 @@ export class Bridge {
           break;
         }
         try {
-          const sent = await this.options.transport.sendCard(
-            action.chatId,
-            buildSessionsCard(rows, page),
-          );
-          // The page flip posts a fresh picker card — it becomes the active one.
-          this.sessionPickerMessageIds.set(action.chatId, sent.messageId);
+          await this.options.transport.updateCard(action.messageId, buildSessionsCard(rows, page));
         } catch (error: unknown) {
           this.options.logger.warn(`sessions picker page refresh failed: ${String(error)}`);
         }
@@ -2041,6 +2096,7 @@ export class Bridge {
             buildQuestionCard(state.view, state.selection),
           );
           this.interactions.retarget(id, sent.messageId);
+          state.messageId = sent.messageId;
         } catch (error: unknown) {
           this.options.logger.warn(`question toggle re-post failed: ${String(error)}`);
         }
@@ -2111,7 +2167,7 @@ export class Bridge {
       name: 'cancel',
       description: 'Stop the current turn',
       category: 'session',
-      buttonLabel: '⏹ Stop',
+      buttonLabel: '⏹ Stop turn',
       handler: (invocation) => {
         const sessionId = options.sessionMap.get(invocation.chatId);
         const agent = sessionId === undefined ? undefined : options.agentStore.get(sessionId);
@@ -2423,6 +2479,9 @@ export class Bridge {
       description: 'Start a fresh conversation (previous session stays saved)',
       category: 'session',
       buttonLabel: '✨ Fresh start',
+      // /new IS the panel button; /clear stays a slash-only alias (the two
+      // commands are the same action — duplicate buttons confuse (user report)).
+      hiddenFromPanel: true,
       handler: startFresh,
     });
     this.commands.register({

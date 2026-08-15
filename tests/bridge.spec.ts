@@ -779,7 +779,7 @@ describe('Bridge', () => {
         runningAction && 'actions' in runningAction
           ? runningAction.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
           : [];
-      expect(runningLabels).toEqual(['⏹ Stop current', '🔁 Retry last', '📋 Copy last']);
+      expect(runningLabels).toEqual(['⏹ Stop current turn', '🔁 Retry last', '📋 Copy last']);
       // Turn ends → agent idle → panel has no Stop button.
       await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
       h.agentStore.setStatus('feishu-session-1', 'idle');
@@ -1782,14 +1782,16 @@ describe('session commands (/sessions /resume /clear /new)', () => {
       operatorOpenId: 'ou_user',
       value: { kind: 'sessions-page', page: '1' },
     });
+    // The page flip updates the SAME card in place — no new card is posted.
     expect(
-      h.transport.sentCards
+      h.transport.updatedCards
         .at(-1)
         ?.elements.some(
           (el) =>
             el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 2/3'),
         ),
     ).toBe(true);
+    expect(h.transport.sentCards).toHaveLength(1);
   });
 
   it('a resume button resumes a persisted session and rebinds the chat', async () => {
@@ -1965,8 +1967,10 @@ describe('panel command palette', () => {
     // Page 1 holds the session group (7) plus chat (1) — 8 buttons; the
     // system group (help/status + the dsh web wrappers) is on page 2.
     expect(labels).toContain('🗂️ Sessions');
-    expect(labels).toContain('✨ Fresh start');
     expect(labels).toContain('➕ New chat');
+    // /clear is the same action as /new and stays slash-only (one panel
+    // button, user report) — its button is hidden.
+    expect(labels).not.toContain('✨ Fresh start');
     expect(labels).toContain('↩️ Resume session');
     await h.bridge.handleCardAction({
       messageId: 'mem-1',
@@ -2070,6 +2074,32 @@ describe('panel command palette', () => {
       });
     }
     expect(h.transport.sentCards.length).toBe(before + 1);
+  });
+
+  it('panel page flips update the panel card IN PLACE (no new card)', async () => {
+    const h = makeHarness();
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel' },
+    });
+    const panelId = lastCardId(h);
+    // The page flip targets the CURRENT panel card: it is updated in place.
+    await h.bridge.handleCardAction({
+      messageId: panelId,
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel-page', page: '1' },
+    });
+    const updated = h.transport.updatedCards.at(-1);
+    expect(
+      updated?.elements.some(
+        (el) =>
+          el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page 2/2'),
+      ),
+    ).toBe(true);
+    expect(h.transport.sentCards).toHaveLength(1);
   });
 
   it('a command button executes the same handler as the slash line', async () => {
@@ -2634,7 +2664,7 @@ describe('/panel command', () => {
       core && 'actions' in core
         ? core.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
         : [];
-    expect(coreLabels).toEqual(['⏹ Stop current', '🔁 Retry last', '📋 Copy last']);
+    expect(coreLabels).toEqual(['⏹ Stop current turn', '🔁 Retry last', '📋 Copy last']);
   });
 });
 
@@ -2929,6 +2959,46 @@ describe('interactive questions (Iteration 3)', () => {
     await expect(pending).resolves.toEqual({
       answers: [{ id: 'q1', selected: ['A', 'B'] }],
     });
+  });
+
+  it('finalizes the LATEST multi-select card after toggles (regression)', async () => {
+    const h = makeHarness();
+    h.sessionMap.set('oc_chat', 'feishu-session-1');
+    const agent = await h.agentStore.resume('feishu-session-1');
+    const pending = h.bridge.askQuestions({
+      agent,
+      questions: [
+        {
+          id: 'q1',
+          question: 'Pick any',
+          multiSelect: true,
+          options: [{ label: 'A' }, { label: 'B' }],
+        },
+      ],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Toggle A: the card is re-posted (new message id) and the interaction
+    // is retargeted to it.
+    await h.bridge.handleCardAction({
+      messageId: 'msg-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'question-toggle', id: 'q1', option: 'A' },
+    });
+    const rePostedId = `msg-${h.transport.sentCards.length}`;
+    // Submit from the NEWEST card.
+    await h.bridge.handleCardAction({
+      messageId: rePostedId,
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'question-submit', id: 'q1' },
+    });
+    await expect(pending).resolves.toEqual({ answers: [{ id: 'q1', selected: ['A'] }] });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The LATEST card was finalized as a static answer — no buttons left.
+    const last = h.transport.updatedCards.at(-1);
+    expect(last?.elements.some((el) => el.tag === 'action')).toBe(false);
+    expect(JSON.stringify(last?.elements)).toContain('Answer: A');
   });
 
   it('submitting a multi-select question with no selection settles an empty answer', async () => {
