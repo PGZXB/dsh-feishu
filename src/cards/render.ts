@@ -122,6 +122,7 @@ export type SurfaceAction =
   // callback's `option`); the legacy button carried the id.
   | { readonly kind: 'session-select'; readonly sessionId?: string }
   | { readonly kind: 'sessions-archived-toggle' }
+  | { readonly kind: 'session-find' }
   | { readonly kind: 'session-archive'; readonly sessionId: string }
   | { readonly kind: 'session-rename'; readonly sessionId: string }
   | { readonly kind: 'session-export'; readonly sessionId: string };

@@ -145,12 +145,13 @@ describe('buildSessionsCard', () => {
           el.elements[0]?.content.includes(`${many.length - SESSION_SELECT_MAX} more`),
       ),
     ).toBe(true);
-    // The dropdown view has exactly the archive toggle and Back — no page nav.
+    // The dropdown view has exactly the archive toggle, Find, and Back —
+    // no page nav.
     const nav = card.elements.flatMap((el) =>
       el.tag === 'action'
         ? el.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
         : [],
     );
-    expect(nav).toEqual(['🗄️ Archived', '⬅ Back']);
+    expect(nav).toEqual(['🗄️ Archived', '🔎 Find session', '⬅ Back']);
   });
 });

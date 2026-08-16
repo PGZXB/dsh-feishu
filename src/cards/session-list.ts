@@ -30,8 +30,9 @@ export interface SessionRowView {
   readonly current: boolean;
 }
 
-/** Max sessions in the dropdown picker (Feishu select option cap). */
-export const SESSION_SELECT_MAX = 20;
+/** Max sessions in the dropdown picker (Feishu's real select_static option
+ *  cap — botmux measured 58 options failing, so 50 is the safe bound). */
+export const SESSION_SELECT_MAX = 50;
 
 /**
  * Relative age label for a `createdAt` timestamp, or `''` when unknown.
@@ -83,11 +84,19 @@ export function sessionRowLine(row: SessionRowView): string {
  * current/live badges) — pick one to open its detail sub-view (Resume/
  * Rename/Archive/Export); the current session's option is marked ★. Archived
  * sessions are hidden unless `archived` (then only archived ones show).
+ * `query` filters by title or id substring so ANY session is reachable even
+ * when the corpus exceeds the dropdown cap (Feishu caps select_static at
+ * {@link SESSION_SELECT_MAX}) — the 🔎 Find session input opens that filter.
  * @param sessions - the session rows, newest-first.
  * @param archived - whether to show the archived view instead of active.
+ * @param query - optional id/title substring filter (case-insensitive).
  * @returns Feishu interactive card JSON (v1 layout).
  */
-export function buildSessionsCard(sessions: readonly SessionRowView[], archived = false): CardJson {
+export function buildSessionsCard(
+  sessions: readonly SessionRowView[],
+  archived = false,
+  query?: string,
+): CardJson {
   const elements: CardElement[] = [
     {
       tag: 'markdown',
@@ -107,16 +116,32 @@ export function buildSessionsCard(sessions: readonly SessionRowView[], archived 
           },
           value: actionValue({ kind: 'sessions-archived-toggle' }),
         },
+        {
+          tag: 'button',
+          text: { tag: 'plain_text', content: '🔎 Find session' },
+          value: actionValue({ kind: 'session-find' }),
+        },
       ],
     },
     { tag: 'hr' },
   ];
-  if (sessions.length === 0) {
+  const filtered =
+    query === undefined || query.trim() === ''
+      ? sessions
+      : sessions.filter(
+          (row) =>
+            row.sessionId.toLowerCase().includes(query.trim().toLowerCase()) ||
+            (row.title ?? '').toLowerCase().includes(query.trim().toLowerCase()),
+        );
+  if (filtered.length === 0) {
     elements.push({
       tag: 'markdown',
-      content: archived
-        ? 'No archived sessions.'
-        : 'No sessions yet — send a message to start the first one.',
+      content:
+        query === undefined || query.trim() === ''
+          ? archived
+            ? 'No archived sessions.'
+            : 'No sessions yet — send a message to start the first one.'
+          : `No session matches \`${query}\` — try the id or part of the title.`,
     });
     elements.push({
       tag: 'action',
@@ -136,7 +161,7 @@ export function buildSessionsCard(sessions: readonly SessionRowView[], archived 
   }
   // A dropdown picks the session to inspect/edit (mobile-friendly: no long
   // list, no pagination — user requirement). Selecting opens the detail view.
-  const selectSessions = sessions.slice(0, SESSION_SELECT_MAX);
+  const selectSessions = filtered.slice(0, SESSION_SELECT_MAX);
   elements.push({
     tag: 'action',
     actions: [
@@ -154,13 +179,13 @@ export function buildSessionsCard(sessions: readonly SessionRowView[], archived 
       },
     ],
   });
-  if (sessions.length > SESSION_SELECT_MAX) {
+  if (filtered.length > SESSION_SELECT_MAX) {
     elements.push({
       tag: 'note',
       elements: [
         {
           tag: 'plain_text',
-          content: `${sessions.length - SESSION_SELECT_MAX} more — archiving or resuming frees the list.`,
+          content: `${filtered.length - SESSION_SELECT_MAX} more — use 🔎 Find session to reach any of them.`,
         },
       ],
     });

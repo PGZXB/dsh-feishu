@@ -1476,9 +1476,7 @@ describe('working directory commands', () => {
       writeFileSync(join(root, name, '.git', 'HEAD'), 'ref: refs/heads/main\n');
     }
     await h.bridge.handleMessage(message({ text: '/repo' }));
-    const picker = h.transport.sentCards.find((c) =>
-      c.header?.title.content.includes('Pick a project'),
-    );
+    const picker = findCardByTitle(h, (title) => title.includes('Pick a project'));
     expect(picker).toBeDefined();
     const action = picker?.elements.find((el) => el.tag === 'action');
     expect(action && 'actions' in action ? action.actions[0]?.tag : undefined).toBe(
@@ -1504,9 +1502,7 @@ describe('working directory commands', () => {
   it('/repo with an empty root list posts an empty picker (no crash, no dropdown)', async () => {
     const h = makeHarness({ repoRoots: [join(SCRATCH, 'no-projects-here')] });
     await h.bridge.handleMessage(message({ text: '/repo' }));
-    const picker = h.transport.sentCards.find((c) =>
-      c.header?.title.content.includes('Pick a project'),
-    );
+    const picker = findCardByTitle(h, (title) => title.includes('Pick a project'));
     expect(picker).toBeDefined();
     // No dropdown options — only the guidance markdown and the Back row.
     expect(
@@ -1522,9 +1518,7 @@ describe('working directory commands', () => {
   it('/repo without repoRoots configured still posts the picker (empty)', async () => {
     const h = makeHarness();
     await h.bridge.handleMessage(message({ text: '/repo' }));
-    const picker = h.transport.sentCards.find((c) =>
-      c.header?.title.content.includes('Pick a project'),
-    );
+    const picker = findCardByTitle(h, (title) => title.includes('Pick a project'));
     expect(picker).toBeDefined();
     expect(
       picker?.elements.some(
@@ -1565,9 +1559,7 @@ describe('working directory commands', () => {
       writeFileSync(join(root, rel, '.git', 'HEAD'), 'ref: refs/heads/main\n');
     }
     await h.bridge.handleMessage(message({ text: '/repo' }));
-    const picker = h.transport.sentCards.find((c) =>
-      c.header?.title.content.includes('Pick a project'),
-    );
+    const picker = findCardByTitle(h, (title) => title.includes('Pick a project'));
     const action = picker?.elements.find((el) => el.tag === 'action');
     const select = action && 'actions' in action ? action.actions[0] : undefined;
     if (select?.tag === 'select_static') {
@@ -1717,6 +1709,14 @@ function lastCardId(h: Harness): string {
   return `msg-${h.transport.sentCards.length}`;
 }
 
+/** Find a panel card by header title across BOTH the sent and updated card
+ *  streams (async panel views post a loading placeholder first — the real
+ *  card arrives as an update). */
+function findCardByTitle(h: Harness, predicate: (title: string) => boolean): CardJson | undefined {
+  const all = [...h.transport.sentCards, ...h.transport.updatedCards];
+  return [...all].reverse().find((card) => predicate(card.header?.title.content ?? ''));
+}
+
 /** The markdown body of every RESULT card posted (header ✅/⚠️), used to
  *  assert panel-action outcomes that now leave the panel as an inert card. */
 function resultCardTexts(h: Harness): string[] {
@@ -1736,7 +1736,7 @@ describe('session commands (/sessions /resume /clear /new)', () => {
   it('/sessions on an empty corpus shows the empty state card', async () => {
     const h = makeHarness({ listSessions: async () => [] });
     await h.bridge.handleMessage(message({ text: '/sessions' }));
-    const card = h.transport.sentCards.at(-1);
+    const card = h.transport.updatedCards.at(-1) ?? h.transport.sentCards.at(-1);
     expect(card?.header?.title.content).toBe('🗂️ Sessions');
     expect(
       card?.elements.some(
@@ -1749,7 +1749,7 @@ describe('session commands (/sessions /resume /clear /new)', () => {
     const h = makeHarness({ listSessions: async () => sessionRows() });
     await h.bridge.handleMessage(message());
     await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/sessions' }));
-    const card = h.transport.sentCards.at(-1);
+    const card = h.transport.updatedCards.at(-1) ?? h.transport.sentCards.at(-1);
     // The sessions view is a dropdown (user requirement: pick, don't page).
     const select = card?.elements.find(
       (el) => el.tag === 'action' && 'actions' in el && el.actions[0]?.tag === 'select_static',
@@ -1866,7 +1866,7 @@ describe('session commands (/sessions /resume /clear /new)', () => {
   });
 
   it('caps the sessions dropdown beyond SESSION_SELECT_MAX and never pages', async () => {
-    const many = Array.from({ length: 25 }, (_, index) => ({
+    const many = Array.from({ length: SESSION_SELECT_MAX + 5 }, (_, index) => ({
       sessionId: `feishu-session-${index}`,
       title: `Session ${index}`,
       cwd: undefined,
@@ -1876,7 +1876,7 @@ describe('session commands (/sessions /resume /clear /new)', () => {
     }));
     const h = makeHarness({ listSessions: async () => many });
     await h.bridge.handleMessage(message({ text: '/sessions' }));
-    const card = h.transport.sentCards.at(-1);
+    const card = h.transport.updatedCards.at(-1) ?? h.transport.sentCards.at(-1);
     const select = card?.elements.find(
       (el) => el.tag === 'action' && 'actions' in el && el.actions[0]?.tag === 'select_static',
     );
@@ -1896,6 +1896,47 @@ describe('session commands (/sessions /resume /clear /new)', () => {
         (el) => el.tag === 'note' && 'elements' in el && el.elements[0]?.content.includes('page '),
       ),
     ).toBe(false);
+  });
+
+  it('find-session reaches ANY session past the dropdown cap', async () => {
+    // Feishu caps select_static options (SESSION_SELECT_MAX); the 🔎 Find
+    // session input filters by id/title so every session is reachable.
+    const many = Array.from({ length: SESSION_SELECT_MAX + 5 }, (_, index) => ({
+      sessionId: `feishu-session-${index}`,
+      title: `Project ${index}`,
+      cwd: undefined,
+      createdAt: Date.now() - index * 1000,
+      live: false,
+      persisted: true,
+    }));
+    const h = makeHarness({ listSessions: async () => many });
+    await h.bridge.handleMessage(message({ text: '/sessions' }));
+    // The Find button is on the sessions card.
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'session-find' },
+    });
+    const inputCard = h.transport.updatedCards.at(-1) ?? h.transport.sentCards.at(-1);
+    expect(inputCard?.header?.title.content).toBe('🔎 Find session');
+    // Submit a fragment that only matches the last (out-of-cap) session.
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel-input-submit', command: 'find-session' },
+      formValue: { query: `feishu-session-${SESSION_SELECT_MAX + 4}` },
+    });
+    const filtered = h.transport.updatedCards.at(-1);
+    const select = filtered?.elements.find(
+      (el) => el.tag === 'action' && 'actions' in el && el.actions[0]?.tag === 'select_static',
+    );
+    const options =
+      select && 'actions' in select && select.actions[0]?.tag === 'select_static'
+        ? select.actions[0].options
+        : [];
+    expect(options.map((o) => o.value)).toEqual([`feishu-session-${SESSION_SELECT_MAX + 4}`]);
   });
 
   it('a resume button resumes a persisted session and rebinds the chat', async () => {
@@ -2049,7 +2090,7 @@ describe('session commands (/sessions /resume /clear /new)', () => {
     const h = makeHarness();
     await h.bridge.handleMessage(message());
     await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/sessions' }));
-    const card = h.transport.sentCards.at(-1);
+    const card = h.transport.updatedCards.at(-1) ?? h.transport.sentCards.at(-1);
     expect(card?.header?.title.content).toBe('🗂️ Sessions');
     // The bound session row labels this chat's session as 'this chat'.
     expect(JSON.stringify(card?.elements)).toContain('this chat');
@@ -2431,6 +2472,84 @@ describe('panel command palette', () => {
     expect(resultCardTexts(h).some((t) => t.includes('dsh-feishu commands'))).toBe(true);
   });
 
+  it('a permission pick renders for a persisted session (resume, not create)', async () => {
+    // Regression: the permission picker called ensureAgent which CREATED the
+    // session outright — a session the persisted state already owns throws
+    // ("persisted state already owns this identity"), the panel render
+    // failed, and every later panel button went dead. ensureAgent must
+    // RESUME a persisted session before create (user report).
+    const service = new FakePermissionService();
+    const h = makeHarness({ permissionPresets: service });
+    // The session exists in the map but has no live agent (e.g. after a bot
+    // restart): resume is the only legal path.
+    h.sessionMap.set('oc_chat', 'feishu-session-1');
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'command', name: 'permission' },
+    });
+    expect(h.transport.sentTexts.some((t) => t.text.includes('could not be rendered'))).toBe(false);
+    const picker = h.transport.updatedCards.at(-1) ?? h.transport.sentCards.at(-1);
+    expect(JSON.stringify(picker?.elements)).toContain('read-only');
+    expect(h.agentStore.resumed).toContain('feishu-session-1');
+    // The panel is NOT dead: a pick still works and returns to the menu.
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'permission-pick' },
+      option: 'read-only',
+    });
+    expect(service.applied).toEqual(['read-only']);
+    expect(h.transport.updatedCards.at(-1)?.header?.title.content).toBe('⚙️ dsh-feishu panel');
+  });
+
+  it('plan toggle still notifies and pops to menu for a persisted session', async () => {
+    const planMode = new FakePlanModeService();
+    const h = makeHarness({ planMode });
+    h.sessionMap.set('oc_chat', 'feishu-session-1');
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'command', name: 'plan' },
+    });
+    expect(resultCardTexts(h).some((t) => t.includes('Plan mode on'))).toBe(true);
+    expect(h.transport.sentCards.at(-1)?.header?.title.content).toBe('⚙️ dsh-feishu panel');
+  });
+
+  it('async panel views post a loading placeholder before the real card', async () => {
+    // Regression: sessions/detail/pickers render from async data; without a
+    // placeholder the callback carried no panel patch while the data loaded
+    // and Lark restored the pre-click (menu) card — the panel visibly
+    // reverted mid-transition (user report: "退回菜单").
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const h = makeHarness({
+      listSessions: async () => {
+        await gate;
+        return sessionRows();
+      },
+    });
+    const actionPromise = h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'command', name: 'sessions' },
+    });
+    // Let the loading placeholder land while the data is still pending.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const pending = h.transport.updatedCards.at(-1) ?? h.transport.sentCards.at(-1);
+    expect(JSON.stringify(pending?.elements)).toContain('Loading');
+    release?.();
+    await actionPromise;
+    const loaded = h.transport.updatedCards.at(-1) ?? h.transport.sentCards.at(-1);
+    expect(JSON.stringify(loaded?.elements)).toContain('Choose a session');
+  });
+
   it('a text-input command opens the input form; submit runs it with the value', async () => {
     const h = makeHarness();
     const { mkdirSync } = await import('node:fs');
@@ -2582,7 +2701,12 @@ describe('dsh web command wrappers', () => {
     });
     await h.bridge.handleMessage(message({ text: '/goal set the thing' }));
     expect(h.transport.sentTexts.some((t) => t.text === 'Goal set.')).toBe(true);
-    expect(h.agentStore.created.some((c) => c.sessionId === 'feishu-session-1')).toBe(true);
+    // An agent is bound to the session — created on a fresh chat, or resumed
+    // when the persisted state already owns it (ensureAgent ladder).
+    expect(
+      h.agentStore.created.some((c) => c.sessionId === 'feishu-session-1') ||
+        h.agentStore.resumed.includes('feishu-session-1'),
+    ).toBe(true);
   });
 
   it('wrapper surfaces registry error kinds as ⚠️', async () => {
@@ -2690,7 +2814,7 @@ describe('stateful web wrappers (/permission picker, /plan toggle)', () => {
     const service = new FakePermissionService();
     const h = makeHarness({ permissionPresets: service });
     await h.bridge.handleMessage(message({ text: '/permission' }));
-    const card = h.transport.sentCards.at(-1);
+    const card = h.transport.updatedCards.at(-1) ?? h.transport.sentCards.at(-1);
     expect(card?.header?.title.content).toBe('🔐 Permission presets');
     // A dropdown (repo-picker pattern) lists every preset; the current one
     // is preselected and spelled out in a note.
@@ -2954,7 +3078,7 @@ describe('/model picker', () => {
     const defaults = new FakeAgentDefaultModelService();
     const h = makeHarness({ llm, agentDefaultModel: defaults });
     await h.bridge.handleMessage(message({ text: '/model' }));
-    const card = h.transport.sentCards.at(-1);
+    const card = h.transport.updatedCards.at(-1) ?? h.transport.sentCards.at(-1);
     expect(card?.header?.title.content).toBe('🤖 Model');
     const action = card?.elements.find((el) => el.tag === 'action');
     const select =
@@ -2980,7 +3104,7 @@ describe('/model picker', () => {
     };
     const h = makeHarness({ llm });
     await h.bridge.handleMessage(message({ text: '/model' }));
-    const card = h.transport.sentCards.at(-1);
+    const card = h.transport.updatedCards.at(-1) ?? h.transport.sentCards.at(-1);
     expect(card?.header?.title.content).toBe('🤖 Model');
     // No dropdown options — the card is posted without a select.
     const action = card?.elements.find((el) => el.tag === 'action');

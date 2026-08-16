@@ -225,6 +225,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command (dsh forwards pnpm args verbatim), or add an `allowBuilds` entry
   to the profile's `pnpm-workspace.yaml`.
 
+- **`ensureAgent` wedged on a persisted session (user report).** The dsh web
+  wrappers (`/permission` picker, `/plan`) called `ensureAgent`, which
+  CREATED the session outright — a session the persisted state already owns
+  throws ("persisted state already owns this identity"). The panel render
+  failed ("⚠️ The panel view could not be rendered"), the panel reverted to
+  page 1, and every later page flip went dead. `ensureAgent` now follows the
+  same ladder as `resolveAgent`: live → resume → create → remint a fresh id.
+  A render failure also resets the panel stack to the menu root and reposts
+  the menu card, so flips/Back never die (regression tests).
+- **Async panel views reverted to the menu while loading (user report).**
+  `sessions`, `session-detail`, and the pickers render from async data;
+  while the data loaded, the callback carried no panel patch, so Lark
+  restored the pre-click (menu) card — the panel visibly "退回菜单"
+  mid-transition. `showPanel` now posts a **⏳ Loading… placeholder** (Back
+  only) FIRST, then the real card; the loading placeholder blocks mis-taps.
+- **Sessions dropdown could not reach every session (user report).** Feishu
+  caps `select_static` options, so the dropdown only ever showed a window of
+  the corpus. `SESSION_SELECT_MAX` raised 20 → 50 (Feishu's real cap) and a
+  **🔎 Find session** input filters by id/title fragment, making ANY session
+  reachable (regression test).
+
 - **Integration-test teardown raced the next test's state reset (CI flake
   under Node 22).** `afterEach` sent `SIGTERM` to the dsh child but did not
   wait for it to exit, so the child's lingering outbox writes could make

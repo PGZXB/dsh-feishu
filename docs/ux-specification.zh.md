@@ -252,7 +252,7 @@ harness 的裸 `/plan` 和 `/permission` 形式无法*选择*或*切换*：不�
 
 ### 8.5 会话生命周期命令
 
-- `/sessions` 是**下拉选择器**（移动端友好，用户需求 —— 无长列表、无分页）：一个 `select_static`，选项为各会话（`title ★ ● · id`），上限 `SESSION_SELECT_MAX = 20`，超出部分用 `note` 说明。选择后打开**会话详情子视图**（面板卡片内入栈）；所选会话 id 通过回调的 `option` 字段送达。
+- `/sessions` 是**下拉选择器**（移动端友好，用户需求 —— 无长列表、无分页）：一个 `select_static`，选项为各会话（`title ★ ● · id`），上限 `SESSION_SELECT_MAX = 50`（飞书 select_static 真实上限），超出部分用 `note` 说明。**🔎 Find session** 按钮打开输入子视图：输入 id 或标题片段即可过滤列表，因此上限之外的任意会话都可到达。选择后打开**会话详情子视图**（面板卡片内入栈）；所选会话 id 通过回调的 `option` 字段送达。
 - `/sessions` + `/resume` 数据：`ctx.sessionQuery`（由 dsh-base 的 `session-query-sqlite` 挂载）、`listSessions()` 最新优先 + 批量 `readTitleSnapshots()` 获取标题。服务缺失时 surface 降级为仅列出已绑定会话（响亮日志）。
 - 会话详情子视图（`🗂️ Session`）：会话信息（标题、id、cwd、创建时长、消息数、最后回答）加 **Resume**（当前会话隐藏）、**Rename**、**Archive**（归档时显示 **Restore** —— 宿主 `workspace.archiveSession` 可逆）、**Export**、**Back**（出栈）。仅当宿主 `apiProxy` seam 挂载时才有 Rename/Archive（否则静默降级）。
 - Resume 流程（`/resume <id>` 与详情页的 Resume 按钮共用）：聊天必须空闲；目标会话不得在另一个聊天中运行（"has an active turn — stop it in its chat first"）；恢复聊天自身的会话会提示 "already active"。然后 `SessionMap.set` 重新绑定（先前绑定解除 —— 1:1 chat↔session 模型），当没有存活的 agent 时 `agents.resume` 加载持久化的 agent。恢复失败（没有持久化日志）报告 ⚠️ 并保持 map 不变。Resume **不会**改变聊天固定的 cwd（那归 `/cd` 管），并且它会重置卡片状态，使历史永远不会被重放到卡片中。
@@ -260,7 +260,7 @@ harness 的裸 `/plan` 和 `/permission` 形式无法*选择*或*切换*：不�
 
 ### 8.6 面板调色板与面板状态机
 
-面板是一个**状态机**，而不是无状态重发：每个聊天只有一份权威视图栈（`PanelView[]`，菜单根在栈底）和一条渲染路径（`renderPanelView` → 同一张面板卡片）。按钮 PUSH 子视图（`input` 表单、`confirm`、`sessions`、`session-detail`、`picker`）；Back POPS；完成/拒绝回到菜单根（重命名后回到详情）。每次转换都在**同一张**面板卡片上原地更新（patch）；更新失败时重发卡片并记录新 id。全新聊天发送 `/panel` 时发布新卡片并重置栈为 `[menu(page 0)]`。
+面板是一个**状态机**，而不是无状态重发：每个聊天只有一份权威视图栈（`PanelView[]`，菜单根在栈底）和一条渲染路径（`renderPanelView` → 同一张面板卡片）。按钮 PUSH 子视图（`input` 表单、`confirm`、`sessions`、`session-detail`、`picker`）；Back POPS；完成/拒绝回到菜单根（重命名后回到详情）。每次转换都在**同一张**面板卡片上原地更新（patch）；更新失败时重发卡片并记录新 id。全新聊天发送 `/panel` 时发布新卡片并重置栈为 `[menu(page 0)]`。异步数据视图（`sessions`、`session-detail`、`picker`）会先发布**⏳ Loading… 占位卡**（仅 Back），再发布真实卡片 —— 回调必须立刻携带面板 patch，否则数据加载期间 Lark 会把面板恢复到点击前（菜单）的卡片，肉眼可见"退回菜单"（用户报告）。渲染失败时栈重置回菜单根并重发菜单卡，换页与 Back 永不死（用户报告：渲染失败后"换页按钮不再有反应"）。
 
 - 菜单（`⚙️ dsh-feishu panel`）：`buildPanelCard(statusLine, running, commands, page)` —— 核心行（运行中显示 Stop / Retry / Copy）保持最前；其下是完整命令调色板，按类别分组并带 emoji 标题（`🧩 Session` / `💬 Chat` / `⚙️ System`），每页 `PANEL_PAGE_SIZE = 8` 个按钮，一个安静的 `note` 页码指示器（`Commands · page 1/2`），◀️/▶️ 导航在边界处隐藏。每个按钮标记 `{kind:'command', name}` 并执行与斜杠命令相同的处理器。状态行携带聊天的会话上下文（`` session `id` · `cwd` ``）。
 - **输入子视图**（`📁 Change working directory`、`👥 Create group`、`🎯 Goal`、`💬 Feedback`、`✏️ Rename session`）：根级 `form`，含一个 `input` 和一个带 `name` 的 `form_submit` 按钮（飞书拒绝无名字的表单按钮 —— ErrCode 200530）。标签在 `form` 之外；提交后以输入值执行命令并回到菜单。

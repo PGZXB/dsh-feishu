@@ -390,10 +390,12 @@ session rebind/remint can never corrupt the live card.
 
 - `/sessions` is a **dropdown picker** (mobile-friendly, user requirement —
   no long list, no pagination): a `select_static` whose options are the
-  sessions (`title ★ ● · id`), capped at `SESSION_SELECT_MAX = 20` with a
-  `note` explaining the remainder. Selecting an option opens the **session
-  detail sub-view** inside the panel card (stack push); the choice arrives
-  in the callback's `option` field.
+  sessions (`title ★ ● · id`), capped at `SESSION_SELECT_MAX = 50` (Feishu's
+  real select_static option cap) with a `note` explaining the remainder.
+  A **🔎 Find session** button opens an input sub-view: typing an id or
+  title fragment filters the list, so ANY session is reachable past the cap.
+  Selecting an option opens the **session detail sub-view** inside the panel
+  card (stack push); the choice arrives in the callback's `option` field.
 - `/sessions` + `/resume` data: `ctx.sessionQuery` (mounted by dsh-base's
   `session-query-sqlite`), `listSessions()` newest-first + batch
   `readTitleSnapshots()` for titles. When the service is absent the surface
@@ -427,6 +429,13 @@ completion/refusal pops to the menu root (or back to the detail after a
 rename). Every transition updates the SAME panel card in place (patch); when
 an update fails the card is reposted and the new id recorded. `/panel` from a
 fresh chat posts a new card and resets the stack to `[menu(page 0)]`.
+Async-data views (`sessions`, `session-detail`, `picker`) post a **⏳
+Loading… placeholder** (Back only) FIRST, then the real card — the callback
+must carry a panel patch immediately, or Lark restores the pre-click (menu)
+card while the data loads and the panel visibly reverts mid-transition (user
+report: sessions/detail "退回菜单"). A render failure resets the stack to the
+menu root and reposts the menu card, so page flips and Back never go dead
+(user report: after a render failure "换页按钮不再有反应").
 
 - Menu (`⚙️ dsh-feishu panel`): `buildPanelCard(statusLine, running,
   commands, page)` — the core row (Stop while running / Retry / Copy) stays

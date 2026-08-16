@@ -29,6 +29,7 @@ import {
   buildInputCard,
   buildModelPickerCard,
   buildPanelCard,
+  buildPanelNoticeCard,
   buildPermissionPickerCard,
   buildQuestionAnsweredCard,
   buildQuestionCard,
@@ -95,7 +96,7 @@ export type PanelView =
   | { readonly kind: 'menu'; readonly page: number }
   | { readonly kind: 'input'; readonly command: PanelInputCommand; readonly sessionId?: string }
   | { readonly kind: 'confirm'; readonly command: 'clear' | 'compact' }
-  | { readonly kind: 'sessions'; readonly archived: boolean }
+  | { readonly kind: 'sessions'; readonly archived: boolean; readonly query?: string }
   | { readonly kind: 'session-detail'; readonly sessionId: string }
   | {
       readonly kind: 'picker';
@@ -104,7 +105,13 @@ export type PanelView =
     };
 
 /** Commands whose panel button opens a text-input sub-view. */
-export type PanelInputCommand = 'cd' | 'group' | 'goal' | 'feedback' | 'rename-session';
+export type PanelInputCommand =
+  | 'cd'
+  | 'group'
+  | 'goal'
+  | 'feedback'
+  | 'rename-session'
+  | 'find-session';
 
 /** Narrow a panel command marker to the input commands. */
 function isPanelInputCommand(value: string | undefined): value is PanelInputCommand {
@@ -113,7 +120,8 @@ function isPanelInputCommand(value: string | undefined): value is PanelInputComm
     value === 'group' ||
     value === 'goal' ||
     value === 'feedback' ||
-    value === 'rename-session'
+    value === 'rename-session' ||
+    value === 'find-session'
   );
 }
 
@@ -162,6 +170,13 @@ const PANEL_INPUT_SPEC: Record<
     fieldName: 'title',
     placeholder: 'New title',
     submitLabel: 'Rename',
+  },
+  'find-session': {
+    title: '🔎 Find session',
+    hint: 'Send a session id or part of its title to filter the list.',
+    fieldName: 'query',
+    placeholder: 'e.g. feishu-session-1 or "old project"',
+    submitLabel: 'Find',
   },
 };
 
@@ -864,6 +879,7 @@ export class Bridge {
     'feishu-status',
     'schedule',
     'sessions',
+    'find-session',
     'cancel',
     'group',
     'model',
@@ -1131,16 +1147,72 @@ export class Bridge {
    */
   private async showPanel(chatId: string): Promise<void> {
     const view = this.panelViewFor(chatId);
+    // Views that load async data (sessions, pickers, detail) can take a
+    // while. Post a loading placeholder FIRST so the callback carries a
+    // panel patch — otherwise Lark restores the pre-click (menu) card while
+    // the data loads and the panel visibly reverts mid-transition (user
+    // report: sessions/detail "退回菜单"). The placeholder has only Back,
+    // so no mis-taps land while it is up.
+    if (this.panelViewIsAsync(view)) {
+      await this.postPanelCard(chatId, this.loadingPanelCard(view));
+    }
     let card: CardJson;
     try {
       card = await this.renderPanelView(chatId, view);
     } catch (error: unknown) {
       this.options.logger.error(`panel view render failed: ${String(error)}`);
+      // The stack may hold the view that failed to render (e.g. a picker
+      // whose data source is broken). Reset to the menu root and repost the
+      // menu card so the panel is never left with a dead view — page flips
+      // and Back must keep working (user report: after a render failure
+      // "换页按钮不再有反应").
+      this.panelViews.set(chatId, [this.panelStack(chatId)[0] ?? { kind: 'menu', page: 0 }]);
+      try {
+        await this.postPanelCard(chatId, this.buildPanelCardFor(chatId, 0));
+      } catch (postError: unknown) {
+        this.options.logger.warn(
+          `panel menu repost after render failure failed: ${String(postError)}`,
+        );
+      }
       await this.options.transport
         .sendText(chatId, '⚠️ The panel view could not be rendered — see the bot log.')
         .catch(() => {});
       return;
     }
+    await this.postPanelCard(chatId, card);
+    this.syncCard(chatId);
+  }
+
+  /** Whether a panel view renders from async data (sessions/pickers/detail —
+   *  everything whose card needs a moment; the menu/input/confirm are sync). */
+  private panelViewIsAsync(view: PanelView): boolean {
+    return view.kind === 'sessions' || view.kind === 'session-detail' || view.kind === 'picker';
+  }
+
+  /** The loading placeholder for an async panel view (Back only). */
+  private loadingPanelCard(view: PanelView): CardJson {
+    const title =
+      view.kind === 'sessions'
+        ? '🗂️ Sessions'
+        : view.kind === 'session-detail'
+          ? '🗂️ Session'
+          : view.kind === 'picker' && view.picker === 'repo'
+            ? '📚 Pick a project'
+            : view.kind === 'picker' && view.picker === 'model'
+              ? '🤖 Model'
+              : '🔐 Permission';
+    return buildPanelNoticeCard({ title, hint: '⏳ Loading…' });
+  }
+
+  /**
+   * Post (or in-place update) the panel card. A NEW card is posted on first
+   * render; every later transition updates the SAME card. A failed update
+   * falls back to posting a fresh card; a failed render/post surfaces as a
+   * text notice — state and the on-screen card never diverge silently.
+   * @param chatId - the chat.
+   * @param card - the panel card to display.
+   */
+  private async postPanelCard(chatId: string, card: CardJson): Promise<void> {
     const existing = this.panelMessageIds.get(chatId);
     try {
       if (existing !== undefined) {
@@ -1164,7 +1236,6 @@ export class Bridge {
           .catch(() => {});
       }
     }
-    this.syncCard(chatId);
   }
 
   /**
@@ -1247,9 +1318,9 @@ export class Bridge {
       case 'sessions': {
         const rows = await this.loadSessions(chatId, view.archived);
         if (rows === undefined) {
-          return buildSessionsCard([], view.archived);
+          return buildSessionsCard([], view.archived, view.query);
         }
-        return buildSessionsCard(rows, view.archived);
+        return buildSessionsCard(rows, view.archived, view.query);
       }
       case 'session-detail': {
         const detail = await this.sessionDetailView(chatId, view.sessionId);
@@ -1581,7 +1652,12 @@ export class Bridge {
   /**
    * Ensure a session and live agent exist for the chat (used by the dsh web
    * command wrappers, which execute against an agent). Mints a session on a
-   * fresh chat — documented wrapper behavior.
+   * fresh chat — documented wrapper behavior. For a persisted session with no
+   * live agent, RESUME before create — a bare create on a session the
+   * persisted state already owns throws ("persisted state already owns this
+   * identity") and wedges the surface (user report: /permission showed "The
+   * panel view could not be rendered" and every later panel button went
+   * dead).
    * @param chatId - the chat.
    * @returns a live agent bound to the chat's session.
    */
@@ -1590,7 +1666,20 @@ export class Bridge {
     const live = this.options.agentStore.get(sessionId);
     if (live !== undefined) return live;
     const cwd = this.options.sessionMap.cwdFor(chatId) ?? this.options.defaultCwd;
-    return this.options.agentStore.create(sessionId, cwd);
+    try {
+      return await this.options.agentStore.resume(sessionId);
+    } catch (resumeError: unknown) {
+      this.options.logger.warn(`resume of session ${sessionId} failed: ${String(resumeError)}`);
+    }
+    try {
+      return await this.options.agentStore.create(sessionId, cwd);
+    } catch (createError: unknown) {
+      this.options.logger.error(
+        `session ${sessionId} unusable (${String(createError)}); rebinding a fresh session`,
+      );
+      const freshId = this.options.sessionMap.remint(chatId);
+      return this.options.agentStore.create(freshId, cwd);
+    }
   }
 
   /** The normal turn flow: session resolution, streaming card, followup. */
@@ -2225,6 +2314,19 @@ export class Bridge {
         }
         const fieldName = PANEL_INPUT_SPEC[commandName].fieldName;
         const rawInput = action.formValue?.[fieldName] ?? '';
+        if (commandName === 'find-session') {
+          // Filter the sessions list by id/title fragment — reach any session
+          // past the dropdown cap (user report). No session mutation, so the
+          // working-state gate above is the only refusal.
+          const view = this.panelViewFor(action.chatId);
+          const archived = view.kind === 'sessions' ? view.archived : false;
+          await this.replacePanel(action.chatId, {
+            kind: 'sessions',
+            archived,
+            query: rawInput.trim(),
+          });
+          break;
+        }
         if (commandName === 'rename-session') {
           // Rename goes through the host session seam (dsh web parity).
           const sessionId = action.value.sessionId;
@@ -2378,6 +2480,13 @@ export class Bridge {
         const view = this.panelViewFor(action.chatId);
         const archived = view.kind === 'sessions' ? !view.archived : false;
         await this.replacePanel(action.chatId, { kind: 'sessions', archived });
+        break;
+      }
+      case 'session-find': {
+        // Reach ANY session past the dropdown cap: type an id/title fragment
+        // and the list filters to it (user report: the dropdown can't show
+        // the whole corpus — Feishu caps select_static options).
+        await this.pushPanel(action.chatId, { kind: 'input', command: 'find-session' });
         break;
       }
       case 'session-rename': {

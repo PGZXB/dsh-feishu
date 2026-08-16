@@ -837,25 +837,40 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
       await waitFor(
         'the sessions picker card',
         () =>
-          readOutbox()
-            .filter((r) => r.kind === 'card')
-            .some((r) => r.card?.header?.title.content === '🗂️ Sessions'),
+          readOutbox().some(
+            (r) =>
+              (r.kind === 'card' || r.kind === 'patch') &&
+              r.card?.header?.title.content === '🗂️ Sessions' &&
+              (r.card.elements ?? []).some(
+                (el) =>
+                  el.tag === 'action' &&
+                  'actions' in el &&
+                  el.actions.some((a) => a.tag === 'select_static'),
+              ),
+          ),
         30_000,
       );
       expect(
         readOutbox()
-          .filter((r) => r.kind === 'card')
+          .filter((r) => r.kind === 'card' || r.kind === 'patch')
           .some((r) => JSON.stringify(r.card?.elements).includes(sessionA)),
       ).toBe(true);
 
       // Resume A's session from B: Details → the detail card → Resume. The
       // message ids come from the outbox records (not computed counters).
+      // The loading placeholder carries the same title, so target the record
+      // that actually renders the dropdown.
       const pickerRecord = [...readOutbox()]
         .reverse()
         .find(
           (r) =>
-            (r.kind === 'card' || r.kind === 'patch') &&
-            r.card?.header?.title.content === '🗂️ Sessions',
+            r.card?.header?.title.content === '🗂️ Sessions' &&
+            (r.card.elements ?? []).some(
+              (el) =>
+                el.tag === 'action' &&
+                'actions' in el &&
+                el.actions.some((a) => a.tag === 'select_static'),
+            ),
         );
       expect(pickerRecord?.messageId).toBeDefined();
       const pickerId = pickerRecord?.messageId ?? '';
@@ -932,14 +947,16 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
       await waitFor(
         'the sessions picker after clear',
         () =>
-          readOutbox()
-            .filter((r) => r.kind === 'card')
-            .some((r) => r.card?.header?.title.content === '🗂️ Sessions'),
+          readOutbox().some(
+            (r) =>
+              (r.kind === 'card' || r.kind === 'patch') &&
+              r.card?.header?.title.content === '🗂️ Sessions',
+          ),
         30_000,
       );
       expect(
         readOutbox()
-          .filter((r) => r.kind === 'card')
+          .filter((r) => r.kind === 'card' || r.kind === 'patch')
           .some((r) => JSON.stringify(r.card?.elements).includes(sessionA)),
       ).toBe(true);
     } catch (error) {
@@ -1449,13 +1466,16 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
 
       const chatId = `oc_wrapper_${Date.now()}`;
       sendMessage(chatId, '/permission');
-      // Bare /permission opens the preset picker card.
+      // Bare /permission opens the preset picker card (loading placeholder
+      // posts first, the real picker arrives as a patch).
       await waitFor(
         'the permission picker card',
         () =>
-          readOutbox()
-            .filter((r) => r.kind === 'card')
-            .some((r) => r.card?.header?.title.content === '🔐 Permission presets'),
+          readOutbox().some(
+            (r) =>
+              (r.kind === 'card' || r.kind === 'patch') &&
+              r.card?.header?.title.content === '🔐 Permission presets',
+          ),
         60_000,
       );
       // The wrapper minted a session + agent for the fresh chat.
@@ -1468,7 +1488,9 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
       const pickerRecord = [...readOutbox()]
         .reverse()
         .find(
-          (r) => r.kind === 'card' && r.card?.header?.title.content === '🔐 Permission presets',
+          (r) =>
+            (r.kind === 'card' || r.kind === 'patch') &&
+            r.card?.header?.title.content === '🔐 Permission presets',
         );
       expect(pickerRecord?.messageId).toBeDefined();
       // The picker renders a select_static dropdown with the current preset
@@ -1587,18 +1609,25 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
 
       const chatId = `oc_model_${Date.now()}`;
       sendMessage(chatId, '/model');
-      // Bare /model opens the picker card with the real deepseek catalog.
+      // Bare /model opens the picker card with the real deepseek catalog
+      // (loading placeholder posts first, the real picker is a patch).
       await waitFor(
         'the model picker card',
         () =>
-          readOutbox()
-            .filter((r) => r.kind === 'card')
-            .some((r) => r.card?.header?.title.content === '🤖 Model'),
+          readOutbox().some(
+            (r) =>
+              (r.kind === 'card' || r.kind === 'patch') &&
+              r.card?.header?.title.content === '🤖 Model',
+          ),
         60_000,
       );
       const pickerRecord = [...readOutbox()]
         .reverse()
-        .find((r) => r.kind === 'card' && r.card?.header?.title.content === '🤖 Model');
+        .find(
+          (r) =>
+            (r.kind === 'card' || r.kind === 'patch') &&
+            r.card?.header?.title.content === '🤖 Model',
+        );
       const pickerAction = pickerRecord?.card?.elements.find((el) => el.tag === 'action');
       const pickerSelect =
         pickerAction && 'actions' in pickerAction
@@ -3374,16 +3403,29 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
           readOutbox().some(
             (r) =>
               (r.kind === 'card' || r.kind === 'patch') &&
-              r.card?.header?.title.content === '🗂️ Sessions',
+              r.card?.header?.title.content === '🗂️ Sessions' &&
+              (r.card.elements ?? []).some(
+                (el) =>
+                  el.tag === 'action' &&
+                  'actions' in el &&
+                  el.actions.some((a) => a.tag === 'select_static'),
+              ),
           ),
         30_000,
       );
       // Open the first row's detail (any session). The sessions view is a
       // dropdown: the marker stamps the kind, the chosen id arrives in the
-      // callback `option`.
-      const listCard = [...readOutbox()]
-        .reverse()
-        .find((r) => r.card?.header?.title.content === '🗂️ Sessions');
+      // callback `option`. The loading placeholder carries the same title,
+      // so target the record that actually renders the dropdown.
+      const listCard = [...readOutbox()].reverse().find((r) => {
+        if (r.card?.header?.title.content !== '🗂️ Sessions') return false;
+        return (r.card.elements ?? []).some(
+          (el) =>
+            el.tag === 'action' &&
+            'actions' in el &&
+            el.actions.some((a) => a.tag === 'select_static'),
+        );
+      });
       const list = listCard?.card;
       const dropdown = list?.elements
         .flatMap((el) => (el.tag === 'action' ? el.actions : []))
