@@ -112,11 +112,14 @@ Current scopes (权限):
 | Scope | Purpose |
 |---|---|
 | `im:message` | Receive messages (`im.message.receive_v1`) |
+| `im:message.group_at_msg:readonly` | Receive group messages that @-mention the bot |
 | `im:message.group_msg` | Receive **all** group messages, @-mentioned or not (required for the 1-user-1-bot solo-group relaxation under `groupMentionMode: always`) |
+| `im:message.group_msg.include_bot:read` | Include messages from **other bots** in the group (keeps solo-relaxation working when another bot joins) |
 | `im:message:send_as_bot` | Send messages and cards as the bot |
 | `im:chat` | Read chat metadata |
+| `im:chat.members:read` | Read group members (multi-bot / roster awareness) |
+| `im:chat.members:write_only` | Invite members into groups (botmux parity for group flows) |
 | `im:resource` | Upload file messages (`/export`) |
-| `im:message.reaction` | Two-stage reaction ack (received/done/error emojis) |
 
 ### 4. Publish
 
@@ -184,9 +187,9 @@ installs). No inbound ports, no public IP.
   im:resource:upload" — the surface surfaces this hint in the `/export`
   error text.
 
-- The two-stage reaction ack needs the **`im:message.reaction`** scope (also
-  in the manifest above). Reaction failures only log — a missing scope
-  degrades to no emojis, never a broken turn.
+- The two-stage reaction ack needs **no extra scope** — `im.v1.messageReaction`
+  works on the base message permission (verified against the live API); a
+  reaction failure only logs and degrades to no emojis, never a broken turn.
 - **`allowedUsers`** (config, or the `FEISHU_ALLOWED_USERS` env var —
   comma-separated) restricts the surface to the listed sender open ids; the
   default (unset/empty) serves everyone. `ou_` open ids are app-scoped: a

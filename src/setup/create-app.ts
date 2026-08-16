@@ -32,6 +32,8 @@ export interface CreateAppResult {
   readonly appSecret?: string;
   readonly reason?: 'api_error' | 'missing_avatar' | 'event_verification_failed';
   readonly message?: string;
+  /** Non-fatal issues from the configure step (skipped scopes etc.). */
+  readonly warning?: string;
 }
 
 function safeErrorMessage(error: unknown): string {
@@ -287,6 +289,7 @@ export async function createFeishuOpenPlatformApp(
           : 'api_error';
       return { ok: false, reason, message: configured.message ?? 'Configuration failed', appId };
     }
+    const warning = configured.warning;
     const versionCreated = await client.postJson(
       `/developers/v1/app_version/create/${appId}`,
       buildAppVersionCreatePayload('1.0.0', {
@@ -310,7 +313,12 @@ export async function createFeishuOpenPlatformApp(
       clientId: appId,
     });
     const appSecret = await fetchOpenPlatformAppSecret(client, appId);
-    return { ok: true, appId, appSecret };
+    return {
+      ok: true,
+      appId,
+      appSecret,
+      ...(warning !== undefined ? { warning } : {}),
+    };
   } catch (error) {
     return {
       ok: false,

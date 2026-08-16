@@ -289,19 +289,28 @@ function collectScopeEntries(
     for (const item of value) collectScopeEntries(item, bucket, out);
     return;
   }
-  const record = asRecord(value);
-  const id = pickString(record, ['scope_id', 'scopeId', 'id']);
-  if (id)
+  if (!value || typeof value !== 'object') return;
+  const record = value as Record<string, unknown>;
+  // The console catalog is shape-variable across tenants/apps: accept every
+  // known key spelling and recurse into ANY object field (not just a fixed
+  // set) — mirroring botmux's open-platform automation, which provably works
+  // against the live console.
+  const name = pickString(record, ['scope_name', 'scopeName', 'name', 'key', 'scopeKey']);
+  const id = pickString(record, ['id', 'scope_id', 'scopeId', 'scopeID']);
+  if (name !== undefined && id !== undefined)
     out.push({
       id,
-      ...(typeof record.name === 'string' ? { name: record.name } : {}),
+      ...(name !== undefined ? { name } : {}),
       ...(bucket ? { bucket } : {}),
     });
-  if (record.data) collectScopeEntries(record.data, bucket, out);
-  if (record.tenant) collectScopeEntries(record.tenant, 'tenant', out);
-  if (record.user) collectScopeEntries(record.user, 'user', out);
-  if (record.scopes) collectScopeEntries(record.scopes, bucket, out);
-  if (record.list) collectScopeEntries(record.list, bucket, out);
+  for (const [key, child] of Object.entries(record)) {
+    const nextBucket = /user/i.test(key)
+      ? 'user'
+      : /app|client|tenant/i.test(key)
+        ? 'tenant'
+        : bucket;
+    if (child && typeof child === 'object') collectScopeEntries(child, nextBucket, out);
+  }
 }
 
 /** Extract the deduplicated scope catalog from `/developers/v1/scope/all/:appId`. */
@@ -326,18 +335,30 @@ export function mapManifestScopesToOpenPlatformIds(
   const user = scopes.filter((scope) => !scope.startsWith('im:'));
   const idsFor = (names: readonly string[], bucket: 'tenant' | 'user'): string[] =>
     names
-      .map(
-        (name) =>
-          catalog.find(
-            (entry) => entry.bucket === bucket && (entry.id === name || entry.name === name),
-          )?.id,
-      )
+      .map((name) => {
+        // Match by NAME first (the catalog id is an opaque hash); prefer the
+        // exact bucket, then a bucket-less entry, then any entry — mirroring
+        // botmux's open-platform automation.
+        const entry =
+          catalog.find((e) => e.name === name && e.bucket === bucket) ??
+          catalog.find((e) => e.name === name && e.bucket === undefined) ??
+          catalog.find((e) => e.name === name);
+        return entry?.id;
+      })
       .filter((id): id is string => id !== undefined);
-  const found = new Set<string>([...idsFor(tenant, 'tenant'), ...idsFor(user, 'user')]);
+  const tenantIds = idsFor(tenant, 'tenant');
+  const userIds = idsFor(user, 'user');
+  // `missing` is judged on the SCOPE NAMES that did not resolve to a catalog
+  // id — never on the resolved ids (an opaque hash like `1015256` can never
+  // equal the manifest name, so comparing ids would misreport every scope).
+  const resolved = new Set<string>([
+    ...tenant.filter((_, i) => tenantIds[i] !== undefined),
+    ...user.filter((_, i) => userIds[i] !== undefined),
+  ]);
   return {
-    tenantScopeIds: idsFor(tenant, 'tenant'),
-    userScopeIds: idsFor(user, 'user'),
-    missing: scopes.filter((scope) => !found.has(scope)),
+    tenantScopeIds: tenantIds,
+    userScopeIds: userIds,
+    missing: scopes.filter((scope) => !resolved.has(scope)),
   };
 }
 

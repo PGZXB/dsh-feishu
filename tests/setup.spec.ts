@@ -355,6 +355,22 @@ describe('response extractors', () => {
     expect(mapped.missing.length).toBeGreaterThan(0);
   });
 
+  it('reports missing by NAME, not by the opaque catalog id (regression)', () => {
+    // Every manifest scope present in the catalog under a distinct id: the
+    // resolved ids are hashes that must not be compared to scope names.
+    const catalog = extractOpenPlatformScopeEntries({
+      data: {
+        tenant: SCOPES.filter((s) => s.startsWith('im:')).map((name) => ({
+          scope_id: `id_${name.replace(/:/g, '_')}`,
+          name,
+        })),
+      },
+    });
+    const mapped = mapManifestScopesToOpenPlatformIds(SCOPES, catalog);
+    expect(mapped.missing).toEqual([]);
+    expect(mapped.tenantScopeIds.length).toBe(SCOPES.length);
+  });
+
   it('computes the next version including drafts', () => {
     expect(nextAppVersion({ data: { versions: [{ appVersion: '1.0.0' }] } })).toBe('1.0.1');
     expect(nextAppVersion({ data: { versions: [{ appVersion: '0.1.9' }] } })).toBe('0.1.10');
@@ -495,6 +511,8 @@ interface FakeFetcherOptions {
   callbackState?: { callbackMode?: number; callbacks: string[] };
   /** When false, update calls do not change the read-back state (fail-closed tests). */
   applyUpdates?: boolean;
+  /** When true, the visible/online read-back returns no visibleSuggest (publish-degrade tests). */
+  visibilityUnreadable?: boolean;
 }
 
 function createFakeFetcher(options: FakeFetcherOptions = {}): {
@@ -574,6 +592,7 @@ function createFakeFetcher(options: FakeFetcherOptions = {}): {
     }
     if (parsed.pathname.startsWith('/developers/v1/safe_setting/update/')) return json({});
     if (parsed.pathname.startsWith('/developers/v1/visible/online/')) {
+      if (options.visibilityUnreadable) return json({});
       return json({
         visibleSuggest: { departments: [], members: ['ou_creator'], groups: [], isAll: 0 },
       });
@@ -666,6 +685,20 @@ describe('configureFeishuApp', () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('event_verification_failed');
     expect(result.message).toMatch(/[Ll]ong connection/);
+  });
+
+  it('degrades to a manual-publish warning when the app visibility is unreadable', async () => {
+    // The visible/online read-back carries no visibleSuggest (observed on a
+    // freshly created app): publishing would risk resetting the visibility,
+    // so the configure succeeds with scopes/subscriptions configured and a
+    // warning to publish the version by hand instead of failing outright.
+    const { fetcher } = createFakeFetcher({ visibilityUnreadable: true });
+    const client = await makeClient(fetcher);
+    const result = await configureFeishuApp(client, 'cli_app', { publish: true });
+    expect(result.ok).toBe(true);
+    expect(result.scopeCount).toBeGreaterThan(0);
+    expect(result.warning).toMatch(/publish it manually/);
+    expect(result.versionId).toBeUndefined();
   });
 });
 

@@ -169,12 +169,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Group messages without an @ are silently dropped on fresh apps** (user
   report: a 1-user-1-bot group stopped answering un-@ messages after the
-  app was recreated). The quick-setup manifest did not grant
-  `im:message.group_msg` ("receive all group messages"), so the Open
-  Platform only pushed @-mentioned group messages and the in-code
-  `groupMentionMode` solo-group relaxation never saw the un-@ message.
-  `feishu-manifest.json` now includes `im:message.group_msg`; existing apps
-  must add the scope and publish a new version (docs/feishu-setup.md
+  app was recreated). Two compounding setup bugs meant **no scopes were
+  ever granted** by `setup:feishu`, so the Open Platform only pushed
+  @-mentioned group messages and the in-code `groupMentionMode`
+  solo-group relaxation never saw the un-@ message:
+  - The console scope-catalog parser only recursed into a fixed field set
+    and only accepted the `name` key — real catalogs use other shapes
+    (`scope_name`/`key`/nested buckets), so every manifest scope was
+    reported "not in the catalog" and skipped. It now mirrors botmux's
+    open-platform automation (recurse any object field, accept every key
+    spelling, match by name with bucket fallback).
+  - `mapManifestScopesToOpenPlatformIds` judged `missing` by comparing the
+    manifest NAME against the resolved catalog ID (an opaque hash) — every
+    scope was misreported missing even when it had been granted.
+  - `--new` swallowed the configure step's warnings, so the silent scope
+    loss was invisible; warnings now surface in both branches, and an
+    unreadable app visibility degrades to a "publish manually" warning
+    instead of failing the whole configure.
+  The manifest now also grants the full message-reception set aligned with
+  botmux (`im:message.group_at_msg:readonly`, `im:message.group_msg`,
+  `im:message.group_msg.include_bot:read`, `im:chat.members:read`,
+  `im:chat.members:write_only`); `im:message.reaction` was dropped because
+  the live API verified reactions work without it (docs/feishu-setup.md
   updated).
 - **An @-mentioned command ("@bot /help") fell into the working-directory
   gate instead of dispatching.** Feishu renders group mentions inline as

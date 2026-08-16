@@ -4,11 +4,14 @@
   "longConnectionMode": 4,
   "scopes": [
     "im:message",
+    "im:message.group_at_msg:readonly",
     "im:message.group_msg",
+    "im:message.group_msg.include_bot:read",
     "im:message:send_as_bot",
     "im:chat",
-    "im:resource",
-    "im:message.reaction"
+    "im:chat.members:read",
+    "im:chat.members:write_only",
+    "im:resource"
   ],
   "defaultAppName": "DSH Agent (dsh-feishu)"
 }

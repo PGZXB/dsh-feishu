@@ -416,6 +416,7 @@ async function runAutoSetup(options: CliOptions): Promise<void> {
     appId = created.appId;
     appSecret = created.appSecret;
     log(`app created and enabled: ${appId}`);
+    if (created.warning) log(`warning: ${created.warning}`);
   } else {
     appId = options.appId;
     log(`configuring existing app ${appId}…`);

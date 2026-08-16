@@ -79,6 +79,13 @@ export async function configureFeishuApp(
     const mapped = mapManifestScopesToOpenPlatformIds(SCOPES, catalog);
     if (mapped.missing.length > 0) {
       warnings.push(`scopes not in the catalog (skipped): ${mapped.missing.join(', ')}`);
+      // Diagnostic: surface what the console actually returned so a mapping
+      // mismatch can be fixed from one run instead of guessing blindly.
+      const samples = catalog
+        .slice(0, 8)
+        .map((entry) => `${entry.name ?? '(no name)'}->${entry.id}`)
+        .join(', ');
+      warnings.push(`scope catalog sample: ${samples || '(empty catalog)'}`);
     }
     if (mapped.tenantScopeIds.length + mapped.userScopeIds.length > 0) {
       try {
@@ -259,13 +266,20 @@ export async function configureFeishuApp(
         await postJson(`/developers/v1/visible/online/${appId}`, {}),
       );
     } catch (error) {
+      // The app's visibility cannot be read — publishing a version would
+      // risk silently resetting it (fail-closed design). Scopes, events and
+      // callbacks above are already configured; hand the version publish to
+      // the user instead of failing the whole configure.
+      const publishNotice =
+        `app visibility could not be read (${safeErrorMessage(error)}); ` +
+        'the version was NOT published — publish it manually in the console ' +
+        'for the newly granted scopes to take effect';
       return {
-        ok: false,
-        reason: 'visibility_unreadable',
-        message:
-          `Cannot read the app's current visibility (${safeErrorMessage(error)}); aborted the publish ` +
-          'rather than reset it. Publish the version manually in the console.',
-        ...(warning !== undefined ? { warning } : {}),
+        ok: true,
+        scopeCount,
+        ...(warning !== undefined
+          ? { warning: `${warning}; ${publishNotice}` }
+          : { warning: publishNotice }),
         ...(subscribedEventCount !== undefined ? { subscribedEventCount } : {}),
       };
     }
