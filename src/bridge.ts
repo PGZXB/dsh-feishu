@@ -28,6 +28,7 @@ import {
   buildConfirmCard,
   buildInputCard,
   buildModelPickerCard,
+  buildPanelBusyCard,
   buildPanelCard,
   buildPanelNoticeCard,
   buildPermissionPickerCard,
@@ -1205,6 +1206,42 @@ export class Bridge {
   }
 
   /**
+   * THE single wrapper for async panel operations (rename, archive, export,
+   * resume, picks, command/confirm/input handlers). Every async panel action
+   * MUST go through here: it posts an operating placeholder FIRST (an
+   * immediate panel patch, so the callback always carries one — Lark
+   * otherwise restores the pre-click card while the work awaits, the root of
+   * every "panel reverts mid-action" bug), then runs the work, then posts
+   * the outcome as a result card, then runs `finish` (a panel transition,
+   * which patches again). No per-case patch bookkeeping — one structure.
+   * @param chatId - the chat.
+   * @param title - the panel header title to show while operating.
+   * @param work - the async mutation; its outcome is posted as a result card.
+   * @param finish - the completion exit (e.g. popToMenu / popToDetail).
+   */
+  private async runPanelOperation(
+    chatId: string,
+    title: string,
+    work: () => CommandResult | void | Promise<CommandResult | void>,
+    finish: () => Promise<void>,
+  ): Promise<void> {
+    await this.postPanelCard(chatId, buildPanelBusyCard(title));
+    try {
+      const result = await work();
+      if (result !== undefined) {
+        await this.replyResultCard(chatId, result);
+      }
+    } catch (error: unknown) {
+      this.options.logger.error(`panel operation failed: ${String(error)}`);
+      await this.replyResultCard(chatId, {
+        kind: 'error',
+        text: `operation failed: ${String(error)}`,
+      });
+    }
+    await finish();
+  }
+
+  /**
    * Post (or in-place update) the panel card. A NEW card is posted on first
    * render; every later transition updates the SAME card. A failed update
    * falls back to posting a fresh card; a failed render/post surfaces as a
@@ -2239,11 +2276,17 @@ export class Bridge {
         }
         this.options.sessionMap.setCwd(action.chatId, resolved.path);
         this.options.sessionMap.remint(action.chatId);
-        await this.replyResultCard(action.chatId, {
-          kind: 'success',
-          text: `Working directory set to ${resolved.path} (session restarts on your next message).`,
-        });
-        await this.popToMenu(action.chatId);
+        await this.runPanelOperation(
+          action.chatId,
+          '📚 Pick a project',
+          async () => {
+            return {
+              kind: 'success',
+              text: `Working directory set to ${resolved.path} (session restarts on your next message).`,
+            };
+          },
+          () => this.popToMenu(action.chatId),
+        );
         break;
       }
       case 'repo-page': {
@@ -2328,7 +2371,8 @@ export class Bridge {
           break;
         }
         if (commandName === 'rename-session') {
-          // Rename goes through the host session seam (dsh web parity).
+          // Rename goes through the host session seam (dsh web parity). The
+          // unified async wrapper posts an operating placeholder first.
           const sessionId = action.value.sessionId;
           if (sessionId === undefined || sessionId === '') break;
           const sessions = this.options.apiProxy?.sessions;
@@ -2339,43 +2383,53 @@ export class Bridge {
             );
             break;
           }
-          try {
-            await sessions.rename({ sessionId, title: rawInput });
-            await this.replyResultCard(action.chatId, {
-              kind: 'success',
-              text: `Renamed session ${sessionId}.`,
-            });
-          } catch (error: unknown) {
-            this.options.logger.warn(`session rename failed: ${String(error)}`);
-            await this.options.transport.sendText(
-              action.chatId,
-              `Rename failed: ${error instanceof Error ? error.message : String(error)}`,
-            );
-          }
-          await this.popToDetail(action.chatId);
+          await this.runPanelOperation(
+            action.chatId,
+            '✏️ Rename session',
+            async () => {
+              try {
+                await sessions.rename({ sessionId, title: rawInput });
+                return { kind: 'success', text: `Renamed session ${sessionId}.` };
+              } catch (error: unknown) {
+                this.options.logger.warn(`session rename failed: ${String(error)}`);
+                return {
+                  kind: 'error',
+                  text: `Rename failed: ${error instanceof Error ? error.message : String(error)}`,
+                };
+              }
+            },
+            () => this.popToDetail(action.chatId),
+          );
           break;
         }
         const command = this.commands.find(commandName);
         if (command === undefined) break;
-        const result = await command.handler({
-          chatId: action.chatId,
-          senderOpenId: action.operatorOpenId,
-          rawInput,
-        });
-        await this.replyResultCard(action.chatId, result);
-        await this.popToMenu(action.chatId);
+        await this.runPanelOperation(
+          action.chatId,
+          PANEL_INPUT_SPEC[commandName].title,
+          () =>
+            command.handler({
+              chatId: action.chatId,
+              senderOpenId: action.operatorOpenId,
+              rawInput,
+            }),
+          () => this.popToMenu(action.chatId),
+        );
         break;
       }
       case 'panel-confirm': {
         // The confirm sub-view's confirm button: run the destructive command,
         // notify, POP to menu.
         const commandName = action.value.command;
-        const command = commandName === undefined ? undefined : this.commands.find(commandName);
+        const command =
+          commandName === 'clear' || commandName === 'compact'
+            ? this.commands.find(commandName)
+            : undefined;
         if (command === undefined) break;
+        const confirmCommand = commandName as 'clear' | 'compact';
         if (
-          commandName !== undefined &&
           this.refuseWhileWorking(action.chatId) &&
-          !Bridge.ALLOWED_WHILE_WORKING.has(commandName)
+          !Bridge.ALLOWED_WHILE_WORKING.has(confirmCommand)
         ) {
           await this.replyCommandResult(action.chatId, {
             kind: 'error',
@@ -2383,13 +2437,17 @@ export class Bridge {
           });
           break;
         }
-        const result = await command.handler({
-          chatId: action.chatId,
-          senderOpenId: action.operatorOpenId,
-          rawInput: '',
-        });
-        await this.replyResultCard(action.chatId, result);
-        await this.popToMenu(action.chatId);
+        await this.runPanelOperation(
+          action.chatId,
+          PANEL_CONFIRM_SPEC[confirmCommand].title,
+          () =>
+            command.handler({
+              chatId: action.chatId,
+              senderOpenId: action.operatorOpenId,
+              rawInput: '',
+            }),
+          () => this.popToMenu(action.chatId),
+        );
         break;
       }
       case 'command': {
@@ -2435,13 +2493,17 @@ export class Bridge {
           });
           break;
         }
-        const result = await command.handler({
-          chatId: action.chatId,
-          senderOpenId: action.operatorOpenId,
-          rawInput: '',
-        });
-        await this.replyResultCard(action.chatId, result);
-        await this.popToMenu(action.chatId);
+        await this.runPanelOperation(
+          action.chatId,
+          command.buttonLabel ?? command.name,
+          () =>
+            command.handler({
+              chatId: action.chatId,
+              senderOpenId: action.operatorOpenId,
+              rawInput: '',
+            }),
+          () => this.popToMenu(action.chatId),
+        );
         break;
       }
       case 'resume-session': {
@@ -2463,9 +2525,12 @@ export class Bridge {
         }
         // The detail row carries the session's cwd so the resumed chat
         // adopts it as its pinned working directory.
-        const result = await this.resumeSession(action.chatId, sessionId, action.value.cwd);
-        await this.replyResultCard(action.chatId, result);
-        await this.popToMenu(action.chatId);
+        await this.runPanelOperation(
+          action.chatId,
+          '🗂️ Session',
+          () => this.resumeSession(action.chatId, sessionId, action.value.cwd),
+          () => this.popToMenu(action.chatId),
+        );
         break;
       }
       case 'session-select': {
@@ -2510,27 +2575,36 @@ export class Bridge {
           );
           break;
         }
-        try {
-          await workspace.archiveSession({ sessionId });
-          await this.replyResultCard(action.chatId, {
-            kind: 'success',
-            text: `Archived session ${sessionId}.`,
-          });
-        } catch (error: unknown) {
-          this.options.logger.warn(`session archive failed: ${String(error)}`);
-          await this.options.transport.sendText(
-            action.chatId,
-            `Archiving failed: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
-        await this.replacePanel(action.chatId, { kind: 'sessions', archived: false });
+        await this.runPanelOperation(
+          action.chatId,
+          '🗂️ Session',
+          async () => {
+            try {
+              await workspace.archiveSession({ sessionId });
+              return { kind: 'success', text: `Archived session ${sessionId}.` };
+            } catch (error: unknown) {
+              this.options.logger.warn(`session archive failed: ${String(error)}`);
+              return {
+                kind: 'error',
+                text: `Archiving failed: ${error instanceof Error ? error.message : String(error)}`,
+              };
+            }
+          },
+          () => this.replacePanel(action.chatId, { kind: 'sessions', archived: false }),
+        );
         break;
       }
       case 'session-export': {
         const sessionId = action.value.sessionId;
         if (sessionId === undefined || sessionId === '') break;
-        const exported = await this.exportSessionLog(action.chatId, sessionId);
-        await this.replyResultCard(action.chatId, exported);
+        await this.runPanelOperation(
+          action.chatId,
+          '🗂️ Session',
+          () => this.exportSessionLog(action.chatId, sessionId),
+          // Export keeps the user on the detail view (the busy card is
+          // replaced by the detail card again).
+          () => this.popToDetail(action.chatId),
+        );
         break;
       }
       case 'permission-pick': {
@@ -2565,11 +2639,17 @@ export class Bridge {
           break;
         }
         const option = service.optionOf(preset);
-        await this.replyResultCard(action.chatId, {
-          kind: 'success',
-          text: `Permission preset switched to ${option.name ?? preset}.`,
-        });
-        await this.popToMenu(action.chatId);
+        await this.runPanelOperation(
+          action.chatId,
+          '🔐 Permission',
+          async () => {
+            return {
+              kind: 'success',
+              text: `Permission preset switched to ${option.name ?? preset}.`,
+            };
+          },
+          () => this.popToMenu(action.chatId),
+        );
         break;
       }
       case 'model-pick': {
@@ -2598,11 +2678,17 @@ export class Bridge {
           break;
         }
         await service.saveSelection(parsed.selection);
-        await this.replyResultCard(action.chatId, {
-          kind: 'success',
-          text: `Default model set to ${parsed.selection.provider} · ${parsed.selection.model} (applies to new sessions).`,
-        });
-        await this.popToMenu(action.chatId);
+        await this.runPanelOperation(
+          action.chatId,
+          '🤖 Model',
+          async () => {
+            return {
+              kind: 'success',
+              text: `Default model set to ${parsed.selection.provider} · ${parsed.selection.model} (applies to new sessions).`,
+            };
+          },
+          () => this.popToMenu(action.chatId),
+        );
         break;
       }
       case 'model-page': {

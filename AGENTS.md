@@ -76,6 +76,17 @@ functionality with unit tests and docs, and lands on `main`.
   in different actions, refactor the state into a single source of truth —
   do not add another per-case reassert. Card actions mutate the state (or
   not) and always end with the single render path.
+- **Every panel interaction carries an immediate panel patch.** Lark
+  restores the pre-click card whenever a callback carries no panel update —
+  any await inside a panel action reverts the panel to its previous state
+  unless a patch lands first. Two structures guarantee this: async panel
+  VIEWS (`sessions`/`session-detail`/`picker`) post a `⏳ Loading…`
+  placeholder before rendering (in `showPanel`), and async panel
+  OPERATIONS (rename/archive/export/resume/picks/command handlers) go
+  through the single wrapper `runPanelOperation`, which posts an
+  `⏳ Operating…` placeholder before the work. NEVER add a new async panel
+  action that awaits before patching — route it through `runPanelOperation`.
+  See `docs/ux-specification.md` §8.6.
 - **Card-callback ACK contract (Feishu).** `card.action.trigger` is a
   synchronous callback with a 3 s deadline and no re-push. Always ACK with
   a valid response — never `undefined`, which the client rejects as an

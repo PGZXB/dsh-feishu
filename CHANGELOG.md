@@ -245,6 +245,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the corpus. `SESSION_SELECT_MAX` raised 20 → 50 (Feishu's real cap) and a
   **🔎 Find session** input filters by id/title fragment, making ANY session
   reachable (regression test).
+- **Async panel operations awaited without an immediate patch — the panel
+  reverted mid-action (user report).** Lark restores the pre-click card
+  whenever a callback carries no panel update, so sessions-internal
+  operations (rename/archive/export/resume and the pickers' apply step)
+  silently reverted the panel while their work awaited. Root-caused as a
+  STRUCTURE gap, not a one-off: async panel operations had no shared
+  wrapper, so "patch before await" was remembered per case. Introduced
+  `runPanelOperation`, the single wrapper for ALL async panel operations —
+  it posts an `⏳ Operating…` placeholder (no buttons, blocks mis-taps)
+  before the work, then the result card, then the completion exit. The
+  callback-patch guarantee is now structural (documented in AGENTS.md and
+  ux-spec §8.6): async VIEWS load via `showPanel`'s loading placeholder,
+  async OPERATIONS via `runPanelOperation`. Regression test asserts the
+  placeholder lands while archive work is pending.
 
 - **Integration-test teardown raced the next test's state reset (CI flake
   under Node 22).** `afterEach` sent `SIGTERM` to the dsh child but did not

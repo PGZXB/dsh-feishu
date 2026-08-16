@@ -899,6 +899,21 @@ export function buildPanelNoticeCard(options: {
 }
 
 /**
+ * A busy/operating placeholder card (NO buttons — blocks mis-taps while an
+ * async panel operation runs). Posted FIRST in the callback so the panel
+ * always carries an immediate patch (Lark otherwise restores the pre-click
+ * card while the work awaits — the root of the "panel reverts mid-action"
+ * bugs).
+ */
+export function buildPanelBusyCard(title: string): CardJson {
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: title }, template: 'wathet' },
+    elements: [{ tag: 'markdown', content: '⏳ Operating…' }],
+  };
+}
+
+/**
  * A pure-information RESULT card (no buttons/inputs — the final outcome of a
  * panel action posts as a NEW card, per the panel principle: intermediate
  * steps live in the panel card, results leave it as an inert card).

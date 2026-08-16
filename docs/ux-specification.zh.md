@@ -266,6 +266,9 @@ harness 的裸 `/plan` 和 `/permission` 形式无法*选择*或*切换*：不�
 - **输入子视图**（`📁 Change working directory`、`👥 Create group`、`🎯 Goal`、`💬 Feedback`、`✏️ Rename session`）：根级 `form`，含一个 `input` 和一个带 `name` 的 `form_submit` 按钮（飞书拒绝无名字的表单按钮 —— ErrCode 200530）。标签在 `form` 之外；提交后以输入值执行命令并回到菜单。
 - **确认子视图**（`✨ New chat`、`🧹 Compact`）：破坏性操作先说明后果；确认后执行命令并回到菜单。
 - **结果卡片（面板原则，用户需求）**。面板操作若结果是**最终**的，则以一张**新的纯信息卡片**（`✅ Done` / `⚠️ Action failed`，无按钮/输入框）通知：repo/model/permission 选择、重命名、归档、输入/确认提交、恢复、导出，以及所有无子视图的面板命令（help、status、plan、surface status 等）。中间步骤（输入表单、确认提示、选择器）留在面板卡片内并原地更新 —— 需要继续操作的按钮跳转面板，无需再操作的按钮以惰性新卡通知。所有完成路径共享同一个出口（`replyResultCard` + `popToMenu`）：该出口会把面板卡 patch 回菜单根 —— 正是这个 patch 防止 Lark 在回调未携带面板更新时把面板恢复到点击前（第一页）的卡片（用户报告：第二页上的直接结果按钮点击后跳回第一页）。
+- **每次面板交互都必须第一时间携带面板 patch（回调-patch 保证）**。只要回调没有携带面板更新，Lark 就会把面板恢复到点击前的卡片 —— 因此面板操作内**任何 await 之前必须先发 patch**。两条结构强制这一点，**绝不要写"先 await 再 patch"的新异步面板操作**：
+  - 异步面板**视图**（`sessions` / `session-detail` / `picker`）在 `showPanel` 中先发 `⏳ Loading…` 占位卡（仅 Back），再发真实卡片；
+  - 异步面板**操作**（重命名、归档、导出、恢复、选择器的应用步骤、输入/确认/命令 handler）统一走 `runPanelOperation` 封装：先发 `⏳ Operating…` 占位卡（无按钮 —— 禁止误操作），再执行工作，再发结果卡，最后完成退出。这是所有"面板操作中途退回"bug 的根源（用户报告：sessions 界面内的操作没有占位卡）。
 
 ### 8.7 新操作的状态机矩阵
 

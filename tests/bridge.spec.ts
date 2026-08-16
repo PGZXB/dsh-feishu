@@ -2212,7 +2212,7 @@ describe('panel command palette', () => {
       operatorOpenId: 'ou_user',
       value: { kind: 'session-archive', sessionId: 'feishu-session-9' },
     });
-    expect(h.transport.sentTexts.some((t) => t.text.includes('Archiving failed'))).toBe(true);
+    expect(resultCardTexts(h).some((t) => t.includes('Archiving failed'))).toBe(true);
     expect(h.transport.updatedCards.at(-1)?.header?.title.content).toBe('🗂️ Sessions');
   });
 
@@ -2516,7 +2516,9 @@ describe('panel command palette', () => {
       value: { kind: 'command', name: 'plan' },
     });
     expect(resultCardTexts(h).some((t) => t.includes('Plan mode on'))).toBe(true);
-    expect(h.transport.sentCards.at(-1)?.header?.title.content).toBe('⚙️ dsh-feishu panel');
+    expect(
+      (h.transport.updatedCards.at(-1) ?? h.transport.sentCards.at(-1))?.header?.title.content,
+    ).toBe('⚙️ dsh-feishu panel');
   });
 
   it('async panel views post a loading placeholder before the real card', async () => {
@@ -2548,6 +2550,59 @@ describe('panel command palette', () => {
     await actionPromise;
     const loaded = h.transport.updatedCards.at(-1) ?? h.transport.sentCards.at(-1);
     expect(JSON.stringify(loaded?.elements)).toContain('Choose a session');
+  });
+
+  it('async panel OPERATIONS post an operating placeholder before the work (runPanelOperation)', async () => {
+    // Regression: archive/export/resume/rename/picks awaited async work with
+    // NO panel patch during the await — Lark restored the pre-click card
+    // mid-action (user report: "sessions界面内的操作没有loading占位卡").
+    // Every async panel operation now goes through runPanelOperation, which
+    // posts an operating placeholder FIRST (the callback always carries a
+    // panel patch).
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const h = makeHarness({
+      listSessions: async () => sessionRows(),
+      apiProxy: {
+        sessions: { rename: async () => {} },
+        workspace: {
+          list: async () => ({ archivedSessionIds: [] }),
+          archiveSession: async () => {
+            await gate;
+          },
+        },
+      },
+    });
+    // Open the sessions list, then a detail view.
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'command', name: 'sessions' },
+    });
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'session-select', sessionId: 'feishu-session-9' },
+    });
+    // Archive: the operating placeholder lands while the work is pending.
+    const before = h.transport.updatedCards.length;
+    const actionPromise = h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'session-archive', sessionId: 'feishu-session-9' },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const during = h.transport.updatedCards.slice(before);
+    expect(during.length).toBeGreaterThan(0);
+    expect(JSON.stringify(during[0]?.elements)).toContain('Operating');
+    release?.();
+    await actionPromise;
+    expect(resultCardTexts(h).some((t) => t.includes('Archived session'))).toBe(true);
   });
 
   it('a text-input command opens the input form; submit runs it with the value', async () => {
@@ -2598,7 +2653,9 @@ describe('panel command palette', () => {
     // panel returns to the menu root (state-machine completion exit; a fresh
     // panel posts its first card here).
     expect(resultCardTexts(h).some((t) => t.includes('dsh-feishu commands'))).toBe(true);
-    expect(h.transport.sentCards.at(-1)?.header?.title.content).toBe('⚙️ dsh-feishu panel');
+    expect(
+      (h.transport.updatedCards.at(-1) ?? h.transport.sentCards.at(-1))?.header?.title.content,
+    ).toBe('⚙️ dsh-feishu panel');
     // clear is destructive: the panel button first shows the confirm view
     // (the panel card already exists after the help exit, so it updates)…
     await h.bridge.handleCardAction({
@@ -2939,7 +2996,9 @@ describe('stateful web wrappers (/permission picker, /plan toggle)', () => {
     });
     expect(resultCardTexts(h).some((t) => t.includes('Plan mode on'))).toBe(true);
     // The completion exit pops to the menu root (a fresh panel posts here).
-    expect(h.transport.sentCards.at(-1)?.header?.title.content).toBe('⚙️ dsh-feishu panel');
+    expect(
+      (h.transport.updatedCards.at(-1) ?? h.transport.sentCards.at(-1))?.header?.title.content,
+    ).toBe('⚙️ dsh-feishu panel');
   });
 
   it('/plan reports queued wording when the controller queues the flip', async () => {

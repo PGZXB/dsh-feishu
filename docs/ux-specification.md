@@ -466,6 +466,21 @@ menu root and reposts the menu card, so page flips and Back never go dead
   which is what keeps Lark from restoring the pre-click (page-1) card when
   the callback carried no panel update (user report: a direct-result button
   on page 2 jumped back to page 1).
+- **Every panel interaction carries an immediate panel patch (the
+  callback-patch guarantee).** Lark restores the pre-click card whenever a
+  callback carries no panel update, so ANY await inside a panel action must
+  be preceded by a patch. Two structures enforce this — never write a new
+  async panel action that awaits before patching:
+  - async panel VIEWS (`sessions` / `session-detail` / `picker`) post a
+    `⏳ Loading…` placeholder (Back only) FIRST in `showPanel`, then the
+    real card;
+  - async panel OPERATIONS (rename, archive, export, resume, the pickers'
+    apply step, input/confirm/command handlers) go through the single
+    wrapper `runPanelOperation`, which posts an `⏳ Operating…` placeholder
+    (no buttons — blocks mis-taps) before the work, then the result card,
+    then the completion exit. This was the root of every "panel reverts
+    mid-action" bug (user report: sessions-internal operations showed no
+    placeholder).
 
 ### 8.7 State-machine matrix for the new actions
 
