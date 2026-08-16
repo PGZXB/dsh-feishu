@@ -17,6 +17,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { pathToFileURL } from 'node:url';
+import { mergeBotProfile, promptBotProfile } from './bot-profile.js';
 import { createOpenPlatformApiClient } from './client.js';
 import { configureFeishuApp } from './configure.js';
 import type { StoredCookie } from './cookies.js';
@@ -49,7 +50,7 @@ interface CliOptions {
   newApp: boolean;
   appId?: string;
   list: boolean;
-  appName: string;
+  appName?: string;
   profile: string;
   dshHomeDir: string;
   noAuto: boolean;
@@ -58,6 +59,8 @@ interface CliOptions {
   printEnv: boolean;
   verifyBoot: boolean;
   appSecret?: string;
+  avatarFilePath?: string;
+  description?: string;
   help: boolean;
 }
 
@@ -69,7 +72,6 @@ export function parseArgs(argv: readonly string[]): CliOptions {
   const opts: CliOptions = {
     newApp: false,
     list: false,
-    appName: DEFAULT_APP_NAME,
     profile: 'feishu-dev',
     dshHomeDir: dshHome(),
     noAuto: false,
@@ -93,6 +95,8 @@ export function parseArgs(argv: readonly string[]): CliOptions {
     else if (arg === '--app-secret') opts.appSecret = value();
     else if (arg === '--list') opts.list = true;
     else if (arg === '--app-name') opts.appName = value();
+    else if (arg === '--avatar') opts.avatarFilePath = value();
+    else if (arg === '--description') opts.description = value();
     else if (arg === '--profile') opts.profile = value();
     else if (arg === '--dsh-home') opts.dshHomeDir = value();
     else if (arg === '--no-open-platform-auto') opts.noAuto = true;
@@ -116,7 +120,12 @@ Options:
   --app-id <id>             configure an existing app (cli_...)
   --app-secret <secret>     app secret (manual path only)
   --list                    list apps visible to the session, then exit
-  --app-name <name>         name for a new app (default "${DEFAULT_APP_NAME}")
+  --app-name <name>         name for a new app (prompted interactively when
+                            omitted; default "${DEFAULT_APP_NAME}")
+  --avatar <path>           avatar image (PNG) for the new app (prompted
+                            when omitted; default: the bundled dsh wordmark)
+  --description <text>      app description (prompted when omitted; default:
+                            "A dsh agent surface on Feishu.")
   --profile <name>          dsh profile to write credentials into (default feishu-dev)
   --dsh-home <dir>          dsh home (default $DSH_HOME or ~/.dsh)
   --no-open-platform-auto   manual path: paste credentials, write config, print steps
@@ -380,10 +389,19 @@ async function runAutoSetup(options: CliOptions): Promise<void> {
         'cannot create an app without the session identity; re-run with --force-login',
       );
     }
-    log(`creating a new app "${options.appName}"…`);
+    // Bot profile: CLI flags win, else guided prompts (stdin), else defaults.
+    const botInputs = {
+      ...(options.appName !== undefined ? { appName: options.appName } : {}),
+      ...(options.avatarFilePath !== undefined ? { avatarFilePath: options.avatarFilePath } : {}),
+      ...(options.description !== undefined ? { description: options.description } : {}),
+    };
+    const profile = mergeBotProfile(botInputs, await promptBotProfile(botInputs));
+    log(`creating a new app "${profile.name}"…`);
     const created = await createFeishuOpenPlatformApp(client, {
-      name: options.appName,
+      name: profile.name,
       creatorUserId: clientResult.identity.userId,
+      ...(profile.avatarFilePath !== undefined ? { avatarFilePath: profile.avatarFilePath } : {}),
+      ...(profile.description !== undefined ? { description: profile.description } : {}),
     });
     if (!created.ok || !created.appId || !created.appSecret) {
       throw new Error(created.message ?? 'app creation failed');

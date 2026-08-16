@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Guided bot branding in the quick-setup tool.** Creating an app now
+  prompts interactively for the bot's **name**, **avatar image** (PNG path;
+  empty = the bundled serif "dsh" wordmark at
+  `docs/assets/default-avatar.png`) and **description** — empty input keeps
+  the default, and non-TTY runs (CI/scripts) skip the prompts. The
+  `--app-name` / `--avatar` / `--description` flags override the prompts for
+  scripted runs.
+
 - **Env-configurable routing options.** `FEISHU_GROUP_MENTION_MODE`,
   `FEISHU_ALLOWED_CHATS`, and `FEISHU_UNKNOWN_COMMAND` extend the
   config-wins/env-falls-back seam (`FEISHU_ALLOWED_USERS` already existed),

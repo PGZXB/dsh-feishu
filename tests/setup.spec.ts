@@ -10,6 +10,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { mergeBotProfile, promptBotProfile } from '../src/setup/bot-profile.js';
 import { parseArgs } from '../src/setup/cli.js';
 import { createOpenPlatformApiClient, type OpenPlatformApiClient } from '../src/setup/client.js';
 import { configureFeishuApp } from '../src/setup/configure.js';
@@ -20,10 +21,17 @@ import {
   pruneExpiredCookies,
   type StoredCookie,
 } from '../src/setup/cookies.js';
-import { makePlaceholderIconPng } from '../src/setup/create-app.js';
+import {
+  createFeishuOpenPlatformApp,
+  DEFAULT_AVATAR_PATH,
+  makePlaceholderIconPng,
+  pngDimensions,
+  resolveAvatarBuffer,
+} from '../src/setup/create-app.js';
 import {
   APP_EVENTS,
   CARD_CALLBACKS,
+  DEFAULT_APP_NAME,
   LONG_CONNECTION_EVENT_MODE,
   SCOPES,
 } from '../src/setup/manifest.js';
@@ -492,8 +500,10 @@ interface FakeFetcherOptions {
 function createFakeFetcher(options: FakeFetcherOptions = {}): {
   fetcher: typeof fetch;
   requests: Array<{ url: string; body?: unknown }>;
+  uploadedFile: Buffer | undefined;
 } {
   const requests: Array<{ url: string; body?: unknown }> = [];
+  let uploadedFile: Buffer | undefined;
   let eventMode = options.eventState?.eventMode ?? LONG_CONNECTION_EVENT_MODE;
   let events = [...(options.eventState?.events ?? ['im.message.receive_v1'])];
   let callbackMode = options.callbackState?.callbackMode ?? LONG_CONNECTION_EVENT_MODE;
@@ -502,9 +512,15 @@ function createFakeFetcher(options: FakeFetcherOptions = {}): {
 
   const fetcher = async (url: string, init?: RequestInit): Promise<Response> => {
     const parsed = new URL(url);
-    const body = init?.body
-      ? (JSON.parse(String(init.body)) as Record<string, unknown>)
-      : undefined;
+    const isForm = init?.body instanceof FormData;
+    const body =
+      init?.body && !isForm
+        ? (JSON.parse(String(init.body)) as Record<string, unknown>)
+        : undefined;
+    if (isForm) {
+      const file = (init.body as FormData).get('file');
+      if (file instanceof Blob) uploadedFile = Buffer.from(await file.arrayBuffer());
+    }
     requests.push({ url: parsed.pathname, body });
     const json = (data: unknown, code = 0): Response =>
       new Response(JSON.stringify({ code, ...(data ? { data } : {}) }), {
@@ -513,6 +529,15 @@ function createFakeFetcher(options: FakeFetcherOptions = {}): {
       });
     if (parsed.pathname === '/app' || parsed.pathname === '/') {
       return new Response(CONSOLE_PAGE_HTML, { status: 200 });
+    }
+    if (parsed.pathname.startsWith('/developers/v1/app/upload/image')) {
+      return json({ url: 'http://avatar.png' });
+    }
+    if (parsed.pathname.startsWith('/developers/v1/manifest/upsert_by_template')) {
+      return json({ ClientID: 'cli_new' });
+    }
+    if (parsed.pathname.startsWith('/developers/v1/secret/')) {
+      return json({ secret: 's3cr3t' });
     }
     if (parsed.pathname.startsWith('/developers/v1/scope/all/')) {
       return json({ tenant: [{ scope_id: 's_im_message', name: 'im:message' }] });
@@ -562,7 +587,13 @@ function createFakeFetcher(options: FakeFetcherOptions = {}): {
     if (parsed.pathname.startsWith('/developers/v1/publish/commit/')) return json({});
     throw new Error(`unexpected url in fake fetcher: ${url}`);
   };
-  return { fetcher: fetcher as typeof fetch, requests };
+  return {
+    fetcher: fetcher as typeof fetch,
+    requests,
+    get uploadedFile() {
+      return uploadedFile;
+    },
+  };
 }
 
 async function makeClient(fetcher: typeof fetch): Promise<OpenPlatformApiClient> {
@@ -654,5 +685,114 @@ describe('setup CLI parseArgs', () => {
     expect(() => parseArgs(['--nope'])).toThrow('unknown option: --nope');
     // A mid-argument `--` is not the pnpm separator — it is genuinely unknown.
     expect(() => parseArgs(['--new', '--', '--profile', 'feishu'])).toThrow('unknown option: --');
+  });
+});
+
+// ─── Avatar resolution ──────────────────────────────────────────────────────
+
+describe('avatar resolution', () => {
+  it('reports PNG dimensions from the IHDR chunk', () => {
+    const png = makePlaceholderIconPng(64);
+    expect(pngDimensions(png)).toEqual({ width: 64, height: 64 });
+    expect(pngDimensions(Buffer.from('not a png at all, sorry'))).toBeNull();
+  });
+
+  it('resolves the bundled default avatar when no path is given', () => {
+    const src = resolveAvatarBuffer();
+    expect(src.filename).toBe('dsh-feishu.png');
+    expect(src.width).toBe(1024); // the bundled serif wordmark avatar
+    expect(src.buffer.subarray(0, 8)).toEqual(
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    );
+    expect(DEFAULT_AVATAR_PATH).toMatch(/docs[\\/]assets[\\/]default-avatar\.png$/);
+  });
+
+  it('uses a provided avatar file, keeping its filename and size', () => {
+    const dir = tempDir();
+    const file = join(dir, 'custom.png');
+    writeFileSync(file, makePlaceholderIconPng(32));
+    const src = resolveAvatarBuffer(file);
+    expect(src.filename).toBe('custom.png');
+    expect(src.width).toBe(32);
+    expect(src.buffer.subarray(0, 8)).toEqual(
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    );
+  });
+
+  it('falls back to the bundled avatar for a missing path', () => {
+    const src = resolveAvatarBuffer('/nonexistent/avatar.png');
+    expect(src.width).toBe(1024);
+  });
+});
+
+describe('createFeishuOpenPlatformApp', () => {
+  it('uploads the bundled default avatar when none is given', async () => {
+    const fake = createFakeFetcher();
+    const client = await makeClient(fake.fetcher);
+    const result = await createFeishuOpenPlatformApp(client, {
+      name: 'Test Bot',
+      creatorUserId: 'ou_creator',
+    });
+    expect(result.ok).toBe(true);
+    expect(result.appId).toBe('cli_new');
+    expect(result.appSecret).toBe('s3cr3t');
+    expect(fake.uploadedFile).toBeDefined();
+    expect(pngDimensions(fake.uploadedFile as Buffer)).toEqual({ width: 1024, height: 1024 });
+  });
+
+  it('uploads a custom avatar file when provided', async () => {
+    const dir = tempDir();
+    const custom = join(dir, 'my-avatar.png');
+    writeFileSync(custom, makePlaceholderIconPng(48));
+    const fake = createFakeFetcher();
+    const client = await makeClient(fake.fetcher);
+    const result = await createFeishuOpenPlatformApp(client, {
+      name: 'Test Bot',
+      creatorUserId: 'ou_creator',
+      avatarFilePath: custom,
+    });
+    expect(result.ok).toBe(true);
+    expect(fake.uploadedFile).toBeDefined();
+    expect(pngDimensions(fake.uploadedFile as Buffer)).toEqual({ width: 48, height: 48 });
+  });
+});
+
+// ─── Bot profile (guided prompts) ──────────────────────────────────────────
+
+describe('bot profile', () => {
+  it('gives CLI-provided values the highest priority', () => {
+    const p = mergeBotProfile(
+      { appName: 'CLI Bot', avatarFilePath: '/x.png', description: 'cli desc' },
+      { appName: 'Answered', avatarFilePath: '/a.png', description: 'ans desc' },
+    );
+    expect(p).toEqual({
+      name: 'CLI Bot',
+      avatarFilePath: '/x.png',
+      description: 'cli desc',
+    });
+  });
+
+  it('falls back to prompted answers, then to defaults', () => {
+    const answered = mergeBotProfile(
+      {},
+      { appName: 'Answered', avatarFilePath: '/a.png', description: 'd' },
+    );
+    expect(answered).toEqual({ name: 'Answered', avatarFilePath: '/a.png', description: 'd' });
+    const defaults = mergeBotProfile({}, {});
+    expect(defaults.name).toBe(DEFAULT_APP_NAME);
+    expect(defaults.avatarFilePath).toBeUndefined();
+    expect(defaults.description).toBeUndefined();
+  });
+
+  it('treats blank answers as "use the default"', () => {
+    const p = mergeBotProfile({}, { appName: '   ', avatarFilePath: '', description: '' });
+    expect(p.name).toBe(DEFAULT_APP_NAME);
+    expect(p.avatarFilePath).toBeUndefined();
+    expect(p.description).toBeUndefined();
+  });
+
+  it('skips prompts when stdin is not a TTY', async () => {
+    const answers = await promptBotProfile({});
+    expect(answers).toEqual({});
   });
 });

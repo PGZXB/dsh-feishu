@@ -21,7 +21,10 @@ pnpm run setup:feishu -- --new       # create a new app + configure it
 The wizard then, with no further web-console work:
 
 1. Creates a **企业自建应用** (default name "DSH Agent (dsh-feishu)",
-   `--app-name` to change) and reads back its `app_id` / `app_secret`.
+   `--app-name` to change; `--description` sets the app description) and
+   reads back its `app_id` / `app_secret`. The app avatar is the bundled
+   dsh wordmark by default; `--avatar <path>` uploads a custom image
+   (PNG).
 2. Enables the **bot** capability.
 3. Switches **events and card callbacks to the long connection** and
    subscribes `im.message.receive_v1` (event) + `card.action.trigger`
@@ -42,6 +45,13 @@ Reconfigure an existing app instead of creating one:
 
 ```sh
 pnpm run setup:feishu -- --app-id cli_xxx
+```
+
+Brand the new app (name, avatar, description):
+
+```sh
+pnpm run setup:feishu -- --new --app-name "Team Agent" \
+  --avatar ./team-agent.png --description "The team's dsh agent on Feishu."
 ```
 
 Other options: `--list` (list apps the session can see), `--force-login`
