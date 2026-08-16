@@ -146,7 +146,7 @@ describe('collapseSequence', () => {
         result: '',
       },
     ];
-    expect(collapseSequence(rows)).toBe('think -> bash -> read');
+    expect(collapseSequence(rows)).toBe('think → bash → read');
   });
 
   it('shows the full sequence — no truncation (feedback)', () => {
@@ -161,7 +161,7 @@ describe('collapseSequence', () => {
     }));
     const seq = collapseSequence(rows);
     expect(seq).toBe(
-      't0 -> t1 -> t2 -> t3 -> t4 -> t5 -> t6 -> t7 -> t8 -> t9 -> t10 -> t11 -> t12 -> t13 -> t14',
+      't0 → t1 → t2 → t3 → t4 → t5 → t6 → t7 → t8 → t9 → t10 → t11 → t12 → t13 → t14',
     );
   });
 });
@@ -251,9 +251,9 @@ describe('buildCard', () => {
     });
     const sequence = card.elements.find(
       (el): el is Extract<CardElement, { tag: 'markdown' }> =>
-        el.tag === 'markdown' && el.content.includes(' -> '),
+        el.tag === 'markdown' && el.content.includes(' → '),
     );
-    expect(sequence?.content).toBe('think -> bash -> read');
+    expect(sequence?.content).toBe('think → bash → read');
     expect(card.elements.filter((el) => el.tag === 'column_set')).toHaveLength(0);
     const actions = card.elements.filter((el) => el.tag === 'action');
     expect(buttonLabels(actions[1])).toContain('▸ Expand');

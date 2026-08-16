@@ -64,7 +64,7 @@ export interface CardSnapshot {
   readonly rows: readonly TurnRow[];
   /** Session cwd, used to relativize workspace-rooted path summaries. */
   readonly cwd?: string;
-  /** Collapse the row sequence to one `think -> tool -> …` line. */
+  /** Collapse the row sequence to one `think → tool → …` line. */
   readonly collapsed?: boolean;
   /** The user pressed Stop; show an in-progress Stopping state. */
   readonly stopRequested?: boolean;
@@ -399,12 +399,12 @@ export function rowLine(row: TurnRow): string {
 
 /**
  * The minimal collapsed sequence for a turn: row names joined with
- * ` -> ` (`think -> bash -> read`). Think rows read "think", tool rows read
+ * ` → ` (`think → bash → read`). Think rows read "think", tool rows read
  * their tool name. The full sequence is shown — no truncation.
  */
 export function collapseSequence(rows: readonly TurnRow[]): string {
   const names = rows.map((row) => stripAngleBrackets(row.kind === 'think' ? 'think' : row.name));
-  return names.join(' -> ');
+  return names.join(' → ');
 }
 
 /** One card row: the line text plus its expand button (opens row details). */
@@ -450,7 +450,7 @@ export function buildCard(snapshot: CardSnapshot): CardJson {
   const elements: CardElement[] = [];
   const collapsed = snapshot.collapsed ?? false;
   if (collapsed && snapshot.rows.length > 0) {
-    // The minimal sequence, one line: `think -> bash -> read -> …`.
+    // The minimal sequence, one line: `think → bash → read → …`.
     elements.push({ tag: 'markdown', content: collapseSequence(snapshot.rows) });
   } else {
     for (const row of snapshot.rows) {

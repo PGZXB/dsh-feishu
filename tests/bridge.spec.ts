@@ -504,7 +504,7 @@ describe('Bridge', () => {
     const second = h.transport.updatedCards.at(-1);
     expect(
       second?.elements.some(
-        (el) => el.tag === 'markdown' && 'content' in el && el.content === 'bash -> read',
+        (el) => el.tag === 'markdown' && 'content' in el && el.content === 'bash → read',
       ),
     ).toBe(true);
     await h.bridge.handleEvent('feishu-session-1', turnEndEvent());

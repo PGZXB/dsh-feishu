@@ -40,7 +40,7 @@ user feedback rounds 2–5.
    view toggle.
 
 The card is **collapsed by default**: the row sequence is replaced by one
-line `think -> bash -> read -> …` (full sequence, never truncated — user
+line `think → bash → read → …` (full sequence, never truncated — user
 directive), and the button area gains `▸ Expand`.
 
 ### 1.2 Card state machine (single authoritative state)
