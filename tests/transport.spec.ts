@@ -5,10 +5,11 @@
  */
 
 import type { RawMessageEvent } from '@larksuiteoapi/node-sdk';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   FEISHU_HTTP,
   FeishuApiError,
+  LarkTransport,
   normalizeCardAction,
   normalizeMessageEvent,
 } from '../src/transport.js';
@@ -165,5 +166,31 @@ describe('FEISHU_HTTP (SDK http instance)', () => {
     expect(
       unwrap({ data: 'file', headers: { h: '1' }, config: { $return_headers: true } }),
     ).toEqual({ data: 'file', headers: { h: '1' } });
+  });
+});
+
+describe('LarkTransport.createGroup', () => {
+  it('sets the first member as the group owner at creation', async () => {
+    const transport = new LarkTransport({
+      credentials: { appId: 'cli_test', appSecret: 'secret' },
+    });
+    const create = vi.fn().mockResolvedValue({ code: 0, data: { chat_id: 'oc_new' } });
+    // Swap in a fake SDK client (the real one is constructed internally and
+    // never started in this test, so no network is involved).
+    (transport as unknown as { client: { im: { v1: { chat: { create: unknown } } } } }).client = {
+      im: { v1: { chat: { create } } },
+    } as never;
+
+    const result = await transport.createGroup('my team', ['ou_leader', 'ou_member']);
+
+    expect(create).toHaveBeenCalledWith({
+      data: {
+        name: 'my team',
+        user_id_list: ['ou_leader', 'ou_member'],
+        owner_id: 'ou_leader',
+      },
+      params: { user_id_type: 'open_id' },
+    });
+    expect(result).toEqual({ chatId: 'oc_new' });
   });
 });

@@ -254,15 +254,20 @@ export class LarkTransport implements FeishuTransport {
   }
 
   /**
-   * Create a group chat via `im.v1.chat.create`; the bot is the creator and
-   * the given members are invited at creation time.
+   * Create a group chat via `im.v1.chat.create`; the given members are
+   * invited at creation time and the FIRST member (the requesting user from
+   * `/group`) becomes the group owner, so the bot is not the owner.
    * @param name - the group name.
    * @param memberOpenIds - members to invite (open ids).
    * @returns the new chat id.
    */
   async createGroup(name: string, memberOpenIds: readonly string[]): Promise<{ chatId: string }> {
     const response = await this.client.im.v1.chat.create({
-      data: { name, user_id_list: [...memberOpenIds] },
+      data: {
+        name,
+        user_id_list: [...memberOpenIds],
+        ...(memberOpenIds.length > 0 ? { owner_id: memberOpenIds[0] } : {}),
+      },
       params: { user_id_type: 'open_id' },
     });
     this.assertOk(response, 'im.v1.chat.create');

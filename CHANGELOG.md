@@ -184,6 +184,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inline mention tokens before dispatch; the agent receives the cleaned
   text too (regression tests cover leading, punctuated, and mid-text
   mentions, and plain @-mentioned messages still gate normally).
+- **`/group` left the bot as the new group's owner.** `createGroup` now
+  passes `owner_id` (the requesting user) to `im.v1.chat.create`, so the
+  created group is owned by the user who ran `/group` (verified against
+  the real API; unit test asserts the payload).
 - **Panel state machine made complete and failure-proof** (user testing):
   - ALL pickers now render INSIDE the panel card — `/repo`, `/model`,
     `/permission` (and their panel buttons and slash commands) open their
