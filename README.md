@@ -82,10 +82,7 @@ rm -rf ~/.dsh/profiles/feishu ~/.dsh/feishu
 A Feishu chat is a dsh session — the bot is the agent's avatar. A typical
 session goes like this:
 
-<!-- TODO(demo): `docs/assets/snapshots/demo.mp4` — a ~15 s screen recording
-     of the full flow: message → card streams in → green finalize → Allow
-     once → question → answer. Embed with a `<video>` tag so the reader sees
-     the whole surface before the step-by-step shots below. -->
+https://github.com/user-attachments/assets/e9163793-52f2-4e2c-a08a-22b27372be61
 
 1. **Start a chat.** Direct-message the bot, or run `/group <name>` to
    create a group the bot joins. In a group, @-mention the bot (the

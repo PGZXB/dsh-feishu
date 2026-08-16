@@ -78,9 +78,7 @@ rm -rf ~/.dsh/profiles/feishu ~/.dsh/feishu
 
 一个飞书聊天对应一个 dsh 会话，机器人就是 agent 的化身。一次典型的使用是这样：
 
-<!-- TODO(demo): `docs/assets/snapshots/demo.mp4` — 约 15 秒的完整流程录屏
-     （MP4）：发消息 → 卡片流式输出 → 变绿定稿 → Allow once → 提问 → 回答。
-     用 `<video>` 标签嵌入，让读者先整体看到效果，再看下面的分步截图。 -->
+https://github.com/user-attachments/assets/e9163793-52f2-4e2c-a08a-22b27372be61
 
 1. **开个聊天。** 直接私聊机器人；也可以发 `/group <名字>` 建个群。群里一般要 @ 机器人（默认策略）；如果群里只有你和机器人，不 @ 直接说也行；@ 策略本身可配置。
 
