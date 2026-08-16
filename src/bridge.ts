@@ -17,17 +17,15 @@
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
-import { InteractionRegistry } from './cards/interactions.js';
 import {
-  buildApprovalCard,
-  buildApprovalDecidedCard,
+  InteractionCardController,
+  type InteractionCardHost,
+} from './cards/InteractionCardController.js';
+import {
   buildPanelCard,
-  buildQuestionAnsweredCard,
-  buildQuestionCard,
   buildResultCard,
   type ModelOptionView,
   type PanelCommand,
-  type QuestionView,
 } from './cards/render.js';
 import {
   StreamingCardController,
@@ -38,13 +36,7 @@ import type { StreamingCardManager } from './cards/streaming.js';
 import { registerSurfaceCommands, type SurfaceCommandHost } from './commands/surface.js';
 import { CommandRegistry, type CommandResult, parseSlash } from './commands.js';
 import { resolveDirectory } from './directory.js';
-import type {
-  CardAction,
-  CardJson,
-  FeishuMessage,
-  FeishuTransport,
-  SentCard,
-} from './feishu/types.js';
+import type { CardAction, CardJson, FeishuMessage, FeishuTransport } from './feishu/types.js';
 import { MessageDeduplicator } from './message-dedup.js';
 import { parseModelArg } from './model-args.js';
 import type { PanelActionContext } from './panel/actions/PanelAction.js';
@@ -359,26 +351,8 @@ export class Bridge {
   private readonly panelActions = buildPanelActionRegistry();
   /** Panel view states (Strategy registry; async-ness declared per view). */
   private readonly panelViews = buildPanelViewRegistry();
-  /** Pending approval/question card interactions (one resolve path). */
-  private readonly interactions = new InteractionRegistry();
-  /** Multi-select question state per request id (toggle + submit). */
-  private readonly questionState = new Map<
-    string,
-    {
-      readonly chatId: string;
-      readonly view: QuestionView;
-      selection: string[];
-      /** The card the interaction currently targets — retargeted when the
-       *  multi-select card is re-posted with checkmarks, so the finalize
-       *  update lands on the newest card (user report: answered cards kept
-       *  their buttons because the initial message id went stale). */
-      messageId: string;
-    }
-  >();
-  /** Chats awaiting a free-text question answer (request id per chat). */
-  private readonly awaitingQuestionAnswers = new Map<string, { readonly requestId: string }>();
-  /** Monotonic approval request counter (card callback correlation ids). */
-  private approvalSeq = 0;
+  /** Approval/question card flows (one resolve path per pending interaction). */
+  private readonly interactions: InteractionCardController;
   /** Last user whose accepted message started a turn, per chat (proactive
    *  @-mention target for error/approval/question posts in groups). */
   private readonly requesterOpenIds = new Map<string, string>();
@@ -421,6 +395,7 @@ export class Bridge {
   constructor(private readonly options: BridgeOptions) {
     this.streaming = new StreamingCardController(this.streamingHost());
     this.panel = new PanelController(this.panelHost());
+    this.interactions = new InteractionCardController(this.interactionHost());
     options.transport.onMessage((message) => {
       void this.handleMessage(message).catch((error: unknown) => {
         options.logger.error(`feishu message handling failed: ${String(error)}`);
@@ -437,6 +412,17 @@ export class Bridge {
       });
     });
     registerSurfaceCommands(this.commands, this.commandHost());
+  }
+
+  /** The InteractionCardHost the interaction controller delegates to. */
+  private interactionHost(): InteractionCardHost {
+    return {
+      transport: this.options.transport,
+      logger: this.options.logger,
+      sessionMap: this.options.sessionMap,
+      cardMentionFor: (chatId) => this.cardMentionFor(chatId),
+      syncCard: (chatId) => this.streaming.syncCard(chatId),
+    };
   }
 
   /** The StreamingCardHost the streaming controller delegates to: Bridge
@@ -1019,48 +1005,16 @@ export class Bridge {
    * @param request - the approval request.
    * @returns the settlement outcome.
    */
+  /**
+   * Handle one `approval/request` (the surface's answerer): map the agent to
+   * its chat, post an approval card, and wait for the card callback (or
+   * timeout/abort → `'cancelled'`). Fail-closed `'unavailable'` when the
+   * chat is unknown or the card cannot be posted.
+   * @param request - the approval request.
+   * @returns the settlement outcome.
+   */
   async handleApprovalRequest(request: ApprovalRequestLike): Promise<ApprovalOutcomeLike> {
-    const chatId = this.options.sessionMap.chatFor(String(request.agent.session.id));
-    if (chatId === undefined) {
-      this.options.logger.warn(
-        `approval request for session ${String(request.agent.session.id)} has no chat; failing closed`,
-      );
-      return 'unavailable';
-    }
-    this.approvalSeq += 1;
-    const requestId = `approval-${this.approvalSeq}`;
-    let messageId: string;
-    try {
-      const sent = await this.options.transport.sendCard(
-        chatId,
-        buildApprovalCard(request.toolName, request.reason, requestId, this.cardMentionFor(chatId)),
-      );
-      messageId = sent.messageId;
-    } catch (error: unknown) {
-      this.options.logger.warn(`approval card send failed: ${String(error)}`);
-      return 'unavailable';
-    }
-    return new Promise<ApprovalOutcomeLike>((resolve) => {
-      this.interactions.register(requestId, chatId, messageId, (outcome) => {
-        // Turn the card into its static decided state, deferred out of the
-        // card-callback ACK (botmux rule), then re-assert the streaming card.
-        const settled: ApprovalOutcomeLike = outcome as ApprovalOutcomeLike;
-        setTimeout(() => {
-          void this.options.transport
-            .updateCard(messageId, buildApprovalDecidedCard(settled))
-            .catch((error: unknown) => {
-              this.options.logger.warn(`approval card settle update failed: ${String(error)}`);
-            });
-        }, 0);
-        this.streaming.syncCard(chatId);
-        resolve(settled);
-      });
-      if (request.signal !== undefined) {
-        request.signal.addEventListener('abort', () => {
-          this.interactions.abort(requestId, 'cancelled');
-        });
-      }
-    });
+    return this.interactions.handleApprovalRequest(request);
   }
 
   /**
@@ -1071,122 +1025,7 @@ export class Bridge {
    * @returns the structured answers.
    */
   async askQuestions(request: AskQuestionsRequestLike): Promise<AskQuestionsAnswerLike> {
-    const agent = request.agent;
-    const chatId =
-      agent === undefined ? undefined : this.options.sessionMap.chatFor(String(agent.session.id));
-    if (chatId === undefined) {
-      this.options.logger.warn('user question has no chat to render into; answering cancelled');
-      return {
-        answers: request.questions.map((question) => ({ id: question.id, selected: [] })),
-      };
-    }
-    const answers = new Map<string, { readonly id: string; selected: string[]; custom?: string }>();
-    let resolveAllPromise!: () => void;
-    const allDone = new Promise<void>((resolve) => {
-      resolveAllPromise = resolve;
-    });
-    let pendingCount = request.questions.length;
-    let settled = false;
-    const resolveAll = (): void => {
-      if (settled) return;
-      settled = true;
-      resolveAllPromise();
-    };
-    const settleOne = (answer: {
-      readonly id: string;
-      selected: string[];
-      custom?: string;
-    }): void => {
-      if (answers.has(answer.id)) return;
-      answers.set(answer.id, answer);
-      pendingCount -= 1;
-      if (pendingCount <= 0) resolveAll();
-    };
-    const viewOf = (question: AskQuestionItemLike): QuestionView => ({
-      id: question.id,
-      question: question.question,
-      detail: question.detail,
-      options: question.options ?? [],
-      multiSelect: question.multiSelect ?? false,
-    });
-    for (const question of request.questions) {
-      const requestId = `question-${question.id}`;
-      const view = viewOf(question);
-      let sent: SentCard;
-      try {
-        sent = await this.options.transport.sendCard(
-          chatId,
-          buildQuestionCard(view, [], this.cardMentionFor(chatId)),
-        );
-      } catch (error: unknown) {
-        this.options.logger.warn(`question card send failed: ${String(error)}`);
-        settleOne({ id: question.id, selected: [] });
-        continue;
-      }
-      const messageId = sent.messageId;
-      // Once answered, the card becomes a static confirmation (no buttons —
-      // further taps do nothing, user report). Deferred out of the card
-      // callback ACK. The target is the LATEST card the interaction points
-      // at (a multi-select re-post retargets it), not the initial post.
-      const finalizeCard = (targetMessageId: string, answerText: string): void => {
-        setTimeout(() => {
-          void this.options.transport
-            .updateCard(targetMessageId, buildQuestionAnsweredCard(question.question, answerText))
-            .catch((error: unknown) => {
-              this.options.logger.warn(`question card settle update failed: ${String(error)}`);
-            });
-        }, 0);
-      };
-      if (view.options.length === 0) {
-        // Free-text: await the next message in this chat.
-        this.awaitingQuestionAnswers.set(chatId, { requestId });
-        this.interactions.register(requestId, chatId, messageId, (outcome) => {
-          const pending = this.awaitingQuestionAnswers.get(chatId);
-          if (pending?.requestId === requestId) this.awaitingQuestionAnswers.delete(chatId);
-          const cancelled = outcome === 'cancelled';
-          const text = cancelled ? '' : outcome;
-          finalizeCard(messageId, cancelled ? 'cancelled' : outcome);
-          settleOne({ id: question.id, selected: [], ...(text === '' ? {} : { custom: text }) });
-        });
-        continue;
-      }
-      if (view.multiSelect) {
-        this.questionState.set(requestId, { chatId, view, selection: [], messageId });
-        this.interactions.register(requestId, chatId, messageId, () => {
-          const state = this.questionState.get(requestId);
-          this.questionState.delete(requestId);
-          const selected = state?.selection ?? [];
-          finalizeCard(
-            state?.messageId ?? messageId,
-            selected.length === 0 ? 'cancelled' : selected.join(', '),
-          );
-          settleOne({ id: question.id, selected });
-        });
-        continue;
-      }
-      // Single-select: the chosen option label is the outcome.
-      this.interactions.register(requestId, chatId, messageId, (outcome) => {
-        finalizeCard(messageId, outcome);
-        settleOne({ id: question.id, selected: [outcome] });
-      });
-    }
-    if (request.signal !== undefined) {
-      request.signal.addEventListener('abort', () => {
-        for (const question of request.questions) {
-          const requestId = `question-${question.id}`;
-          this.awaitingQuestionAnswers.delete(chatId);
-          if (!answers.has(question.id)) settleOne({ id: question.id, selected: [] });
-          this.interactions.abort(requestId, 'cancelled');
-        }
-        resolveAll();
-      });
-    }
-    await allDone;
-    return {
-      answers: request.questions.map(
-        (question) => answers.get(question.id) ?? { id: question.id, selected: [] },
-      ),
-    };
+    return this.interactions.askQuestions(request);
   }
 
   /** The chat's current model as a `provider/model` selection arg. */
@@ -1263,12 +1102,7 @@ export class Bridge {
   private async deliverTurn(message: FeishuMessage): Promise<void> {
     // A free-text question answer is captured here — the reply is the
     // answer, not a turn (bypasses the working-directory gate).
-    const awaiting = this.awaitingQuestionAnswers.get(message.chatId);
-    if (awaiting !== undefined) {
-      this.awaitingQuestionAnswers.delete(message.chatId);
-      this.interactions.resolveDirect(awaiting.requestId, message.chatId, message.text);
-      return;
-    }
+    if (this.interactions.answerFreeText(message.chatId, message.text)) return;
     // The working-directory gate: without an explicit /repo pick or /cd the
     // chat is "unavailable" — DSH refuses to work there (user requirement:
     // a new group must choose a repo before any turn runs). The refused
@@ -1457,57 +1291,14 @@ export class Bridge {
         await this.panelActions.handle(this.panelContext(), action);
         break;
       }
-      case 'approval': {
-        const id = action.value.id;
-        const decision = action.value.decision;
-        if (id === undefined || (decision !== 'allow' && decision !== 'reject')) break;
-        this.interactions.resolveOnce(
-          id,
-          action.chatId,
-          action.messageId,
-          decision === 'allow' ? 'allowed-once' : 'rejected',
-        );
-        break;
-      }
-      case 'question': {
-        // Single-select: the chosen option label is the answer.
-        const id = action.value.id;
-        const answer = action.value.answer;
-        if (id === undefined || answer === undefined) break;
-        this.interactions.resolveOnce(`question-${id}`, action.chatId, action.messageId, answer);
-        break;
-      }
-      case 'question-toggle': {
-        // Multi-select: flip one option and re-post the card with
-        // checkmarks; the newest card becomes the interaction target.
-        const id = `question-${action.value.id ?? ''}`;
-        const option = action.value.option;
-        const state = this.questionState.get(id);
-        if (state === undefined || option === undefined) break;
-        state.selection = state.selection.includes(option)
-          ? state.selection.filter((entry) => entry !== option)
-          : [...state.selection, option];
-        try {
-          const sent = await this.options.transport.sendCard(
-            state.chatId,
-            buildQuestionCard(state.view, state.selection),
-          );
-          this.interactions.retarget(id, sent.messageId);
-          state.messageId = sent.messageId;
-        } catch (error: unknown) {
-          this.options.logger.warn(`question toggle re-post failed: ${String(error)}`);
-        }
-        break;
-      }
-      case 'question-submit': {
-        const id = `question-${action.value.id ?? ''}`;
-        this.interactions.resolveOnce(id, action.chatId, action.messageId, 'submit');
-        break;
-      }
+      case 'approval':
+      case 'question':
+      case 'question-toggle':
+      case 'question-submit':
       case 'question-cancel': {
-        const id = `question-${action.value.id ?? ''}`;
-        this.awaitingQuestionAnswers.delete(action.chatId);
-        this.interactions.resolveOnce(id, action.chatId, action.messageId, 'cancelled');
+        // Approval/question interactions are handled by the interaction
+        // controller (they settle pending card interactions).
+        await this.interactions.handleCardAction(action);
         break;
       }
       default: {
