@@ -131,10 +131,9 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 - **Proactive @-mentions.** The last accepted sender per chat is remembered;
   group error notices, approval cards, and question cards carry an @-mention
   of that requester so the right human is drawn in.
-- **Session replay.** `/history` renders the chat's session log as in-chat
-  cards (lark_md-safe transcript, split across cards without loss;
-  `/history last <n>` replays a subset); `/export` ships the same transcript
-  as a file message.
+- **Session replay.** One surface: `/export` ships the chat's session log
+  as a file message (lark_md-safe transcript). `/history` was removed as
+  redundant.
 - **A chat is a session.** One Feishu chat maps to one dsh session id
   (`feishu-*`), persisted so a restart resumes every chat.
 - **Restart-safe session resolution.** For a chat with a mapped session and
@@ -167,13 +166,8 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
   Self-skips when prerequisites are missing; see
   [development.md](development.md) → Integration test.
 
-## Later iterations
+## Remaining roadmap
 
-- Iteration 2: group-chat mention routing, slash commands (surface-owned +
-  dsh passthrough), `/repo` cwd selection, resume.
-- Iteration 3: interactive cards — approvals (`ctx.approval`), questions
-  (`ctx.userQuestions`) — via card button callbacks over the same WS
-  connection.
-- Iteration 4: robustness — folding, permissions, reconnect, observability.
-- Iteration 5: scheduled tasks/webhooks, multi-bot, `/relay`.
+- Multi-bot group collaboration (`/relay`-style flows).
+- Reconnect hardening and broader observability.
 

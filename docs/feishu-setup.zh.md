@@ -18,13 +18,14 @@ pnpm run setup:feishu -- --new       # 创建新应用并完成配置
 
 之后向导会（无需再在 Web 控制台做任何操作）：
 
-1. 创建一个**企业自建应用**（默认名称为 "DSH Agent (dsh-feishu)"，可用
-   `--app-name` 修改），并读回其 `app_id` / `app_secret`。
+1. 创建一个**企业自建应用**（默认名称为 "DSH Agent (dsh-feishu)"；用
+   `--app-name` / `--avatar <png>` / `--description` 可分别指定名字、头像和
+   描述），并读回其 `app_id` / `app_secret`。
 2. 启用**机器人**能力。
 3. 将**事件与卡片回调切换为长连接**，并订阅 `im.message.receive_v1`（事件）+
    `card.action.trigger`（卡片回调）——两者均为必需项，且会通过读回进行校验
    （失败即关闭，fail-closed）。
-4. 授予 `im:message`、`im:message:send_as_bot`、`im:chat` 这些权限（scope）。
+4. 授予 manifest 清单中的全部权限（见第 3 步的权限表）。
 5. 以**"仅自己可见"**的可见范围发布一个应用版本——自动通过审批，无需等待
    管理员。
 6. 将 `appId` / `appSecret` 写入 profile 的 `cordis.patch.yml`（会保留一份
@@ -88,15 +89,19 @@ endpoint、宿主机无需公网 IP（所有流量均为出站）。在 **Events
 ### 3. 授予权限
 
 权威清单位于 `src/setup/feishu-manifest.json`（配置自动化授予的正是这份清单
-——新增功能时请保持同步）。当前权限（Permissions，权限）：
+——新增功能时请保持同步）。当前权限：
 
 | Scope | Purpose |
 |---|---|
-| `im:message` | Receive messages (`im.message.receive_v1`) |
-| `im:message:send_as_bot` | Send messages and cards as the bot |
-| `im:chat` | Read chat metadata |
-| `im:resource` | Upload file messages (`/export`) |
-| `im:message.reaction` | Two-stage reaction ack (received/done/error emojis) |
+| `im:message` | 接收消息（`im.message.receive_v1`） |
+| `im:message.group_at_msg:readonly` | 接收群聊中 @ 机器人的消息 |
+| `im:message.group_msg` | 接收群聊中**所有**消息（含未 @ 的；`groupMentionMode: always` 下 1 用户 1 机器人的 solo 放行依赖它） |
+| `im:message.group_msg.include_bot:read` | 包含群聊中**其他机器人**发送的消息（群里有别的机器人时 solo 放行仍生效） |
+| `im:message:send_as_bot` | 以机器人身份发送消息和卡片 |
+| `im:chat` | 读取群信息 |
+| `im:chat.members:read` | 读取群成员（多机器人 / 名单感知） |
+| `im:chat.members:write_only` | 拉人进群（群流程，与 botmux 对齐） |
+| `im:resource` | 上传文件消息（`/export`） |
 
 ### 4. 发布
 

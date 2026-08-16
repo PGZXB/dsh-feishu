@@ -72,7 +72,7 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 - **可配置的群提及 gate。** `groupMentionMode`（botmux 语义）：`always` 要求 @ 提及（在 1 人 1 bot 的独享群中通过缓存的群成员数放宽）；`never` 回答每一条群消息；`ambient` 在消息被重定向给其他成员时让位；`topic` 在话题落地前行为同 `always`。`allowedChats` 限制哪些聊天会被服务；`allowedUsers` 限制哪些发送者的 open id 会被服务（未列入名单的用户发来的消息和卡片按钮会被忽略）。
 - **两阶段反应确认。** 被接受的回合消息会得到一个已收到反应（默认 `GoGoGo`），在回合结束时换成 `DONE` / `WARN` / `WARN`（可通过 `reactions` 配置覆盖）；失败只记日志。
 - **主动 @ 提及。** 每个聊天最后被接受的发送者会被记住；群错误通知、审批卡片和提问卡片都会 @ 提及该请求者，以便把正确的人拉进来。
-- **Session 重放。** `/history` 将聊天的 session 日志渲染为聊天内卡片（lark_md 安全的转录，跨卡片拆分而不丢失；`/history last <n>` 重放子集）；`/export` 将同一转录以文件消息的形式发送。
+- **Session 重放。** 只有一个入口：`/export` 将聊天的 session 日志以文件消息形式发送（lark_md 安全的转录）。`/history` 因冗余已被移除。
 - **一个聊天就是一个 session。** 一个飞书聊天映射到一个 dsh session id（`feishu-*`），持久化保存，重启后每个聊天都会被恢复。
 - **重启安全的 session 解析。** 对于有映射 session 但没有 live agent 的聊天，bridge 会恢复持久化的 session；如果没有持久化则新建；如果映射的 id 与磁盘上的日志冲突，则重绑一个新 id。历史在守护进程重启后仍然存在。
 - **每轮一张卡片。** 消息到达时发布卡片，并在块/工具流入时进行 patch。**最终答案保留在卡片中**（它就地绿色 finalize——没有第二个气泡）；失败会附加一个 ⚠️ 提示，使中断的回合永远不会被忽略。patch 是静默的（无未读），这也是第一次卡片发送就是通知的原因。
@@ -84,10 +84,8 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 - **单元测试**（`tests/`）：每个模块，通过 fake context 和记录型 fake——包括完整的卡片状态机矩阵（state × action，扩展了命令/恢复 session 动作）、面板调色板分页、session-list 构建器，以及 `executeDshCommand` 结果映射。
 - **真实组合集成**（`tests/integration/`）：从真实 profile 启动的真实 dsh 进程，对 mock LLM 服务器运行一次真实的 agent 回合，并将飞书替换为 memory transport。端到端断言整个循环（卡片发布/被 patch、最终消息送达）。当前置条件缺失时自我跳过；见 [development.md](development.md) → 集成测试。
 
-## 后续迭代
+## 剩余路线图
 
-- 迭代 2：群聊提及路由、斜杠命令（surface 自有 + dsh 透传）、`/repo` cwd 选择、恢复。
-- 迭代 3：交互式卡片——审批（`ctx.approval`）、提问（`ctx.userQuestions`）——经由同一条 WS 连接上的卡片按钮回调。
-- 迭代 4：健壮性——折叠、权限、重连、可观测性。
-- 迭代 5：定时任务/webhooks、多 bot、`/relay`。
+- 多 bot 群协作（`/relay` 式流程）。
+- 重连加固与更广的可观测性。
 

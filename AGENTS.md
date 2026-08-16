@@ -145,8 +145,9 @@ scripts/              # repo tooling (release, verification)
 1. Pick the next item to work on (open issues, or as assigned by the
    maintainer).
 2. **Spec first, then implement.** Before building a UX feature, study the
-   reference implementation — botmux (`_tmp/botmux`: `im/lark/card-builder.ts`,
-   `card-handler.ts`, `event-dispatcher.ts`, `services/project-scanner.ts`) and
+   reference implementation — botmux (clone it under `_tmp/botmux`:
+   `im/lark/card-builder.ts`, `card-handler.ts`, `event-dispatcher.ts`,
+   `services/project-scanner.ts`) and
    DSH web (deepseek-harness `packages/client/ui-tool`,
    `packages/client/ui-conversation`) — and record the intended behavior in
    `docs/ux-specification.md` (per part, with the reference cited) plus the
@@ -189,7 +190,7 @@ git worktree add -b <topic-branch> _dev/dsh-feishu-<topic> main
 A fresh worktree has no `node_modules/`, `lib/`, or `_dev/` state. Before
 running the gates there: `pnpm install`, `pnpm run build`, and prepare the
 integration profile (`DSH_HOME="$(pwd)/_dev/dsh-home" dsh plugin --profile
-feishu-dev add "link:$(pwd)"`). pnpm is not on PATH in this environment — use
+feishu-dev add "link:$(pwd)"`). If pnpm is not on your `PATH`, use
 the local install under `_dev/pnpm` and point store/cache at `_dev/` (env
 block in `docs/development.md` → "Local toolchain").
 
@@ -201,10 +202,11 @@ git fetch origin && git rebase origin/main   # resolve conflicts, re-verify
 git push -u origin <topic-branch>            # open a PR; never push to main
 ```
 
-Merge only through a PR with green CI. GitHub API access (PR creation, CI
-monitoring, merge) is automated with the repo-scoped PAT at `_dev/gh-token`
-(chmod 600); the concrete API calls live in `docs/development.md` →
-"Pull requests and CI". Keep the main tree untouched throughout: the
+Merge only through a PR with green CI. Maintainers may automate GitHub API
+access (PR creation, CI monitoring, merge) with a repo-scoped PAT kept in
+the git-ignored `_dev/gh-token` (chmod 600); the concrete API calls live in
+`docs/development.md` → "Pull requests and CI". Keep the main tree
+untouched throughout: the
 integration suite writes `_dev/` state (dsh home, memory transport), so run it
 in the worktree, never in the main tree.
 
@@ -254,4 +256,4 @@ These rules came from real bugs; each has a regression test and a
 
 When in doubt about a dsh API, read the installed package's `lib/types/*.d.ts`
 in the dsh installation, or the upstream source under a checkout of
-`deepseek-ai/deepseek-harness` (referenced clones live in `_tmp/`).
+`deepseek-ai/deepseek-harness` (clone referenced upstreams under `_tmp/`).

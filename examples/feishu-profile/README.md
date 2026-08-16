@@ -31,4 +31,4 @@ reactions, reminders, `/feishu-status`) works out of the box.
 Credentials come from `appId`/`appSecret` below or the
 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` environment variables; see
 `docs/feishu-setup.md` for the Feishu app + permissions (including
-`im:message.reaction` for the reaction ack and `im:resource` for `/export`).
+`im:resource` for `/export`).

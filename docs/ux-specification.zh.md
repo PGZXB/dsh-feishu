@@ -27,7 +27,7 @@
 
 参考：用户反馈第 4–6 轮（默认折叠、点击详情不得折叠、折叠期间流式输出必须继续、"card reverted to working after panel" —— 取代了临时逐操作补丁的设计）。
 
-每个聊天对应一个 `ChatCardState`，它是流式卡片的**唯一权威来源**：`title`、`content`、`rows`、`openThinkId`、`status`（working/done/stopped/error）、`collapsed`。bridge 仅依据该状态渲染卡片，别无其他。
+每个聊天对应一个 `ChatCardState`，它是流式卡片的**唯一权威来源**：`title`、`content`、`rows`、`openThinkId`、`status`（working/done/stopped/error）、`collapsed`。流式卡片控制器仅依据该状态渲染卡片，别无其他。
 
 ```
 (none)  --message/retry-->  working  --turn/end(aborted)-->  stopped
@@ -44,7 +44,7 @@ done|stopped|error --any action--->  same (state unchanged; card re-synced)
 - **折叠**：`collapsed` 是状态的一部分；`▸ Expand`/`▾ Collapse` 翻转它。折叠期间序列行持续流式更新（每次同步时根据 rows 重新计算）。新回合重置为折叠。
 - **compaction 不是回合**（用户报告）：`/compact` 运行
   `compaction/start → summary → end` 事务，**没有** `turn/end`，因此
-  bridge 自己掌管 compaction 卡的生命周期——`compaction/start` 立即打开
+  流式卡片控制器掌管 compaction 卡的生命周期——`compaction/start` 立即打开
   一张 🧹 Compacting 卡（按钮即时反馈，而非静默等待），`compaction/summary`
   渲染摘要，`compaction/end` 定稿（成功为 done；事务失败时为 error 并附带
   失败通知），从而释放 working 状态门禁。plugin 源为 `compact` 的 checkpoint
@@ -122,7 +122,7 @@ done|stopped|error --any action--->  same (state unchanged; card re-synced)
 两行操作按钮，让每一行在移动端保持简短：
 
 - **第 1 行 —— 状态操作**
-  - **working**：`⏹ Stop`。
+  - **working**：`⏹ Stop turn`。
   - **done**：`📋 Copy`、`🔁 Retry`、`⚙️ Panel`。
   - **error**：`🔁 Retry`、`⚙️ Panel`。
 - **第 2 行 —— 视图切换**（仅当存在行时）：`▾ Collapse` / `▸ Expand`。
@@ -339,4 +339,4 @@ bridge 记住每个聊天的**最近被接受的发送者**（及其聊天类型
 
 ### 11.2 agent 发起的回合渲染为卡片
 
-触发的提醒唤醒 agent，agent 注入一条 `user/message`，其 `source.kind` 为 `'plugin'`（`plugin: 'schedule'`）。bridge 以该标记为键：没有卡片的聊天收到 plugin 来源的用户消息，即为**agent 发起的回合** —— surface 打开一张全新的 `⏰ Reminder` 卡片，并将响应渲染到完成（绿色）。用户发起的回合不受影响（其 working 卡片状态在任何事件之前就已存在）；resume 绝不重放历史（历史用户消息携带 `source.kind: 'user'`）。`/schedule` 通过折叠会话日志列出活动提醒。
+触发的提醒唤醒 agent，agent 注入一条 `user/message`，其 `source.kind` 为 `'plugin'`（`plugin: 'schedule'`）。流式卡片控制器以该标记为键：没有卡片的聊天收到 plugin 来源的用户消息，即为**agent 发起的回合** —— surface 打开一张全新的 `⏰ Reminder` 卡片，并将响应渲染到完成（绿色）。用户发起的回合不受影响（其 working 卡片状态在任何事件之前就已存在）；resume 绝不重放历史（历史用户消息携带 `source.kind: 'user'`）。`/schedule` 通过折叠会话日志列出活动提醒。

@@ -21,4 +21,4 @@ DSH_HOME="$HOME/.dsh" dsh --profile feishu
 - `reactions` —— 两阶段回执表情（received/done/error/stopped）。
 - bundle 还会自动挂载 `@deepseek-ai/dsh-schedule`（聊天内配置的提醒，以 `⏰ Reminder` 卡片渲染）与 `ask_user_question` 工具（提问卡片）。
 
-凭据来自下面的 `appId`/`appSecret` 或 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` 环境变量；飞书应用与权限（含表情回执所需的 `im:message.reaction` 与 `/export` 所需的 `im:resource`）见 `docs/feishu-setup.md`。
+凭据来自下面的 `appId`/`appSecret` 或 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` 环境变量；飞书应用与权限（含 `/export` 所需的 `im:resource`）见 `docs/feishu-setup.md`。

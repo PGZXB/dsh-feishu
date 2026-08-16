@@ -7,7 +7,7 @@ privately to the maintainers:
 
 - Open a private security advisory on GitHub (once the repository is public),
   or
-- Email the maintainers (address to be published with the first release).
+- Email the maintainers at **pgzxb@qq.com**.
 
 Please include:
 
@@ -26,7 +26,7 @@ a verified reproduction exists.
 - Feishu credentials are read from config or `FEISHU_APP_ID` /
   `FEISHU_APP_SECRET` environment variables; never commit credentials.
   **Rotate the Feishu app secret before any public release** — development
-  secrets live in `_dev/secrets.env` (git-ignored) and must be treated as
+  secrets may live in e.g. `_dev/secrets.env` (git-ignored) and must be treated as
   compromised once the repository is public.
 - dsh approval and user-question requests fail closed when the bridge cannot
   present them (dsh semantics: `unavailable` / `cancelled`).

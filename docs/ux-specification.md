@@ -51,8 +51,8 @@ working after panel" — the design that replaced ad-hoc per-action patches).
 
 One `ChatCardState` per chat is the **single authoritative source** for the
 streaming card: `title`, `content`, `rows`, `openThinkId`, `status`
-(working/done/stopped/error), `collapsed`. The bridge renders the card from
-this state and nothing else.
+(working/done/stopped/error), `collapsed`. The streaming-card controller renders the card from this state and
+nothing else.
 
 ```
 (none)  --message/retry-->  working  --turn/end(aborted)-->  stopped
@@ -81,7 +81,7 @@ done|stopped|error --any action--->  same (state unchanged; card re-synced)
   rows on every sync). A new turn resets to collapsed.
 - **Compaction is not a turn** (user report): `/compact` runs a
   `compaction/start → summary → end` transaction with no `turn/end`, so the
-  bridge owns the compaction card lifecycle itself — `compaction/start`
+  the streaming-card controller handles the compaction card lifecycle — `compaction/start`
   opens a 🧹 Compacting card (immediate button feedback, not a silent
   wait), `compaction/summary` renders the summary, and `compaction/end`
   finalizes it (done, or error with a failure notice when the transaction
@@ -176,7 +176,7 @@ Reference: user feedback rounds 1–5; botmux control cards.
 Two action rows keep each short on mobile:
 
 - **Row 1 — state actions**
-  - **working**: `⏹ Stop`.
+  - **working**: `⏹ Stop turn`.
   - **done**: `📋 Copy`, `🔁 Retry`, `⚙️ Panel`.
   - **error**: `🔁 Retry`, `⚙️ Panel`.
 - **Row 2 — view toggle** (only when rows exist): `▾ Collapse` /
@@ -607,7 +607,7 @@ chats gain them on a fresh session (/clear or a new chat).
 ### 11.2 Agent-initiated turns render as cards
 
 A fired reminder wakes the agent, which injects a `user/message` whose
-`source.kind` is `'plugin'` (`plugin: 'schedule'`). The bridge keys on
+`source.kind` is `'plugin'` (`plugin: 'schedule'`). The streaming-card controller keys on
 that marker: a card-less chat receiving a plugin-sourced user message is
 an **agent-initiated turn** — the surface opens a fresh `⏰ Reminder` card
 and renders the response to completion (green). User-initiated turns are

@@ -64,7 +64,7 @@ All four must pass before committing; CI runs the same four.
 ```
 src/                  # plugin source; one module per concern, each with tests
 tests/                # vitest suites (never under src/)
-docs/                 # English documentation
+docs/                 # documentation (EN + .zh.md)
 examples/             # runnable examples (profiles, configs)
 scripts/              # repo tooling
 ```
@@ -98,7 +98,7 @@ unless the prerequisites are met:
 - A prepared profile exists at `$FEISHU_INT_DSH_HOME/profiles/feishu-dev`
   (default `_dev/dsh-home/profiles/feishu-dev` — create it with
   `dsh plugin --profile feishu-dev add link:<checkout>`, see the "Verifying
-  the bundle" section above). Deliberately independent of the ambient
+  the bundle" section below). Deliberately independent of the ambient
   `DSH_HOME` so the test never touches another dsh home.
 - The checkout is built (`pnpm run build`).
 
@@ -134,7 +134,7 @@ allowlists (via the `FEISHU_*` env seams), `/group` + `/repo`, every
 question-card variant, proactive mentions, dedup, passthrough, and the
 stopped-turn reaction swap. (Session replay has one surface — `/export`;
 `/history` was removed by decision as redundant and ugly.) Because vitest runs test **files** in
-parallel, the two suites must not share a dsh home (both persist the
+in parallel, the two suites must not share a dsh home (both persist the
 session map + logs): the scenario suite defaults to
 `_dev/dsh-home-scenarios` (`FEISHU_INT_SCENARIOS_DSH_HOME` overrides),
 prepared with the same `dsh plugin --profile feishu-dev add link:<checkout>`
@@ -200,6 +200,8 @@ timeout 30 dsh --profile feishu-dev       # boot; expect the "[feishu]" log line
 5. Run all gates; commit with a Conventional Commit message.
 
 ## Pull requests and CI
+
+_Maintainer-only automation — contributors open PRs through the GitHub UI._
 
 Merge only through a PR with green CI — never push to main. GitHub API access
 uses the repo-scoped fine-grained PAT at `_dev/gh-token` (chmod 600, owned by

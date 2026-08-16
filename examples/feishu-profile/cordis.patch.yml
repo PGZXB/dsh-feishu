@@ -10,7 +10,7 @@
     # appSecret: yyy
     # Where /repo scans for candidate projects (one level deep).
     repoRoots:
-      - /home/me/projects
+      - ~/projects
     # Optional user allowlist (ou_ open ids are app-scoped; empty = no
     # restriction). Messages and card buttons from unlisted users are
     # ignored entirely.

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-17
+
 ### Added
 
 - **Guided bot branding in the quick-setup tool.** Creating an app now
@@ -94,6 +96,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command), then drives the setup steps through the card with the
   equivalent slash commands noted per step; the Features list gains a
   "One-tap control panel" entry (`README.md`, `README.zh.md`).
+- **README embeds real-bot screenshots and a demo video.** The usage guide
+  shows every step with a capture of the real bot (step-numbered assets
+  under `docs/assets/snapshots/`) and a hero demo video embedded via a
+  GitHub attachment link (`README.md`, `README.zh.md`).
 - **Architecture refactor: the card surfaces become state machines behind
   seams (no behavior change).** `Bridge`'s monolithic switch/if sprawl (the
   source of every "panel reverted mid-action" / "card went dead" bug class)
@@ -204,6 +210,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   passes `owner_id` (the requesting user) to `im.v1.chat.create`, so the
   created group is owned by the user who ran `/group` (verified against
   the real API; unit test asserts the payload).
+- **The collapsed trace chain on cards now uses `→`** instead of the ASCII
+  `->`, matching the expanded rows (regression tests updated).
+- **The streaming card's ⚙️ Panel button now opens a FRESH panel card**
+  (user report: the button "did nothing" once the previous panel card went
+  off-screen) — the panel action reposts instead of updating in place.
 - **Panel state machine made complete and failure-proof** (user testing):
   - ALL pickers now render INSIDE the panel card — `/repo`, `/model`,
     `/permission` (and their panel buttons and slash commands) open their

@@ -53,7 +53,7 @@ pnpm run build       # tsc emit to lib/ (declaration + source maps)
 ```
 src/                  # plugin source; one module per concern, each with tests
 tests/                # vitest suites (never under src/)
-docs/                 # English documentation
+docs/                 # documentation (EN + .zh.md)
 examples/             # runnable examples (profiles, configs)
 scripts/              # repo tooling
 ```
@@ -70,7 +70,7 @@ scripts/              # repo tooling
 该套件断言完整的 surface：消息 → session → agent turn → 卡片发布并被 patch → **由卡片承载的最终答案**（它就地以绿色收尾），此外还有卡片操作、session 生命周期、web 命令包装器，以及工作目录 gate。脚本化的 mock LLM（`setScripts`、`holdNextResponse`，以及一个应答 HTTP 500 的 `error` 块）驱动工具调用、推理、错误 turn 和重试。除非满足前置条件，否则套件会自行跳过：
 
 - dsh CLI 可解析（`$DSH_BIN`，或 `PATH` 上的 `dsh`）。
-- 在 `$FEISHU_INT_DSH_HOME/profiles/feishu-dev` 存在一个准备好的 profile（默认 `_dev/dsh-home/profiles/feishu-dev`——用 `dsh plugin --profile feishu-dev add link:<checkout>` 创建，见上文"在真实 dsh profile 中验证 bundle"一节）。刻意与环境的 `DSH_HOME` 相互独立，这样测试永远不会碰到另一个 dsh home。
+- 在 `$FEISHU_INT_DSH_HOME/profiles/feishu-dev` 存在一个准备好的 profile（默认 `_dev/dsh-home/profiles/feishu-dev`——用 `dsh plugin --profile feishu-dev add link:<checkout>` 创建，见下文"在真实 dsh profile 中验证 bundle"一节）。刻意与环境的 `DSH_HOME` 相互独立，这样测试永远不会碰到另一个 dsh home。
 - checkout 已构建（`pnpm run build`）。
 
 CI 在每次 push 时都运行该套件（两个 node 版本分支都跑）：workflow 构建 checkout、准备 profile，并以 `FEISHU_INT_REQUIRED=1` 运行测试——这样缺少前置条件会响亮地让任务失败，而不是静默跳过。dsh CLI 是 devDependency（`@deepseek-ai/dsh`），原生构建脚本（node-pty 及其同类）在 `pnpm-workspace.yaml` 中获准——不涉及任何凭据；正是上面这些 Feishu 和 LLM mock 让套件在无需密钥的情况下也能运行。
@@ -137,6 +137,8 @@ timeout 30 dsh --profile feishu-dev       # boot; expect the "[feishu]" log line
 5. 运行全部质量门槛；用 Conventional Commit 消息提交。
 
 ## Pull requests 与 CI
+
+_仅维护者使用的自动化——贡献者请直接通过 GitHub UI 提 PR。_
 
 只能通过 CI 全绿的 PR 合并——绝不直接 push 到 main。GitHub API 访问使用位于 `_dev/gh-token` 的 repo 级 fine-grained PAT（chmod 600，由开发者持有，绝不提交）。每次调用时把它读入变量，绝不回显：
 

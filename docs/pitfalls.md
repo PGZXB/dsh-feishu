@@ -30,9 +30,10 @@ the sandbox) and are the reason several card designs were reworked.
   switch both "events" and "card callbacks" to the long-connection receive
   mode in the Feishu console; otherwise buttons return
   "该应用尚未配置卡片回调". See `docs/feishu-setup.md`.
-- **`message.patch` is silent** (no unread indicator), so final answers are
-  delivered as a fresh `message.create`; patching is reserved for the live
-  streaming card. botmux follows the same rule.
+- **`message.patch` is silent** (no unread indicator), which is exactly
+  right for a live streaming card. One card per turn: posted when the turn
+  starts (that send notifies), patched as output arrives, and **finalized in
+  place** — a completed or stopped turn sends no second bubble.
 - **Card size cap ≈ 109 KB** — long outputs are tail-truncated before
   render (`MAX_CARD_CHARS`).
 - **`lark_md` has no reliable escape syntax** — `**` is collapsed to `*`
@@ -52,11 +53,10 @@ The harness sandbox (and this checkout's environment) has specific rules:
   and fail with `fetch failed`. The preload shim
   `_dev/proxy-preload.cjs` installs `EnvHttpProxyAgent` as the global
   dispatcher; load it via `NODE_OPTIONS='-r …/proxy-preload.cjs'`.
-- **Direct egress to `generativelanguage.googleapis.com` is blocked** — the
-  proxy is required for Gemini; the preload above is what makes modlens
-  vision work.
-- **`~/.dsh`, `~/.npm`, `~/.modlens` are read-only mounts** unless the
-  shell has `danger-full-access`. All dev state lives under the repo's
+- **Direct egress to some LLM providers is blocked** — the proxy is
+  required for them; the preload above is what makes those providers work.
+- **`~/.dsh`, `~/.npm` (and other tools' own state dirs) are read-only
+  mounts** unless the shell has `danger-full-access`. All dev state lives under the repo's
   `_dev/` (home dir, bin, corepack, dsh-home).
 - **An ambient `DSH_HOME` exported by the harness points at its own home** —
   integration tests must point at their own `FEISHU_INT_DSH_HOME` (or
@@ -85,20 +85,19 @@ The harness sandbox (and this checkout's environment) has specific rules:
 
 ## Gemini / modlens
 
-- New keys use the new API-key format (`AQ.…`). Older model names are
-  gated for new users (404): `gemini-2.5-flash/pro/lite` and even
-  `gemini-3.5-flash` can 404 or 503 under load. The working model here is
-  `gemini-3.5-flash-lite`; treat the model name as environment-dependent.
-- modlens reads the provider config from `~/.modlens/config.json`
-  (`provider: 'gemini-api'` with the apiKey and model) and needs the
-  undici proxy preload (above) to reach Google.
+- New keys use the new API-key format (`AQ.…`). Older model names can be
+  gated for new users (404) or 503 under load — treat the concrete model
+  name as environment-dependent; modlens keeps its provider config under
+  its own state directory and needs the undici proxy preload (above) to
+  reach providers that require a proxy.
 
 ## pnpm
 
 - pnpm ≥ 10 reads settings from `pnpm-workspace.yaml`, **not** `.npmrc`.
-  `minimumReleaseAge` quarantined `@liustack/modlens@3.11.0` and silently
-  installed 3.5.0 (which lacks `dsh.bundle`) — fix via
-  `minimumReleaseAgeExclude: ['@liustack/modlens@3.11.0']`.
+  `minimumReleaseAge` can quarantine a freshly released harness package and
+  silently install an older one — the workspace keeps an
+  `minimumReleaseAgeExclude` list (currently `@deepseek-ai/*` + schemastery);
+  add a package there when a new release is needed immediately.
 - **pnpm ≥ 11 blocks dependency build scripts by default.** A profile
   `dsh plugin add @dsh-feishu/dsh-feishu` fails with
   `ERR_PNPM_IGNORED_BUILDS` (the lark SDK's `protobufjs` postinstall) unless
@@ -227,7 +226,7 @@ The harness sandbox (and this checkout's environment) has specific rules:
 - **The integration suites run the BUILT `lib/`, not `src/`.** A change to
   `src/` does not reach the spawned process until `pnpm run build`; a
   "works locally, fails in integration" symptom is usually a stale lib
-  (the real-process `/history` case: the command was "Unknown" until the
+  (the real-process `/model` case: the command was "Unknown" until the
   rebuild landed).
 - **Two real-process suites must not share a dsh home.** vitest runs test
   files in parallel; both suites boot dsh children that persist the session

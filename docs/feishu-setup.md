@@ -29,7 +29,7 @@ The wizard then, with no further web-console work:
 3. Switches **events and card callbacks to the long connection** and
    subscribes `im.message.receive_v1` (event) + `card.action.trigger`
    (card callback) — both required, verified by read-back (fail-closed).
-4. Grants the scopes `im:message`, `im:message:send_as_bot`, `im:chat`.
+4. Grants the manifest's scopes — see the permissions table in step 3.
 5. Publishes an app version with **"visible to me only"** visibility —
    auto-approved, no administrator wait.
 6. Writes `appId` / `appSecret` into the profile's `cordis.patch.yml`

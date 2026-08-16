@@ -25,8 +25,9 @@
 - **卡片回调是与事件（events）分离的接收模式。** bot 必须在 Feishu 控制台
   中将 "events" 和 "card callbacks" 都切换到长连接接收模式；否则按钮会
   返回 "该应用尚未配置卡片回调"。参见 `docs/feishu-setup.md`。
-- **`message.patch` 是静默的**（没有未读指示器），因此最终答案以全新的
-  `message.create` 投递；patch 保留给实时流式卡片。botmux 遵循同样的规则。
+- **`message.patch` 是静默的**（没有未读指示器），这对实时流式卡片正好
+  合适。每个回合一张卡片：回合开始时发出（那次发送即通知），输出到达时
+  不断 patch，并在**原卡上定稿** —— 完成或停止的回合不会发出第二个气泡。
 - **卡片大小上限约 109 KB** —— 长输出在渲染前会被截断尾部
   （`MAX_CARD_CHARS`）。
 - **`lark_md` 没有可靠的转义语法** —— 不可信文本中的 `**` 会被折叠为 `*`
@@ -46,10 +47,10 @@ harness 沙箱（以及本 checkout 的环境）有一些特定规则：
   `fetch failed` 失败。预加载 shim `_dev/proxy-preload.cjs` 将
   `EnvHttpProxyAgent` 安装为全局 dispatcher；通过
   `NODE_OPTIONS='-r …/proxy-preload.cjs'` 加载它。
-- **直连 `generativelanguage.googleapis.com` 被阻止** —— Gemini 需要
-  代理；上面的预加载正是让 modlens vision 工作的原因。
-- **`~/.dsh`、`~/.npm`、`~/.modlens` 是只读挂载**，除非 shell 拥有
-  `danger-full-access`。所有开发状态都位于仓库的 `_dev/` 下（home 目录、
+- **直连某些 LLM provider 被阻止** —— 它们需要代理；上面的预加载正是
+  让这些 provider 工作的原因。
+- **`~/.dsh`、`~/.npm`（以及其他工具自己的状态目录）是只读挂载**，
+  除非 shell 拥有 `danger-full-access`。所有开发状态都位于仓库的 `_dev/` 下（home 目录、
   bin、corepack、dsh-home）。
 - **harness 导出的环境变量 `DSH_HOME` 指向它自己的 home** —— 集成测试
   必须指向它们自己的 `FEISHU_INT_DSH_HOME`（或 `_dev/dsh-home`），绝不要
@@ -76,20 +77,17 @@ harness 沙箱（以及本 checkout 的环境）有一些特定规则：
 
 ## Gemini / modlens
 
-- 新密钥使用新的 API-key 格式（`AQ.…`）。较旧的模型名称对新用户被门禁
-  （404）：`gemini-2.5-flash/pro/lite`，甚至在负载下 `gemini-3.5-flash`
-  也可能 404 或 503。这里可用的模型是 `gemini-3.5-flash-lite`；请把模型
-  名称视为随环境而变化的。
-- modlens 从 `~/.modlens/config.json` 读取 provider 配置
-  （`provider: 'gemini-api'`，包含 apiKey 和 model），并且需要 undici
-  代理预加载（见上文）才能访问 Google。
+- 新密钥使用新的 API-key 格式（`AQ.…`）。较旧的模型名称可能对新用户
+  被门禁（404），或在负载下 503——把具体的模型名称视为随环境而变化；
+  modlens 的 provider 配置存放在它自己的状态目录下，并且需要 undici
+  代理预加载（见上文）才能访问需要代理的 provider。
 
 ## pnpm
 
 - pnpm ≥ 10 从 `pnpm-workspace.yaml` 读取设置，**而不是** `.npmrc`。
-  `minimumReleaseAge` 隔离了 `@liustack/modlens@3.11.0`，并静默安装了
-  3.5.0（它缺少 `dsh.bundle`）—— 通过
-  `minimumReleaseAgeExclude: ['@liustack/modlens@3.11.0']` 修复。
+  `minimumReleaseAge` 可能隔离刚发布的 harness 包并静默安装旧版——
+  workspace 维护了一份 `minimumReleaseAgeExclude` 清单（当前为
+  `@deepseek-ai/*` + schemastery）；需要立刻用新版时把包加进去。
 - **pnpm ≥ 11 默认拦截依赖的构建脚本。** profile 里执行
   `dsh plugin add @dsh-feishu/dsh-feishu` 会以 `ERR_PNPM_IGNORED_BUILDS`
   失败（lark SDK 的 `protobufjs` postinstall 被拦），除非批准该构建。
@@ -202,7 +200,7 @@ harness 沙箱（以及本 checkout 的环境）有一些特定规则：
   消费会使消费翻倍，并静默地使每个后续脚本化响应偏移。
 - **集成测试套件运行的是构建后的 `lib/`，而不是 `src/`。** 对 `src/` 的
   更改在 `pnpm run build` 之前不会到达生成的进程；"本地正常、集成失败"
-  的症状通常是过期的 lib（真实进程的 `/history` 案例：命令在重建落地之前
+  的症状通常是过期的 lib（真实进程的 `/model` 案例：命令在重建落地之前
   一直是 "Unknown"）。
 - **两个真实进程测试套件不能共享同一个 dsh home。** vitest 并行运行测试
   文件；两个套件都会启动 dsh 子进程，持久化会话映射 + 日志，并发的写入
