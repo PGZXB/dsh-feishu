@@ -14,8 +14,6 @@
  * @module @dsh-feishu/dsh-feishu/bridge
  */
 
-import { existsSync, statSync } from 'node:fs';
-import { resolve as resolvePath } from 'node:path';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
@@ -27,11 +25,9 @@ import {
   buildQuestionAnsweredCard,
   buildQuestionCard,
   buildResultCard,
-  buildStatusCard,
   type ModelOptionView,
   type PanelCommand,
   type QuestionView,
-  type StatusView,
 } from './cards/render.js';
 import {
   StreamingCardController,
@@ -39,7 +35,9 @@ import {
 } from './cards/StreamingCardController.js';
 import type { SessionDetailView, SessionRowView } from './cards/session-list.js';
 import type { StreamingCardManager } from './cards/streaming.js';
+import { registerSurfaceCommands, type SurfaceCommandHost } from './commands/surface.js';
 import { CommandRegistry, type CommandResult, parseSlash } from './commands.js';
+import { resolveDirectory } from './directory.js';
 import type {
   CardAction,
   CardJson,
@@ -48,6 +46,7 @@ import type {
   SentCard,
 } from './feishu/types.js';
 import { MessageDeduplicator } from './message-dedup.js';
+import { parseModelArg } from './model-args.js';
 import type { PanelActionContext } from './panel/actions/PanelAction.js';
 import { buildPanelActionRegistry } from './panel/actions/registry.js';
 import { PanelController, type PanelHost } from './panel/PanelController.js';
@@ -339,108 +338,12 @@ function isSoloGroup(stats: { userCount: number; botCount: number }): boolean {
 }
 
 /**
- * Wires the Feishu transport to dsh sessions and back. Create one per
- * process; `dispose()` detaches the event subscription.
- */
-/** Resolve and validate a user-supplied working-directory path. */
-function resolveDirectory(
-  input: string,
-): { ok: true; path: string } | { ok: false; error: string } {
-  const resolvedPath = resolvePath(input.replace(/^~(?=\/|$)/, process.env.HOME ?? '~'));
-  if (!existsSync(resolvedPath)) {
-    return { ok: false, error: `directory does not exist: ${resolvedPath}` };
-  }
-  let isDir = false;
-  try {
-    isDir = statSync(resolvedPath).isDirectory();
-  } catch {
-    isDir = false;
-  }
-  if (!isDir) return { ok: false, error: `not a directory: ${resolvedPath}` };
-  return { ok: true, path: resolvedPath };
-}
-
-/**
  * Scan the configured roots for candidate projects. Recursive (botmux
  * semantics: up to depth 3, skipping dot/dependency directories, budgeted),
  * so nested checkouts like `~/src/<repo>` are surfaced.
  */
 async function listProjects(roots: readonly string[]): Promise<ProjectInfo[]> {
   return scanMultipleProjects(roots);
-}
-
-/** Surface-wrapped dsh web commands (mounted by dsh-base's command rows):
- *  thin handlers that ensure an agent, then execute the dsh registry command
- *  with the same arguments — the Feishu surface covers the web command set
- *  in-chat, buttons included. `/export` is intentionally absent: it is a
- *  Web-only command whose handler a browser download plugin observes.
- *
- * `/plan` and `/permission` are handled bespoke (state-aware): a bare
- * `/plan` toggles plan mode instead of only entering it, and `/permission`
- * opens a preset picker card instead of only reporting the current preset —
- * a button press must be able to actually choose/switch (user report). */
-const HARNESS_COMMANDS: ReadonlyArray<{
-  readonly name: string;
-  readonly description: string;
-  readonly buttonLabel: string;
-}> = [
-  {
-    name: 'goal',
-    description: 'Set or view the goal for a long-running task (dsh web)',
-    buttonLabel: '🎯 Goal',
-  },
-  {
-    name: 'compact',
-    description: 'Compact older conversation history (dsh web)',
-    buttonLabel: '🧹 Compact',
-  },
-  {
-    name: 'feedback',
-    description: 'Send feedback (dsh web)',
-    buttonLabel: '💬 Feedback',
-  },
-];
-
-/** Mirror the harness /plan command's outcome wording for a toggle. */
-function planModeResultText(
-  target: boolean,
-  outcome: 'committed' | 'queued' | 'cancelled' | 'noop',
-): string {
-  switch (outcome) {
-    case 'committed':
-      return target ? 'Plan mode on. Use /plan off to leave.' : 'Plan mode off.';
-    case 'queued':
-      return target
-        ? 'Entering plan mode (applies from the next step). Use /plan off to leave.'
-        : 'Leaving plan mode (applies from the next step).';
-    case 'cancelled':
-      return 'Plan mode entry cancelled.';
-    case 'noop':
-      return target ? 'Plan mode is already active.' : 'Plan mode is already inactive.';
-  }
-}
-
-/**
- * Parse a `/model` argument into a selection: `provider/model` or
- * `provider model`. A single bare token is rejected (no provider to route).
- * @param raw - the trimmed argument text.
- * @returns the selection, or a usage error.
- */
-function parseModelArg(
-  raw: string,
-): { ok: true; selection: ModelSelectionView } | { ok: false; error: string } {
-  const trimmed = raw.trim();
-  const slash = trimmed.split('/');
-  const parts = slash.length === 2 ? slash : trimmed.split(/\s+/);
-  const provider = parts[0]?.trim();
-  const model = parts[1]?.trim();
-  if (provider === undefined || provider === '' || model === undefined || model === '') {
-    return {
-      ok: false,
-      error: 'usage: /model <provider>/<model> (e.g. /model deepseek-official/deepseek-v4-flash)',
-    };
-  }
-  return { ok: true, selection: { provider, model } };
 }
 
 export class Bridge {
@@ -533,7 +436,7 @@ export class Bridge {
         options.logger.error(`session event handling failed: ${String(error)}`);
       });
     });
-    this.registerCommands();
+    registerSurfaceCommands(this.commands, this.commandHost());
   }
 
   /** The StreamingCardHost the streaming controller delegates to: Bridge
@@ -1614,458 +1517,70 @@ export class Bridge {
   }
 
   /** Register the built-in surface commands. */
-  private registerCommands(): void {
-    const options = this.options;
-    this.commands.register({
-      name: 'help',
-      description: 'List all surface commands',
-      category: 'system',
-      buttonLabel: '❓ Help',
-      handler: () => {
-        const lines = this.commands
-          .list()
-          .map((command) => `/${command.name} — ${command.description}`)
-          .join('\n');
-        return {
-          kind: 'success',
-          text: `dsh-feishu commands:\n${lines}\n\nOther slash lines are forwarded to dsh when they exist in its registry.`,
-        };
+  /** The SurfaceCommandHost the surface command set delegates to: Bridge
+   *  owns panel navigation, session/agent resolution, and the streaming
+   *  controller; the command module owns the command copy. Option-backed
+   *  fields are GETTERS — the original handlers read `this.options.X` at
+   *  call time, and tests mutate options after construction. */
+  private commandHost(): SurfaceCommandHost {
+    const bridge = this;
+    return {
+      get transport() {
+        return bridge.options.transport;
       },
-    });
-    this.commands.register({
-      name: 'panel',
-      description: 'Open the control panel card (all commands as buttons)',
-      category: 'system',
-      hiddenFromPanel: true,
-      handler: async (invocation) => {
-        await this.openPanel(invocation.chatId);
-        return { kind: 'success', text: '' };
+      get sessionMap() {
+        return bridge.options.sessionMap;
       },
-    });
-    this.commands.register({
-      name: 'group',
-      description: 'Create a group chat with you and the bot',
-      category: 'chat',
-      buttonLabel: '👥 New group',
-      handler: async (invocation) => {
-        const name = invocation.rawInput.trim() || 'dsh-feishu';
-        try {
-          const { chatId } = await options.transport.createGroup(name, [invocation.senderOpenId]);
-          return { kind: 'success', text: `Group created: ${name} (${chatId})` };
-        } catch (error: unknown) {
-          return { kind: 'error', text: `group creation failed: ${String(error)}` };
-        }
+      get agentStore() {
+        return bridge.options.agentStore;
       },
-    });
-    this.commands.register({
-      name: 'cancel',
-      description: 'Stop the current turn',
-      category: 'session',
-      buttonLabel: '⏹ Stop turn',
-      handler: (invocation) => {
-        const sessionId = options.sessionMap.get(invocation.chatId);
-        const agent = sessionId === undefined ? undefined : options.agentStore.get(sessionId);
-        if (agent !== undefined) {
-          agent.cancel({ kind: 'user' }, { keepInbox: true });
-          return { kind: 'success', text: 'Stopped.' };
-        }
-        return { kind: 'error', text: 'no active session to stop.' };
+      get logger() {
+        return bridge.options.logger;
       },
-    });
-    this.commands.register({
-      name: 'cd',
-      description: 'Set this chat\u2019s working directory (session restarts in it)',
-      category: 'session',
-      buttonLabel: '📁 Change dir',
-      handler: async (invocation) => {
-        const target = invocation.rawInput.trim();
-        if (target === '') {
-          return { kind: 'error', text: 'usage: /cd <absolute-or-~ path>' };
-        }
-        const resolved = resolveDirectory(target);
-        if (!resolved.ok) return { kind: 'error', text: resolved.error };
-        this.options.sessionMap.setCwd(invocation.chatId, resolved.path);
-        // A live session keeps its old cwd; rebind so the next message starts
-        // a fresh session in the new directory (mirrors botmux /cd).
-        this.options.sessionMap.remint(invocation.chatId);
-        return {
-          kind: 'success',
-          text: `Working directory set to ${resolved.path} (session restarts on your next message).`,
-        };
+      get executeCommand() {
+        return bridge.options.executeCommand;
       },
-    });
-    this.commands.register({
-      name: 'repo',
-      description: 'List candidate project directories (from repoRoots)',
-      category: 'session',
-      buttonLabel: '📚 Pick project',
-      handler: async (invocation) => {
-        // Direct path selection stays supported: /repo <abs-path>.
-        const raw = invocation.rawInput.trim();
-        if (raw.startsWith('/') || raw.startsWith('~')) {
-          const resolved = resolveDirectory(raw);
-          if (!resolved.ok) return { kind: 'error', text: resolved.error };
-          this.options.sessionMap.setCwd(invocation.chatId, resolved.path);
-          this.options.sessionMap.remint(invocation.chatId);
-          return {
-            kind: 'success',
-            text: `Working directory set to ${resolved.path} (session restarts on your next message).`,
-          };
-        }
-        // The picker renders INSIDE the panel state machine (single card).
-        await this.pushPanel(invocation.chatId, { kind: 'picker', picker: 'repo', page: 0 });
-        return { kind: 'success', text: '' };
+      get readSession() {
+        return bridge.options.readSession;
       },
-    });
-    this.commands.register({
-      name: 'status',
-      description: 'Show this chat’s session status',
-      category: 'system',
-      buttonLabel: '📊 Status',
-      handler: (invocation) => {
-        const sessionId = options.sessionMap.get(invocation.chatId);
-        const agent = sessionId === undefined ? undefined : options.agentStore.get(sessionId);
-        const output = this.streaming.lastOutput(invocation.chatId);
-        const lines = [
-          `chat: ${invocation.chatId}`,
-          `session: ${sessionId ?? '(none yet)'}`,
-          `agent: ${agent !== undefined ? 'live' : 'idle'}`,
-          `last output: ${output === undefined ? '(none)' : `${output.length} chars`}`,
-          `mention mode: ${options.groupMentionMode ?? 'always'}`,
-        ];
-        return { kind: 'success', text: lines.join('\n') };
+      get permissionPresets() {
+        return bridge.options.permissionPresets;
       },
-    });
-    this.commands.register({
-      name: 'feishu-status',
-      description: 'Show the surface diagnostic card (connection, sessions, activity)',
-      category: 'system',
-      buttonLabel: '📡 Surface status',
-      handler: async (invocation) => {
-        const raw = this.options.transport.connectionState?.();
-        const connection: StatusView['connection'] =
-          this.options.transportMode === 'memory' ? 'memory' : (raw ?? 'unknown');
-        await options.transport.sendCard(
-          invocation.chatId,
-          buildStatusCard({
-            appId: options.appId ?? '(not configured)',
-            connection,
-            sessionCount: options.sessionMap.size,
-            lastInboundAt: this.lastInboundAtValue,
-          }),
-        );
-        return { kind: 'success', text: '' };
+      get planMode() {
+        return bridge.options.planMode;
       },
-    });
-    // /schedule: list this chat's active reminders. The dsh-schedule package
-    // is optional at runtime — dynamic import + loud degradation (the agent
-    // itself can list reminders through its schedule tools when the surface
-    // cannot).
-    this.commands.register({
-      name: 'schedule',
-      description: 'List active reminders for this chat',
-      category: 'system',
-      buttonLabel: '⏰ Reminders',
-      handler: async (invocation) => {
-        const sessionId = options.sessionMap.get(invocation.chatId);
-        if (sessionId === undefined) {
-          return { kind: 'error', text: 'no session yet — send a message first.' };
-        }
-        if (options.readSession === undefined) {
-          return {
-            kind: 'error',
-            text: 'schedule listing unavailable — the session query service is not mounted.',
-          };
-        }
-        try {
-          const { foldScheduleEvents, scheduleView } = await import('@deepseek-ai/dsh-schedule');
-          const log = await options.readSession(sessionId);
-          const folded = foldScheduleEvents(log.events as never);
-          if (folded.active.length === 0) {
-            return {
-              kind: 'success',
-              text: 'No active reminders — ask the agent to create one (e.g. “remind me in 5 minutes”).',
-            };
-          }
-          const now = Date.now();
-          const lines = folded.active.map((record) => {
-            const view = scheduleView(record, now);
-            const prompt = record.prompt === '' ? '(no prompt)' : record.prompt;
-            const rule =
-              record.kind === 'after'
-                ? `after ${record.afterSeconds}s`
-                : record.kind === 'at'
-                  ? `at ${record.scheduledAt}`
-                  : `every ${record.everySeconds}s`;
-            return `${rule} · ${prompt} (${view.state})`;
-          });
-          return { kind: 'success', text: `Active reminders:\n${lines.join('\n')}` };
-        } catch (error: unknown) {
-          this.options.logger.warn(`schedule listing unavailable: ${String(error)}`);
-          return {
-            kind: 'error',
-            text: 'schedule listing unavailable — ask the agent to list reminders instead.',
-          };
-        }
+      get agentDefaultModel() {
+        return bridge.options.agentDefaultModel;
       },
-    });
-    this.commands.register({
-      name: 'model',
-      description:
-        'Choose a model (opens the picker); or /model <provider>/<model> to set the default',
-      category: 'system',
-      buttonLabel: '🤖 Model',
-      handler: async (invocation) => {
-        const raw = invocation.rawInput.trim();
-        if (raw === '') {
-          if (this.options.llm !== undefined) {
-            // A bare /model (or the panel button) opens the picker INSIDE
-            // the panel state machine.
-            await this.pushPanel(invocation.chatId, { kind: 'picker', picker: 'model', page: 0 });
-            return { kind: 'success', text: '' };
-          }
-          // No catalog: fall back to the text display.
-          // The live agent's own options win (what this session actually
-          // runs); otherwise the deployment default.
-          const live = this.liveAgent(invocation.chatId);
-          const liveSelection =
-            live !== undefined &&
-            live.options?.provider !== undefined &&
-            live.options?.model !== undefined
-              ? { provider: live.options.provider, model: live.options.model }
-              : undefined;
-          const selection: ModelSelectionView | undefined =
-            liveSelection ?? this.options.agentDefaultModel?.currentSelection();
-          if (selection === undefined) {
-            return {
-              kind: 'error',
-              text: 'no model selection available — the agentDefaultModel service is not mounted.',
-            };
-          }
-          const effort =
-            selection.reasoningEffort === undefined ? '' : ` · effort ${selection.reasoningEffort}`;
-          return {
-            kind: 'success',
-            text: `model: ${selection.provider} · ${selection.model}${effort}`,
-          };
-        }
-        const parsed = parseModelArg(raw);
-        if (!parsed.ok) return { kind: 'error', text: parsed.error };
-        const service = this.options.agentDefaultModel;
-        if (service === undefined) {
-          return {
-            kind: 'error',
-            text: 'model switching unavailable — the agentDefaultModel service is not mounted.',
-          };
-        }
-        await service.saveSelection(parsed.selection);
-        return {
-          kind: 'success',
-          text: `Default model set to ${parsed.selection.provider} · ${parsed.selection.model} (applies to new sessions).`,
-        };
+      get llm() {
+        return bridge.options.llm;
       },
-    });
-    this.commands.register({
-      name: 'export',
-      description: 'Export this chat’s session log as a file',
-      category: 'system',
-      buttonLabel: '📤 Export',
-      handler: async (invocation) => {
-        const sessionId = options.sessionMap.get(invocation.chatId);
-        if (sessionId === undefined) {
-          return { kind: 'error', text: 'no session to export yet — send a message first.' };
-        }
-        if (options.readSession === undefined) {
-          return {
-            kind: 'error',
-            text: 'session export unavailable — the session query service is not mounted.',
-          };
-        }
-        try {
-          const log = await options.readSession(sessionId);
-          const transcript = buildSessionExport(log.events);
-          const fileName = `session-${sessionId}.md`;
-          await options.transport.sendFile(invocation.chatId, fileName, transcript);
-          return {
-            kind: 'success',
-            text: `Exported ${log.events.length} events to ${fileName}.`,
-          };
-        } catch (error: unknown) {
-          this.options.logger.warn(`session export failed: ${String(error)}`);
-          const detail = String(error);
-          const scopeHint = detail.includes('im:resource')
-            ? ' — the Feishu app needs the im:resource:upload permission scope (developer console → Permissions).'
-            : '';
-          return { kind: 'error', text: `session export failed: ${detail}${scopeHint}` };
-        }
+      get listSessions() {
+        return bridge.options.listSessions;
       },
-    });
-    this.commands.register({
-      name: 'sessions',
-      description: 'List saved sessions and act on one in this chat',
-      category: 'session',
-      buttonLabel: '🗂️ Sessions',
-      handler: async (invocation) => {
-        // The panel state machine owns the session list/detail flow.
-        await this.pushPanel(invocation.chatId, { kind: 'sessions', archived: false });
-        return { kind: 'success', text: '' };
+      get groupMentionMode() {
+        return bridge.options.groupMentionMode;
       },
-    });
-    this.commands.register({
-      name: 'resume',
-      description: 'Resume a saved session (no id opens the session list)',
-      category: 'session',
-      buttonLabel: '↩️ Resume session',
-      // The Sessions button owns the list/detail flow; a separate resume
-      // button is redundant (user report).
-      hiddenFromPanel: true,
-      handler: async (invocation) => {
-        const target = invocation.rawInput.trim();
-        if (target === '') {
-          await this.pushPanel(invocation.chatId, { kind: 'sessions', archived: false });
-          return { kind: 'success', text: '' };
-        }
-        const result = await this.resumeSession(invocation.chatId, target);
-        return result;
+      get appId() {
+        return bridge.options.appId;
       },
-    });
-    // /clear and /new share one handler: start a fresh conversation. The old
-    // session is NOT deleted — it stays saved and resumable (/sessions) — so
-    // the reset never destroys user data (content-integrity rule).
-    const startFresh = async (invocation: {
-      readonly chatId: string;
-      readonly senderOpenId: string;
-      readonly rawInput: string;
-    }): Promise<CommandResult> => {
-      if (this.refuseWhileWorking(invocation.chatId)) {
-        return { kind: 'error', text: 'a turn is running — stop it first.' };
-      }
-      if (options.sessionMap.get(invocation.chatId) === undefined) {
-        return { kind: 'error', text: 'nothing to clear — this chat has no session yet.' };
-      }
-      options.sessionMap.remint(invocation.chatId);
-      this.resetChatState(invocation.chatId);
-      return {
-        kind: 'success',
-        text: 'New conversation started — the previous session stays saved; /sessions can resume it.',
-      };
+      get transportMode() {
+        return bridge.options.transportMode;
+      },
+      get unknownCommand() {
+        return bridge.options.unknownCommand;
+      },
+      get lastInboundAt() {
+        return bridge.lastInboundAtValue;
+      },
+      openPanel: (chatId) => bridge.openPanel(chatId),
+      pushPanel: (chatId, view) => bridge.pushPanel(chatId, view),
+      ensureAgent: (chatId) => bridge.ensureAgent(chatId),
+      resumeSession: (chatId, sessionId, cwd) => bridge.resumeSession(chatId, sessionId, cwd),
+      isWorking: (chatId) => bridge.refuseWhileWorking(chatId),
+      resetChat: (chatId) => bridge.resetChatState(chatId),
+      lastOutput: (chatId) => bridge.streaming.lastOutput(chatId),
+      liveAgent: (chatId) => bridge.liveAgent(chatId),
     };
-    this.commands.register({
-      name: 'clear',
-      description: 'Start a fresh conversation (previous session stays saved)',
-      category: 'session',
-      buttonLabel: '✨ Fresh start',
-      // /new IS the panel button; /clear stays a slash-only alias (the two
-      // commands are the same action — duplicate buttons confuse (user report)).
-      hiddenFromPanel: true,
-      handler: startFresh,
-    });
-    this.commands.register({
-      name: 'new',
-      description: 'Start a new conversation (alias of /clear)',
-      category: 'session',
-      buttonLabel: '➕ New chat',
-      handler: startFresh,
-    });
-    for (const spec of HARNESS_COMMANDS) {
-      this.commands.register({
-        name: spec.name,
-        description: spec.description,
-        category: 'system',
-        buttonLabel: spec.buttonLabel,
-        handler: async (invocation) => {
-          if (this.refuseWhileWorking(invocation.chatId)) {
-            return { kind: 'error', text: 'a turn is running — stop it first.' };
-          }
-          if (options.executeCommand === undefined) {
-            return {
-              kind: 'error',
-              text: `/${spec.name} is unavailable — the dsh command registry is not mounted.`,
-            };
-          }
-          const agent = await this.ensureAgent(invocation.chatId);
-          const result = await options.executeCommand(agent, `/${spec.name}${invocation.rawInput}`);
-          if (result !== undefined) return result;
-          return {
-            kind: 'error',
-            text: `/${spec.name} is unavailable on this deployment.`,
-          };
-        },
-      });
-    }
-    // /permission: typed presets pass through to the harness command; a bare
-    // /permission (or the panel button) opens the preset picker card so the
-    // user can actually choose — the bare harness command only reports.
-    this.commands.register({
-      name: 'permission',
-      description: 'Switch the permission preset — sandbox mode + approval policy (dsh web)',
-      category: 'system',
-      buttonLabel: '🔐 Permission',
-      handler: async (invocation) => {
-        const raw = invocation.rawInput.trim();
-        if (raw !== '') return this.runHarnessCommand(invocation, 'permission');
-        if (this.refuseWhileWorking(invocation.chatId)) {
-          return { kind: 'error', text: 'a turn is running — stop it first.' };
-        }
-        if (this.options.permissionPresets === undefined) {
-          // Degraded: no picker data source — fall back to the harness report.
-          this.options.logger.warn(
-            '[feishu] permissionPresets service unavailable; /permission degraded to report',
-          );
-          return this.runHarnessCommand(invocation, 'permission');
-        }
-        // The picker renders INSIDE the panel state machine.
-        await this.pushPanel(invocation.chatId, { kind: 'picker', picker: 'permission', page: 0 });
-        return { kind: 'success', text: '' };
-      },
-    });
-    // /plan: `off` and message forms pass through; a bare /plan (or the
-    // panel button) TOGGLES plan mode through ctx.planMode — pressing it
-    // again leaves plan mode (user report: bare /plan only ever entered).
-    this.commands.register({
-      name: 'plan',
-      description: 'Enter or leave plan mode (dsh web)',
-      category: 'system',
-      buttonLabel: '🗺️ Plan mode',
-      handler: async (invocation) => {
-        const raw = invocation.rawInput.trim();
-        if (raw !== '') return this.runHarnessCommand(invocation, 'plan');
-        if (this.refuseWhileWorking(invocation.chatId)) {
-          return { kind: 'error', text: 'a turn is running — stop it first.' };
-        }
-        const planMode = this.options.planMode;
-        if (planMode === undefined) {
-          // Degraded: no controller — fall back to the harness behavior.
-          this.options.logger.warn(
-            '[feishu] planMode service unavailable; bare /plan degraded to harness behavior',
-          );
-          return this.runHarnessCommand(invocation, 'plan');
-        }
-        const agent = await this.ensureAgent(invocation.chatId);
-        const state = planMode.get(agent);
-        const target = !(state.pending ?? state.active);
-        const outcome = planMode.set(agent, target);
-        return { kind: 'success', text: planModeResultText(target, outcome) };
-      },
-    });
-  }
-
-  /** Execute one harness command through the dsh registry (shared by the
-   *  web-command wrappers): ensure an agent, run the line, map the result. */
-  private async runHarnessCommand(
-    invocation: { readonly chatId: string; readonly rawInput: string },
-    name: string,
-  ): Promise<CommandResult> {
-    const options = this.options;
-    if (options.executeCommand === undefined) {
-      return {
-        kind: 'error',
-        text: `/${name} is unavailable — the dsh command registry is not mounted.`,
-      };
-    }
-    const agent = await this.ensureAgent(invocation.chatId);
-    const result = await options.executeCommand(agent, `/${name}${invocation.rawInput}`);
-    if (result !== undefined) return result;
-    return { kind: 'error', text: `/${name} is unavailable on this deployment.` };
   }
 }
