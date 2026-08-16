@@ -3347,6 +3347,41 @@ describe('working-directory gate (requireWorkingDir)', () => {
     ).toBe(true);
   });
 
+  it('parses an @-mentioned command ("@bot /help") as the slash command, bypassing the gate', async () => {
+    const h = makeHarness({ requireWorkingDir: true });
+    await h.bridge.handleMessage(groupMessage(['ou_bot'], { text: '@bot /help' }));
+    expect(h.transport.sentTexts.some((t) => t.text.includes('dsh-feishu commands'))).toBe(true);
+    expect(h.transport.sentTexts.some((t) => t.text.includes('No working directory chosen'))).toBe(
+      false,
+    );
+    // No session was created and the agent never saw a turn.
+    expect(h.agentStore.created).toHaveLength(0);
+    expect(h.sessionMap.get('oc_chat')).toBeUndefined();
+  });
+
+  it('strips a mention with punctuation ("@bot，/help") and a mid-text mention', async () => {
+    const h = makeHarness({ requireWorkingDir: true });
+    await h.bridge.handleMessage(groupMessage(['ou_bot'], { text: '@bot，/help' }));
+    expect(h.transport.sentTexts.some((t) => t.text.includes('dsh-feishu commands'))).toBe(true);
+    await h.bridge.handleMessage(
+      groupMessage(['ou_bot'], { messageId: 'om_msg3', text: 'see @bot /status' }),
+    );
+    // A mention after ordinary words is not a command — the cleaned text
+    // ("see /status") still goes through the working-directory gate.
+    expect(h.transport.sentTexts.some((t) => t.text.includes('No working directory chosen'))).toBe(
+      true,
+    );
+  });
+
+  it('still gates an @-mentioned plain message without a working directory', async () => {
+    const h = makeHarness({ requireWorkingDir: true });
+    await h.bridge.handleMessage(groupMessage(['ou_bot'], { text: '@bot do some work' }));
+    expect(h.transport.sentTexts.some((t) => t.text.includes('No working directory chosen'))).toBe(
+      true,
+    );
+    expect(h.agentStore.created).toHaveLength(0);
+  });
+
   it('/clear keeps the pinned working directory', async () => {
     const { mkdirSync } = await import('node:fs');
     const target = join(SCRATCH, 'proj-gate-clear');

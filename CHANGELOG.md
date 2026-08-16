@@ -176,6 +176,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `feishu-manifest.json` now includes `im:message.group_msg`; existing apps
   must add the scope and publish a new version (docs/feishu-setup.md
   updated).
+- **An @-mentioned command ("@bot /help") fell into the working-directory
+  gate instead of dispatching.** Feishu renders group mentions inline as
+  `@_user_<n>` / `@<label>` (the transport only strips the `<at>`
+  placeholder), so the leading `@` made `parseSlash` miss the command and
+  the message was treated as a plain turn. `handleMessage` now strips all
+  inline mention tokens before dispatch; the agent receives the cleaned
+  text too (regression tests cover leading, punctuated, and mid-text
+  mentions, and plain @-mentioned messages still gate normally).
 - **Panel state machine made complete and failure-proof** (user testing):
   - ALL pickers now render INSIDE the panel card — `/repo`, `/model`,
     `/permission` (and their panel buttons and slash commands) open their

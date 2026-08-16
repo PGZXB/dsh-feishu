@@ -329,6 +329,19 @@ function isSoloGroup(stats: { userCount: number; botCount: number }): boolean {
   return stats.userCount <= 1 && stats.botCount <= 1;
 }
 
+/** Remove inline @-mention tokens from message text (Feishu renders each
+ *  mention as `@_user_<n>` or `@<label>` inline, not always the `<at>`
+ *  placeholder the transport strips), so "@bot /help" dispatches as
+ *  "/help". Untouched when the text carries no mention, so blank or plain
+ *  messages pass through byte-for-byte. */
+function stripMentions(text: string): string {
+  if (!text.includes('@')) return text;
+  return text
+    .replace(/@[^\s@/]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /**
  * Scan the configured roots for candidate projects. Recursive (botmux
  * semantics: up to depth 3, skipping dot/dependency directories, budgeted),
@@ -549,12 +562,17 @@ export class Bridge {
     this.options.logger.info(
       `inbound message ${message.messageId} in ${message.chatId} (${message.chatType}): ${message.text.slice(0, 80)}`,
     );
-    const slash = parseSlash(message.text.trim());
+    // Feishu renders inline @-mentions as `@<label>` tokens. Strip them
+    // before dispatch so "@bot /help" (or a mention mid-text) parses as the
+    // slash command instead of falling into the working-directory gate as a
+    // plain message. The agent also sees the cleaned text.
+    const text = stripMentions(message.text);
+    const slash = parseSlash(text);
     if (slash !== undefined) {
       await this.handleCommand(message, slash);
       return;
     }
-    await this.deliverTurn(message);
+    await this.deliverTurn(text === message.text ? message : { ...message, text });
   }
 
   /** Route a slash command: surface command, DSH passthrough, or unknown. */
