@@ -82,43 +82,52 @@ rm -rf ~/.dsh/profiles/feishu ~/.dsh/feishu
 A Feishu chat is a dsh session — the bot is the agent's avatar. A typical
 session goes like this:
 
-<!-- TODO(demo): `docs/assets/demo.mp4` — a ~15 s screen recording of the
-     full flow: message → card streams in → green finalize → Allow once →
-     question → answer. Embed with a `<video>` tag so the reader sees the
-     whole surface before the step-by-step shots below. -->
+<!-- TODO(demo): `docs/assets/snapshots/demo.mp4` — a ~15 s screen recording
+     of the full flow: message → card streams in → green finalize → Allow
+     once → question → answer. Embed with a `<video>` tag so the reader sees
+     the whole surface before the step-by-step shots below. -->
 
 1. **Start a chat.** Direct-message the bot, or run `/group <name>` to
    create a group the bot joins. In a group, @-mention the bot (the
    default policy; a group with just you and the bot also answers plain
    messages, and the policy is configurable).
-   <!-- TODO(shot): `docs/assets/chat.png` — the chat with the bot: a
-        direct message, or a group with an @-mention. -->
+
+<p align="center"><img src="docs/assets/snapshots/1_chat.png" width="640" alt="Chat with the bot"></p>
+
 2. **Open the control panel.** Send `/panel` to pop up the panel card.
-   <!-- TODO(shot): `docs/assets/panel.png` — the control-panel card
-        (status + context line, Stop / Retry / Copy, the grouped
-        command-palette buttons). -->
+
+<p align="center"><img src="docs/assets/snapshots/2_panel.png" width="640" alt="Control panel"></p>
+
 3. **Pick a working directory.** The bot refuses work until the chat has
    one: tap **📚 Pick project** to choose from a list (the `/repo`
    equivalent), or **📁 Change dir** to type a path (the `/cd <path>`
    equivalent).
-   <!-- TODO(shot): `docs/assets/repo.png` — the project picker card. -->
+
+<p align="center"><img src="docs/assets/snapshots/3_repo.png" width="640" alt="Project picker"></p>
+
 4. **Ask.** Send a message — the agent runs and its output streams into a
    live card (tool calls, reasoning, markdown, tables). The card ends green
    with the full answer inside; Stop, copy, retry, and the ⚙️ panel button
    sit on it.
-   <!-- TODO(shots): `docs/assets/streaming-mid.png` + `docs/assets/
-        streaming-done.png` side by side — the same card mid-stream and
-        after it finalizes in place. -->
+
+   | Mid-stream | Finalized |
+   |---|---|
+   | ![Card mid-stream](docs/assets/snapshots/4.1_streaming-mid.png) | ![Card finalized](docs/assets/snapshots/4.2_streaming-done.png) |
+
 5. **Approve or answer when asked.** A permission escalation posts an
    approval card — tap **Allow once** (or **Reject**). A question posts a
    card you answer with a tap (or a reply).
-   <!-- TODO(shots): `docs/assets/approval.png` + `docs/assets/question.png`
-        — an approval card and a question card as they appear in the chat. -->
+
+   | Approval | Question |
+   |---|---|
+   | ![Approval card](docs/assets/snapshots/5.1_approval.png) | ![Question card](docs/assets/snapshots/5.2_question.png) |
+
 6. **Manage sessions.** Tap **🗂️ Sessions** to list saved sessions and
    resume any of them from the card (the `/sessions` equivalent; `/resume
    <id>` moves one into this chat), and tap **➕ New chat** (the `/clear`
    equivalent) to start fresh without deleting the old one.
-   <!-- TODO(shot): `docs/assets/sessions.png` — the sessions picker card. -->
+
+<p align="center"><img src="docs/assets/snapshots/6_sessions.png" width="640" alt="Sessions picker"></p>
 
 Every button on the panel card maps to a slash command — pick whichever
 feels faster; `/help` lists them all.
