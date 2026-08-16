@@ -10,6 +10,9 @@
  * (`_tmp/botmux/src/setup/open-platform-automation.ts`).
  */
 
+import { existsSync, readFileSync } from 'node:fs';
+import { basename } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import { type OpenPlatformApiClient, OpenPlatformApiError } from './client.js';
 import { configureFeishuApp } from './configure.js';
@@ -86,6 +89,57 @@ export function makePlaceholderIconPng(
   ]);
 }
 
+/**
+ * The bundled default avatar (serif "dsh" wordmark on the Feishu blue
+ * gradient card). Resolved relative to the built lib/ so it works both from
+ * a checkout and from an installed npm package (the `docs` directory ships
+ * in the package `files`).
+ */
+export const DEFAULT_AVATAR_PATH = fileURLToPath(
+  new URL('../../docs/assets/default-avatar.png', import.meta.url),
+);
+
+/** Read a PNG's pixel dimensions from its IHDR chunk; `null` when not a PNG. */
+export function pngDimensions(buffer: Buffer): { width: number; height: number } | null {
+  if (buffer.length < 24) return null;
+  if (buffer.readUInt32BE(12) !== 0x49484452) return null; // chunk type "IHDR"
+  return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
+}
+
+/** An avatar ready for upload. */
+export interface AvatarSource {
+  readonly buffer: Buffer;
+  readonly filename: string;
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * Resolve the avatar to upload: an explicit file path when given and
+ * present, else the bundled default avatar, else the solid-color placeholder.
+ * @param avatarFilePath - optional user-provided avatar image (PNG).
+ */
+export function resolveAvatarBuffer(avatarFilePath?: string): AvatarSource {
+  let buffer: Buffer | undefined;
+  let filename = 'dsh-feishu.png';
+  if (avatarFilePath !== undefined && avatarFilePath !== '' && existsSync(avatarFilePath)) {
+    buffer = readFileSync(avatarFilePath);
+    filename = basename(avatarFilePath);
+  } else if (existsSync(DEFAULT_AVATAR_PATH)) {
+    buffer = readFileSync(DEFAULT_AVATAR_PATH);
+  }
+  if (buffer === undefined) {
+    buffer = makePlaceholderIconPng();
+  }
+  const dims = pngDimensions(buffer);
+  return {
+    buffer,
+    filename,
+    width: dims?.width ?? 64,
+    height: dims?.height ?? 64,
+  };
+}
+
 // ── App creation flow. ──────────────────────────────────────────────────────
 
 /** True when the template endpoint definitively rejected (safe to fall back). */
@@ -124,7 +178,7 @@ function pickPayloadString(payload: unknown, keys: readonly string[]): string | 
  */
 export async function createFeishuOpenPlatformApp(
   client: OpenPlatformApiClient,
-  options: { name: string; description?: string; creatorUserId: string },
+  options: { name: string; description?: string; creatorUserId: string; avatarFilePath?: string },
 ): Promise<CreateAppResult> {
   const name = options.name.trim();
   if (!name) {
@@ -139,18 +193,16 @@ export async function createFeishuOpenPlatformApp(
   }
   const description = options.description?.trim() || 'A dsh agent surface on Feishu.';
 
-  // Upload a placeholder icon (the create endpoints require an avatar url).
+  // Upload the app avatar: an explicit --avatar file, else the bundled
+  // default avatar, else the solid-color placeholder.
   let avatar: string | undefined;
   try {
+    const avatarSrc = resolveAvatarBuffer(options.avatarFilePath);
     const form = new FormData();
-    form.append(
-      'file',
-      new Blob([makePlaceholderIconPng()], { type: 'image/png' }),
-      'dsh-feishu.png',
-    );
+    form.append('file', new Blob([avatarSrc.buffer], { type: 'image/png' }), avatarSrc.filename);
     form.append('uploadType', '4'); // console enum: Icon
     form.append('isIsv', 'false'); // self-built app
-    form.append('scale', JSON.stringify({ width: 64, height: 64 }));
+    form.append('scale', JSON.stringify({ width: avatarSrc.width, height: avatarSrc.height }));
     const uploaded = await client.postForm('/developers/v1/app/upload/image', form);
     avatar = pickPayloadString(uploaded, ['url']);
   } catch (error) {
