@@ -25,14 +25,9 @@ import {
   buildApprovalCard,
   buildApprovalDecidedCard,
   buildCard,
-  buildConfirmCard,
-  buildInputCard,
-  buildModelPickerCard,
   buildPanelCard,
-  buildPermissionPickerCard,
   buildQuestionAnsweredCard,
   buildQuestionCard,
-  buildRepoPickerCard,
   buildResultCard,
   buildRowDetailsCard,
   buildStatusCard,
@@ -40,19 +35,13 @@ import {
   type CardStatus,
   type ModelOptionView,
   type PanelCommand,
-  type PermissionPresetView,
   type QuestionView,
   type StatusView,
   type ThinkRow,
   type ToolRow,
   type TurnRow,
 } from './cards/render.js';
-import {
-  buildSessionDetailCard,
-  buildSessionsCard,
-  type SessionDetailView,
-  type SessionRowView,
-} from './cards/session-list.js';
+import type { SessionDetailView, SessionRowView } from './cards/session-list.js';
 import type { StreamingCardManager } from './cards/streaming.js';
 import { toolRowSummary } from './cards/tool-summary.js';
 import { CommandRegistry, type CommandResult, parseSlash } from './commands.js';
@@ -67,6 +56,8 @@ import { MessageDeduplicator } from './message-dedup.js';
 import type { PanelActionContext } from './panel/actions/PanelAction.js';
 import { buildPanelActionRegistry } from './panel/actions/registry.js';
 import { PanelController, type PanelHost } from './panel/PanelController.js';
+import type { PanelViewContext } from './panel/views/PanelViewContext.js';
+import { buildPanelViewRegistry } from './panel/views/registry.js';
 import { type ProjectInfo, scanMultipleProjects } from './projects.js';
 import { buildSessionExport, type SessionExportEvent } from './session-export.js';
 import type { SessionMap } from './session-map.js';
@@ -90,7 +81,7 @@ function isCompactionLifecycleEvent(event: SessionEvent): boolean {
 
 export type { PanelInputCommand, PanelView } from './panel/types.js';
 
-import { PANEL_CONFIRM_SPEC, PANEL_INPUT_SPEC, type PanelView } from './panel/types.js';
+import type { PanelView } from './panel/types.js';
 
 export { isPanelInputCommand, PANEL_CONFIRM_SPEC, PANEL_INPUT_SPEC } from './panel/types.js';
 
@@ -549,6 +540,8 @@ export class Bridge {
   private readonly panel: PanelController;
   /** Panel card actions (Strategy registry; Template Method lifecycle). */
   private readonly panelActions = buildPanelActionRegistry();
+  /** Panel view states (Strategy registry; async-ness declared per view). */
+  private readonly panelViews = buildPanelViewRegistry();
   /** Pending approval/question card interactions (one resolve path). */
   private readonly interactions = new InteractionRegistry();
   /** Multi-select question state per request id (toggle + submit). */
@@ -650,16 +643,38 @@ export class Bridge {
   }
 
   /** The PanelHost the panel controller delegates to: Bridge owns the
-   *  business logic (view rendering, result cards, streaming-card sync). */
+   *  business logic (result cards, streaming-card sync); view rendering goes
+   *  through the view registry (PanelViewStates). */
   private panelHost(): PanelHost {
     return {
       transport: this.options.transport,
       logger: this.options.logger,
-      renderPanelView: (chatId, view) => this.renderPanelView(chatId, view),
+      renderPanelView: (chatId, view) =>
+        this.panelViews.render(this.panelViewContext(), chatId, view),
+      isAsyncView: (view) => this.panelViews.isAsync(view),
       buildMenuCard: (chatId, page) => this.buildPanelCardFor(chatId, page),
       syncCard: (chatId) => this.syncCard(chatId),
       resultCard: (chatId, result) => this.replyResultCard(chatId, result),
       text: (chatId, text) => this.options.transport.sendText(chatId, text),
+    };
+  }
+
+  /** The seam every panel view state renders against: the Bridge's data
+   *  sources (session list, project scan, model catalog, permission presets)
+   *  plus the menu-card builder. View states depend on this interface, never
+   *  on Bridge internals (see `panel/views/PanelViewContext.ts`). */
+  private panelViewContext(): PanelViewContext {
+    return {
+      buildMenuCard: (chatId, page) => this.buildPanelCardFor(chatId, page),
+      loadSessions: (chatId, archived) => this.loadSessions(chatId, archived),
+      sessionDetail: (chatId, sessionId) => this.sessionDetailView(chatId, sessionId),
+      listProjects: (roots) => listProjects(roots),
+      repoRoots: this.options.repoRoots ?? [],
+      loadModelOptions: () => this.loadModelOptions(),
+      currentModelSelection: (chatId) => this.currentModelSelection(chatId),
+      ensureAgent: (chatId) => this.ensureAgent(chatId),
+      permissionPresets: () => this.options.permissionPresets,
+      canMutateSessions: this.options.apiProxy !== undefined,
     };
   }
 
@@ -1134,102 +1149,6 @@ export class Bridge {
   /** The current panel view (the stack top), defaulting to the menu root. */
   private panelViewFor(chatId: string): PanelView {
     return this.panel.panelViewFor(chatId);
-  }
-
-  /** Render the card for one panel view (the single panel render path). */
-  private async renderPanelView(chatId: string, view: PanelView): Promise<CardJson> {
-    switch (view.kind) {
-      case 'menu':
-        return this.buildPanelCardFor(chatId, view.page);
-      case 'input': {
-        const spec = PANEL_INPUT_SPEC[view.command];
-        return buildInputCard({
-          title: spec.title,
-          hint: spec.hint,
-          fieldName: spec.fieldName,
-          placeholder: spec.placeholder,
-          submitLabel: spec.submitLabel,
-          command: view.command,
-        });
-      }
-      case 'confirm': {
-        const spec = PANEL_CONFIRM_SPEC[view.command];
-        return buildConfirmCard({
-          title: spec.title,
-          message: spec.message,
-          confirmLabel: spec.confirmLabel,
-          command: view.command,
-        });
-      }
-      case 'sessions': {
-        const rows = await this.loadSessions(chatId, view.archived);
-        if (rows === undefined) {
-          return buildSessionsCard([], view.archived, view.query);
-        }
-        return buildSessionsCard(rows, view.archived, view.query);
-      }
-      case 'session-detail': {
-        const detail = await this.sessionDetailView(chatId, view.sessionId);
-        if (detail === undefined) {
-          return buildSessionDetailCard(
-            {
-              sessionId: view.sessionId,
-              title: '(unknown)',
-              cwd: undefined,
-              createdAt: 0,
-              messageCount: 0,
-              lastSummary: undefined,
-              live: false,
-              current: false,
-              archived: false,
-            },
-            this.options.apiProxy !== undefined,
-          );
-        }
-        return buildSessionDetailCard(detail, this.options.apiProxy !== undefined);
-      }
-      case 'picker': {
-        if (view.picker === 'repo') {
-          const projects = await listProjects(this.options.repoRoots ?? []);
-          return buildRepoPickerCard(projects, this.options.repoRoots ?? [], view.page);
-        }
-        if (view.picker === 'model') {
-          const options = await this.loadModelOptions();
-          const current = this.currentModelSelection(chatId);
-          const withCurrent = (options ?? []).map((option) => ({
-            ...option,
-            current: option.value === current,
-          }));
-          return buildModelPickerCard(withCurrent, current);
-        }
-        // permission
-        const service = this.options.permissionPresets;
-        if (service === undefined) {
-          return {
-            config: { wide_screen_mode: true },
-            header: { title: { tag: 'plain_text', content: '🔐 Permission' }, template: 'wathet' },
-            elements: [
-              {
-                tag: 'markdown',
-                content: 'Permission presets are unavailable on this deployment.',
-              },
-            ],
-          };
-        }
-        const agent = await this.ensureAgent(chatId);
-        const currentPreset = service.current(agent.session.events);
-        const presets: PermissionPresetView[] = service.names.map((name) => {
-          const option = service.optionOf(name);
-          return {
-            name,
-            label: option.name ?? name,
-            description: option.description,
-            current: name === currentPreset,
-          };
-        });
-        return buildPermissionPickerCard(presets);
-      }
-    }
   }
 
   /** Construct the panel card for a chat at the given command page. */

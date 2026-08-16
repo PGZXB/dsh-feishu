@@ -18,8 +18,9 @@
  *   patch; this wrapper makes that guarantee structural.
  *
  * Business logic (rendering a view's content, running a command handler)
- * lives behind {@link PanelHost} — the Bridge implements it, and the
- * architecture refactor replaces `renderPanelView` with a view registry.
+ * lives behind {@link PanelHost} — the Bridge implements it; each panel view
+ * renders through a registered view state (see `panel/views/`) that declares
+ * its own async-ness.
  *
  * @module @dsh-feishu/dsh-feishu/panel/PanelController
  */
@@ -43,9 +44,12 @@ export interface PanelLogger {
 export interface PanelHost {
   readonly transport: FeishuTransport;
   readonly logger: PanelLogger;
-  /** Render one panel view to a card (business logic; a view registry
-   *  replaces this in the architecture refactor). */
+  /** Render one panel view to a card (business logic behind the view
+   *  registry; the registry's states declare async-ness themselves). */
   renderPanelView(chatId: string, view: PanelView): Promise<CardJson>;
+  /** Whether a view renders from async data (post a Loading placeholder
+   *  first — the view registry's `asyncData` flag). */
+  isAsyncView(view: PanelView): boolean;
   /** Build the menu card (the failure fallback + completion exit). */
   buildMenuCard(chatId: string, page: number): CardJson;
   /** Re-assert the streaming card after a panel render (Lark restores the
@@ -91,12 +95,6 @@ const PANEL_TITLE_BY_INPUT: Record<string, string> = {
   'find-session': '🔎 Find session',
 };
 
-/** Whether a panel view renders from async data (sessions/pickers/detail —
- *  everything whose card needs a moment; the menu/input/confirm are sync). */
-function panelViewIsAsync(view: PanelView): boolean {
-  return view.kind === 'sessions' || view.kind === 'session-detail' || view.kind === 'picker';
-}
-
 /**
  * The panel state machine controller. One instance per bridge; state is
  * per-chat (the view stack and the panel card message id).
@@ -132,7 +130,7 @@ export class PanelController {
    */
   async showPanel(chatId: string): Promise<void> {
     const view = this.panelViewFor(chatId);
-    if (panelViewIsAsync(view)) {
+    if (this.host.isAsyncView(view)) {
       await this.postPanelCard(chatId, this.loadingPanelCard(view));
     }
     let card: CardJson;
