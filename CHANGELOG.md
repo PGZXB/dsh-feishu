@@ -89,6 +89,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Architecture refactor: the card surfaces become state machines behind
+  seams (no behavior change).** `Bridge`'s monolithic switch/if sprawl (the
+  source of every "panel reverted mid-action" / "card went dead" bug class)
+  is decomposed into small, single-purpose controllers, each owning one
+  surface and depending only on a host interface the Bridge implements:
+  - `cards/StreamingCardController.ts` — the streaming-card state machine
+    (per-chat `ChatCardState`, one `syncCard` render path, the session-event
+    pipeline incl. compaction, and the stop/copy/retry/row-details/
+    toggle-rows actions).
+  - `cards/InteractionCardController.ts` — the approval/question card flows
+    (single-select, multi-select toggles, free-text via the next message,
+    `answerFreeText`, and the interaction card actions).
+  - `panel/PanelController.ts` + `panel/actions/` + `panel/views/` — the
+    panel state machine; card actions are **Strategy objects** over a
+    `PanelAction` Template-Method base (transition → gate → busy → work →
+    result → exit, so no action can forget the patch-first rule), and views
+    are **Strategy objects** declaring their own `asyncData` (the former
+    `panelViewIsAsync` kind list is gone; pickers are separate
+    `picker:repo|model|permission` states).
+  - `commands/surface.ts` — the surface command set (all slash commands and
+    their panel buttons) behind `SurfaceCommandHost`.
+  - `Bridge` shrinks to facade + orchestration: message routing, agent
+    resolution, gates, and the four host seams. All 452 behavior tests (incl.
+    real-composition integration) pass unchanged; new unit tests cover each
+    controller directly (484 total).
 - **README overhaul.** Rebuilt around the positioning — *The Feishu UI for
   DeepSeek Harness (dsh)* — as a complete, zero-context onboarding: a
   from-blank-machine quickstart (Node.js → pnpm → plugin →

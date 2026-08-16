@@ -53,11 +53,20 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 | `src/memory-transport.ts` | File-channel in-memory transport (`FEISHU_TRANSPORT=memory`): the integration-test / debugging seam — `inbox/` delivers messages, `outbox/` records every send. |
 | `src/message-dedup.ts` | Bounded in-memory message-id dedup (platform redelivery). |
 | `src/session-map.ts` | Durable chat ↔ session mapping (atomic JSON writes), reverse lookup for events. |
+| `src/directory.ts` | Working-directory resolution for user-supplied paths (`/cd`, `/repo`). |
+| `src/model-args.ts` | `/model` argument parsing (`<provider>/<model>`). |
 | `src/cards/render.ts` | Pure rendering: session events → card JSON (v1 layout), markdown escaping, tail truncation, the control-panel palette (grouped, paginated, category blocks), the permission/model picker cards (dropdown with `initial_option`), and the pure-information **result cards** (`✅ Done` / `⚠️ Action failed`). |
-| `src/cards/session-list.ts` | The `/sessions` picker card: a **dropdown** of saved sessions (capped at `SESSION_SELECT_MAX = 20`), and the session detail sub-view card (Resume / Rename / Archive / Export / Back) — pure rendering. |
+| `src/cards/session-list.ts` | The `/sessions` picker card: a **dropdown** of saved sessions (capped at `SESSION_SELECT_MAX = 50`, with a Find filter), and the session detail sub-view card (Resume / Rename / Archive / Export / Back) — pure rendering. |
 | `src/cards/streaming.ts` | One card per turn: POST on open, throttled/coalesced `message.patch` updates, terminal finalize. |
+| `src/cards/StreamingCardController.ts` | The streaming-card **state machine**: per-chat `ChatCardState`, one `syncCard` render path, the session-event → card pipeline (`handleEvent`, incl. the compaction lifecycle and agent-initiated cards), `beginTurn` (ack + working state), and the streaming card actions (stop/copy/retry/row-details/toggle-rows). Depends only on the `StreamingCardHost` seam. |
 | `src/cards/interactions.ts` | Pending-interaction registry shared by approvals and questions: resolve-once, timeout, stale-callback rejection, abort, disposal. |
-| `src/bridge.ts` | Orchestrator: message → session → `agent.followup`; `session/event` → card patches; turn end → finalize in place. Agent resolution ladder: live → resume mapped session → create → rebind fresh id on collision. Owns the surface command registry (20 registered, 19 in the palette — `/panel` is hidden), the card state machine (`ChatCardState` + one `syncCard` path), the **panel state machine** (`PanelView` view stack + one `renderPanelView` path), the working-state and working-directory gates, the session lifecycle (`/sessions /resume /clear`), and the interactive approval/question flows (rendering in `render.ts`, settlement through `interactions.ts`). |
+| `src/cards/InteractionCardController.ts` | The approval/question **card flows**: `handleApprovalRequest` / `askQuestions` (single-select, multi-select toggles, free-text via the next chat message), the interaction card actions, and `answerFreeText` — behind the `InteractionCardHost` seam. |
+| `src/panel/types.ts` | Panel view union (`PanelView`) and the input/confirm sub-view copy (`PANEL_INPUT_SPEC`, `PANEL_CONFIRM_SPEC`). |
+| `src/panel/PanelController.ts` | The panel **state machine**: one authoritative view stack per chat, one `showPanel` render path (Loading placeholder first for async views, failure-proof menu reset), and `runPanelOperation` — THE single async-operation wrapper (busy placeholder → work → result → exit) behind the `PanelHost` seam. |
+| `src/panel/actions/` | Panel card actions as **Strategy objects**: `PanelAction` base class (Template Method — transition → gate → busy → work → result → exit order) + `PanelActionRegistry` (kind → action) + one class per action family (navigators, pickers, session ops, commands). |
+| `src/panel/views/` | Panel view **Strategy objects**: one `PanelViewState` per view (declaring its own `asyncData`) + `PanelViewRegistry`; the pickers are separate states (`picker:repo` / `picker:model` / `picker:permission`). |
+| `src/commands/surface.ts` | The surface command set: full registration of the plugin-owned slash commands (and their panel buttons) + `runHarnessCommand`, behind the `SurfaceCommandHost` seam. |
+| `src/bridge.ts` | **Facade + orchestration**: message routing (dedup, mention gate, slash dispatch), agent resolution ladder (live → resume mapped session → create → rebind fresh id on collision), the working-state and working-directory gates, the session lifecycle (`/sessions /resume /clear`), proactive mentions, and the four host seams (`StreamingCardHost` / `PanelHost` / `InteractionCardHost` / `SurfaceCommandHost`). All card surfaces live in the modules above. |
 | `src/index.ts` | Plugin entry: config, credential resolution, agent options (config or `agentDefaultModel`), wiring, `feishu-status` command. |
 
 ## Key behaviors
@@ -147,7 +156,9 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 - **Unit tests** (`tests/`): every module, via fake contexts and recording
   fakes — including the full card state-machine matrix (state × action,
   extended with the command/resume-session actions), the panel palette
-  pagination, the session-list builder, and the `executeDshCommand` result
+  pagination, the session-list builder, the extracted controllers
+  (`StreamingCardController`, `InteractionCardController`, the surface
+  command set) against fake hosts, and the `executeDshCommand` result
   mapping.
 - **Real-composition integration** (`tests/integration/`): a real dsh
   process booted from a real profile runs a real agent turn against a mock

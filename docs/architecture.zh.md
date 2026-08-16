@@ -44,11 +44,20 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 | `src/memory-transport.ts` | 文件通道的内存 transport（`FEISHU_TRANSPORT=memory`）：集成测试/调试用的 seam——`inbox/` 投递消息，`outbox/` 记录每一次发送。 |
 | `src/message-dedup.ts` | 有界的内存消息 id 去重（平台重投）。 |
 | `src/session-map.ts` | 持久的 chat ↔ session 映射（原子 JSON 写入），供事件反向查找。 |
+| `src/directory.ts` | 用户输入的工作目录路径解析（`/cd`、`/repo`）。 |
+| `src/model-args.ts` | `/model` 参数解析（`<provider>/<model>`）。 |
 | `src/cards/render.ts` | 纯渲染：session 事件 → 卡片 JSON（v1 布局）、markdown 转义、尾部截断、控制面板调色板（分组、分页、分类块）、权限/模型选择器卡片（带 `initial_option` 的下拉框），以及纯信息**结果卡片**（`✅ Done` / `⚠️ Action failed`）。 |
-| `src/cards/session-list.ts` | `/sessions` 选择器卡片：已保存会话的**下拉框**（上限 `SESSION_SELECT_MAX = 20`），以及会话详情子视图卡片（Resume / Rename / Archive / Export / Back）——纯渲染。 |
+| `src/cards/session-list.ts` | `/sessions` 选择器卡片：已保存会话的**下拉框**（上限 `SESSION_SELECT_MAX = 50`，带 Find 过滤），以及会话详情子视图卡片（Resume / Rename / Archive / Export / Back）——纯渲染。 |
 | `src/cards/streaming.ts` | 每轮一张卡片：打开时 POST，节流/合并的 `message.patch` 更新，终态 finalize。 |
+| `src/cards/StreamingCardController.ts` | 流式卡片**状态机**：每个聊天的 `ChatCardState`、单一 `syncCard` 渲染路径、session 事件 → 卡片管道（`handleEvent`，含 compaction 生命周期与 agent 主动发起的卡片）、`beginTurn`（ack + 工作态），以及流式卡片动作（stop/copy/retry/row-details/toggle-rows）。只依赖 `StreamingCardHost` seam。 |
 | `src/cards/interactions.ts` | 由审批和提问共享的 pending-interaction 注册表：仅解析一次、超时、过期回调拒绝、中止、释放。 |
-| `src/bridge.ts` | 编排器：消息 → session → `agent.followup`；`session/event` → 卡片 patch；回合结束 → 就地 finalize。agent 解析阶梯：live → 恢复已映射 session → 新建 → 冲突时重绑新 id。拥有 surface 命令注册表（20 个已注册，19 个在调色板中——`/panel` 隐藏）、卡片状态机（`ChatCardState` + 单一 `syncCard` 路径）、**面板状态机**（`PanelView` 视图栈 + 单一 `renderPanelView` 路径）、工作状态和工作目录 gate、session 生命周期（`/sessions /resume /clear`），以及交互式审批/提问流程（渲染在 `render.ts`，结算经由 `interactions.ts`）。 |
+| `src/cards/InteractionCardController.ts` | 审批/提问**卡片流程**：`handleApprovalRequest` / `askQuestions`（单选、多选 toggle、经下一条聊天消息回答的文本题）、交互卡片动作与 `answerFreeText`——依赖 `InteractionCardHost` seam。 |
+| `src/panel/types.ts` | 面板视图联合类型（`PanelView`）与输入/确认子视图文案（`PANEL_INPUT_SPEC`、`PANEL_CONFIRM_SPEC`）。 |
+| `src/panel/PanelController.ts` | 面板**状态机**：每个聊天一份权威视图栈、单一 `showPanel` 渲染路径（异步视图先发 Loading 占位、渲染失败重置菜单）、以及 `runPanelOperation`——唯一的异步操作包装（busy 占位 → 工作 → 结果 → 退出），依赖 `PanelHost` seam。 |
+| `src/panel/actions/` | 作为 **Strategy 对象**的面板卡片动作：`PanelAction` 基类（模板方法——transition → gate → busy → work → result → exit 顺序）+ `PanelActionRegistry`（kind → action）+ 每个动作族一个类（导航、选择器、session 操作、命令）。 |
+| `src/panel/views/` | 作为 **Strategy 对象**的面板视图：每个视图一个 `PanelViewState`（自声明 `asyncData`）+ `PanelViewRegistry`；选择器是独立状态（`picker:repo` / `picker:model` / `picker:permission`）。 |
+| `src/commands/surface.ts` | surface 命令集：插件自有斜杠命令（及其面板按钮）的完整注册 + `runHarnessCommand`，依赖 `SurfaceCommandHost` seam。 |
+| `src/bridge.ts` | **门面 + 编排**：消息路由（去重、提及 gate、斜杠分发）、agent 解析阶梯（live → 恢复已映射 session → 新建 → 冲突时重绑新 id）、工作状态与工作目录 gate、session 生命周期（`/sessions /resume /clear`）、主动提及，以及四个宿主 seam（`StreamingCardHost` / `PanelHost` / `InteractionCardHost` / `SurfaceCommandHost`）。所有卡片表面都位于上述模块。 |
 | `src/index.ts` | 插件入口：配置、凭据解析、agent 选项（配置或 `agentDefaultModel`）、接线、`feishu-status` 命令。 |
 
 ## 关键行为
