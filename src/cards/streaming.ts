@@ -4,8 +4,8 @@
  * The mechanism (verified against botmux): POST one interactive card when a
  * turn starts, then repeatedly `im.v1.message.patch` the same message as
  * output arrives. Patching is silent — no unread notification — which is
- * exactly right for intermediate progress; the final answer is delivered as
- * a fresh message by the bridge (botmux rule).
+ * exactly right for intermediate progress; the card is finalized in place
+ * when the turn settles — no second bubble.
  *
  * Updates are throttled and coalesced: at most one patch in flight per card,
  * and the newest snapshot always wins, so a burst of chunks costs one patch.

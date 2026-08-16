@@ -1,6 +1,7 @@
 /**
- * Session-list card rendering: the `/sessions` picker — a paginated list of
- * saved sessions, each row a one-line summary plus a Resume button. Pure
+ * Session-list card rendering: the `/sessions` picker — a dropdown of saved
+ * sessions (each row: title · id, with ★ current / ● live badges) plus the
+ * session detail sub-view (resume / rename / archive / export). Pure
  * rendering (no I/O): the bridge feeds the surface projection rows.
  *
  * Layout mirrors the repo picker's proven v1 pattern: `column_set` rows with
