@@ -150,6 +150,15 @@ function logError(message: string): void {
   process.stderr.write(`[setup] error: ${message}\n`);
 }
 
+/**
+ * The startup hint printed after setup completes. Matches the README's
+ * install/run commands, which invoke dsh through npx.
+ * @param profile - the configured dsh profile name.
+ */
+export function startHint(profile: string): string {
+  return `Start with: npx @deepseek-ai/dsh --profile ${profile}`;
+}
+
 async function prompt(question: string): Promise<string> {
   const rl = createInterface({ input: process.stdin, output: process.stderr });
   try {
@@ -325,9 +334,7 @@ async function runManualSetup(options: CliOptions): Promise<void> {
     if (!ready) logError('boot verification timed out (check the long connection / network)');
     else log('bridge ready — the surface is live');
   }
-  process.stdout.write(
-    `\nDone. Configured manually; start with \`dsh --profile ${options.profile}\`.\n`,
-  );
+  process.stdout.write(`\nDone. Configured manually; ${startHint(options.profile)}.\n`);
 }
 
 /** The automatic path: QR session → create/configure → publish → credentials. */
@@ -433,7 +440,7 @@ async function runAutoSetup(options: CliOptions): Promise<void> {
     else log('bridge ready — the surface is live');
   }
   process.stdout.write(`\nDone. App ${appId} configured for profile '${options.profile}'.\n`);
-  process.stdout.write(`Start with: dsh --profile ${options.profile}\n`);
+  process.stdout.write(`${startHint(options.profile)}\n`);
 }
 
 /** CLI entry point. */
