@@ -11,7 +11,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mergeBotProfile, promptBotProfile } from '../src/setup/bot-profile.js';
-import { parseArgs } from '../src/setup/cli.js';
+import { parseArgs, startHint } from '../src/setup/cli.js';
 import { createOpenPlatformApiClient, type OpenPlatformApiClient } from '../src/setup/client.js';
 import { configureFeishuApp } from '../src/setup/configure.js';
 import {
@@ -794,5 +794,13 @@ describe('bot profile', () => {
   it('skips prompts when stdin is not a TTY', async () => {
     const answers = await promptBotProfile({});
     expect(answers).toEqual({});
+  });
+});
+
+describe('startup hint', () => {
+  it('matches the README run command (npx @deepseek-ai/dsh)', () => {
+    expect(startHint('feishu')).toBe('Start with: npx @deepseek-ai/dsh --profile feishu');
+    expect(startHint('feishu')).toContain('npx @deepseek-ai/dsh --profile');
+    expect(startHint('feishu')).not.toContain('dsh --profile feishu\n');
   });
 });
