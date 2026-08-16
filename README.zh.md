@@ -7,7 +7,7 @@
 [![npm](https://img.shields.io/npm/v/@dsh-feishu/dsh-feishu)](https://www.npmjs.com/package/@dsh-feishu/dsh-feishu)
 [![CI](https://img.shields.io/github/actions/workflow/status/PGZXB/dsh-feishu/ci.yml?branch=main)](.github/workflows/ci.yml)
 
-给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）做的飞书 UI——一个 dsh 原生插件。`dsh plugin add` 装上、扫一次二维码，就能在飞书里跑你的 agent。
+给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）做的飞书 UI——一个 dsh 原生插件，带**面板驱动的控制台**：每个 slash 命令都是 ⚙️ 控制面板卡片上的一个按钮，审批和提问都在聊天卡片内完成，扫一次二维码就把整个应用配好。
 
 https://github.com/user-attachments/assets/e9163793-52f2-4e2c-a08a-22b27372be61
 
