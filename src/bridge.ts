@@ -28,9 +28,7 @@ import {
   buildConfirmCard,
   buildInputCard,
   buildModelPickerCard,
-  buildPanelBusyCard,
   buildPanelCard,
-  buildPanelNoticeCard,
   buildPermissionPickerCard,
   buildQuestionAnsweredCard,
   buildQuestionCard,
@@ -66,6 +64,9 @@ import type {
   SentCard,
 } from './feishu/types.js';
 import { MessageDeduplicator } from './message-dedup.js';
+import type { PanelActionContext } from './panel/actions/PanelAction.js';
+import { buildPanelActionRegistry } from './panel/actions/registry.js';
+import { PanelController, type PanelHost } from './panel/PanelController.js';
 import { type ProjectInfo, scanMultipleProjects } from './projects.js';
 import { buildSessionExport, type SessionExportEvent } from './session-export.js';
 import type { SessionMap } from './session-map.js';
@@ -87,118 +88,11 @@ function isCompactionLifecycleEvent(event: SessionEvent): boolean {
   return type === 'compaction/start' || type === 'compaction/summary' || type === 'compaction/end';
 }
 
-/**
- * The panel card state machine view (single authoritative panel state, one
- * render path — the same rule as `ChatCardState`). `menu` is the root; a
- * button PUSHES an `input`/`confirm` sub-view, completion/back POPS to
- * `menu`. Every view renders in place on the SAME panel card.
- */
-export type PanelView =
-  | { readonly kind: 'menu'; readonly page: number }
-  | { readonly kind: 'input'; readonly command: PanelInputCommand; readonly sessionId?: string }
-  | { readonly kind: 'confirm'; readonly command: 'clear' | 'compact' }
-  | { readonly kind: 'sessions'; readonly archived: boolean; readonly query?: string }
-  | { readonly kind: 'session-detail'; readonly sessionId: string }
-  | {
-      readonly kind: 'picker';
-      readonly picker: 'repo' | 'model' | 'permission';
-      readonly page: number;
-    };
+export type { PanelInputCommand, PanelView } from './panel/types.js';
 
-/** Commands whose panel button opens a text-input sub-view. */
-export type PanelInputCommand =
-  | 'cd'
-  | 'group'
-  | 'goal'
-  | 'feedback'
-  | 'rename-session'
-  | 'find-session';
+import { PANEL_CONFIRM_SPEC, PANEL_INPUT_SPEC, type PanelView } from './panel/types.js';
 
-/** Narrow a panel command marker to the input commands. */
-function isPanelInputCommand(value: string | undefined): value is PanelInputCommand {
-  return (
-    value === 'cd' ||
-    value === 'group' ||
-    value === 'goal' ||
-    value === 'feedback' ||
-    value === 'rename-session' ||
-    value === 'find-session'
-  );
-}
-
-/** Text-input sub-view copy per command. */
-const PANEL_INPUT_SPEC: Record<
-  PanelInputCommand,
-  {
-    readonly title: string;
-    readonly hint: string;
-    readonly fieldName: string;
-    readonly placeholder: string;
-    readonly submitLabel: string;
-  }
-> = {
-  cd: {
-    title: '📁 Change working directory',
-    hint: 'Send the absolute (or `~`) path to the project directory.',
-    fieldName: 'path',
-    placeholder: 'e.g. /home/user/projects/demo',
-    submitLabel: 'Set directory',
-  },
-  group: {
-    title: '👥 New group',
-    hint: 'Send the group name to create and join.',
-    fieldName: 'name',
-    placeholder: 'e.g. my team',
-    submitLabel: 'Create group',
-  },
-  goal: {
-    title: '🎯 Goal',
-    hint: 'Send the goal text for the ongoing task.',
-    fieldName: 'goal',
-    placeholder: 'e.g. fix the build',
-    submitLabel: 'Set goal',
-  },
-  feedback: {
-    title: '💬 Feedback',
-    hint: 'Send your feedback text.',
-    fieldName: 'feedback',
-    placeholder: 'Type feedback…',
-    submitLabel: 'Send feedback',
-  },
-  'rename-session': {
-    title: '✏️ Rename session',
-    hint: 'Send the new title for this session.',
-    fieldName: 'title',
-    placeholder: 'New title',
-    submitLabel: 'Rename',
-  },
-  'find-session': {
-    title: '🔎 Find session',
-    hint: 'Send a session id or part of its title to filter the list.',
-    fieldName: 'query',
-    placeholder: 'e.g. feishu-session-1 or "old project"',
-    submitLabel: 'Find',
-  },
-};
-
-/** Confirm sub-view copy per command. */
-const PANEL_CONFIRM_SPEC: Record<
-  'clear' | 'compact',
-  { readonly title: string; readonly message: string; readonly confirmLabel: string }
-> = {
-  clear: {
-    title: '✨ New chat',
-    message:
-      'Start a NEW conversation? The previous session stays saved (resumable via /sessions).',
-    confirmLabel: 'Start new chat',
-  },
-  compact: {
-    title: '🧹 Compact',
-    message:
-      'Compact older conversation history into a summary? The chat is unavailable while it runs.',
-    confirmLabel: 'Compact now',
-  },
-};
+export { isPanelInputCommand, PANEL_CONFIRM_SPEC, PANEL_INPUT_SPEC } from './panel/types.js';
 
 /** Minimal logger surface the bridge needs. */
 export interface BridgeLogger {
@@ -651,13 +545,10 @@ export class Bridge {
   private readonly cardStates = new Map<string, ChatCardState>();
   private readonly lastPrompts = new Map<string, string>();
   private readonly lastOutputs = new Map<string, string>();
-  /** The most recently opened panel card per chat (pagination updates it
-   *  in place instead of posting a new card — mobile UX, user report). */
-  private readonly panelMessageIds = new Map<string, string>();
-  /** The panel card state machine: a stack of views per chat (the menu root
-   *  is the stack bottom; buttons push sub-views, Back pops — stack
-   *  semantics). */
-  private readonly panelViews = new Map<string, PanelView[]>();
+  /** The panel state machine (view stack + single render path). */
+  private readonly panel: PanelController;
+  /** Panel card actions (Strategy registry; Template Method lifecycle). */
+  private readonly panelActions = buildPanelActionRegistry();
   /** Pending approval/question card interactions (one resolve path). */
   private readonly interactions = new InteractionRegistry();
   /** Multi-select question state per request id (toggle + submit). */
@@ -734,6 +625,7 @@ export class Bridge {
   private readonly commands = new CommandRegistry();
 
   constructor(private readonly options: BridgeOptions) {
+    this.panel = new PanelController(this.panelHost());
     options.transport.onMessage((message) => {
       void this.handleMessage(message).catch((error: unknown) => {
         options.logger.error(`feishu message handling failed: ${String(error)}`);
@@ -755,6 +647,67 @@ export class Bridge {
   /** All surface commands (the control-panel button source). */
   commandsList(): readonly import('./commands.js').SurfaceCommand[] {
     return this.commands.list();
+  }
+
+  /** The PanelHost the panel controller delegates to: Bridge owns the
+   *  business logic (view rendering, result cards, streaming-card sync). */
+  private panelHost(): PanelHost {
+    return {
+      transport: this.options.transport,
+      logger: this.options.logger,
+      renderPanelView: (chatId, view) => this.renderPanelView(chatId, view),
+      buildMenuCard: (chatId, page) => this.buildPanelCardFor(chatId, page),
+      syncCard: (chatId) => this.syncCard(chatId),
+      resultCard: (chatId, result) => this.replyResultCard(chatId, result),
+      text: (chatId, text) => this.options.transport.sendText(chatId, text),
+    };
+  }
+
+  /** The seam every panel action runs against: navigation (the panel
+   *  controller), the working-state gate, the command registry, and the
+   *  Bridge's business helpers. Actions depend on this interface, never on
+   *  Bridge internals (see `panel/actions/PanelAction.ts`). */
+  private panelContext(): PanelActionContext {
+    return {
+      services: {
+        transport: this.options.transport,
+        sessionMap: this.options.sessionMap,
+        agentStore: this.options.agentStore,
+        logger: this.options.logger,
+        defaultCwd: this.options.defaultCwd,
+        requireWorkingDir: this.options.requireWorkingDir,
+        repoRoots: this.options.repoRoots,
+        apiProxy: this.options.apiProxy,
+        permissionPresets: this.options.permissionPresets,
+        planMode: this.options.planMode,
+        agentDefaultModel: this.options.agentDefaultModel,
+        llm: this.options.llm,
+        listSessions: this.options.listSessions,
+      },
+      pushPanel: (chatId, view) => this.pushPanel(chatId, view),
+      replacePanel: (chatId, view) => this.replacePanel(chatId, view),
+      popPanel: (chatId) => this.popPanel(chatId),
+      popToMenu: (chatId) => this.popToMenu(chatId),
+      popToDetail: (chatId) => this.popToDetail(chatId),
+      panelViewFor: (chatId) => this.panelViewFor(chatId),
+      panelStack: (chatId) => this.panelStack(chatId),
+      runPanelOperation: (chatId, title, work, finish) =>
+        this.runPanelOperation(chatId, title, work, finish),
+      replyResultCard: (chatId, result) => this.replyResultCard(chatId, result),
+      replyText: (chatId, text) => this.options.transport.sendText(chatId, text),
+      isWorking: (chatId) => this.refuseWhileWorking(chatId),
+      allowedWhileWorking: (kind) => Bridge.ALLOWED_WHILE_WORKING.has(kind),
+      findCommand: (name) => this.commands.find(name),
+      ensureAgent: (chatId) => this.ensureAgent(chatId),
+      liveAgent: (chatId) => this.liveAgent(chatId),
+      resumeSession: (chatId, sessionId, cwd) => this.resumeSession(chatId, sessionId, cwd),
+      exportSessionLog: (chatId, sessionId) => this.exportSessionLog(chatId, sessionId),
+      loadSessions: (chatId, archived) => this.loadSessions(chatId, archived),
+      currentModelSelection: (chatId) => this.currentModelSelection(chatId),
+      loadModelOptions: () => this.loadModelOptions(),
+      resolveDirectory: (input) => resolveDirectory(input),
+      parseModelArg: (raw) => parseModelArg(raw),
+    };
   }
 
   /** Detach the session-event subscription. */
@@ -1123,208 +1076,64 @@ export class Bridge {
       }));
   }
 
-  /**
-   * Open (or page) the control panel card: the core buttons plus the full
-   * command palette, paginated. The panel is stateless — each open/pager
-   * posts a fresh card built from the current authoritative state.
-   * @param chatId - the chat.
-   * @param page - zero-based palette page.
-   */
+  /** Open (or page) the control panel: a fresh card + reset stack. */
   private async openPanel(chatId: string, page = 0): Promise<void> {
-    // /panel always posts a FRESH card (user request) and resets the panel
-    // state machine to the menu root.
-    this.panelViews.set(chatId, [{ kind: 'menu', page }]);
-    this.panelMessageIds.delete(chatId);
-    await this.showPanel(chatId);
+    await this.panel.openPanel(chatId, page);
   }
 
-  /**
-   * Render the CURRENT panel view (the stack top) IN PLACE on the panel card
-   * (single render path for the panel state machine): the first render posts
-   * the card, every later transition updates the SAME card. A failed update
-   * falls back to posting a fresh card; a failed render/post surfaces as a
-   * text notice — state and the on-screen card never diverge silently.
-   * @param chatId - the chat.
-   */
+  /** Render the current panel view in place (single render path). */
   private async showPanel(chatId: string): Promise<void> {
-    const view = this.panelViewFor(chatId);
-    // Views that load async data (sessions, pickers, detail) can take a
-    // while. Post a loading placeholder FIRST so the callback carries a
-    // panel patch — otherwise Lark restores the pre-click (menu) card while
-    // the data loads and the panel visibly reverts mid-transition (user
-    // report: sessions/detail "退回菜单"). The placeholder has only Back,
-    // so no mis-taps land while it is up.
-    if (this.panelViewIsAsync(view)) {
-      await this.postPanelCard(chatId, this.loadingPanelCard(view));
-    }
-    let card: CardJson;
-    try {
-      card = await this.renderPanelView(chatId, view);
-    } catch (error: unknown) {
-      this.options.logger.error(`panel view render failed: ${String(error)}`);
-      // The stack may hold the view that failed to render (e.g. a picker
-      // whose data source is broken). Reset to the menu root and repost the
-      // menu card so the panel is never left with a dead view — page flips
-      // and Back must keep working (user report: after a render failure
-      // "换页按钮不再有反应").
-      this.panelViews.set(chatId, [this.panelStack(chatId)[0] ?? { kind: 'menu', page: 0 }]);
-      try {
-        await this.postPanelCard(chatId, this.buildPanelCardFor(chatId, 0));
-      } catch (postError: unknown) {
-        this.options.logger.warn(
-          `panel menu repost after render failure failed: ${String(postError)}`,
-        );
-      }
-      await this.options.transport
-        .sendText(chatId, '⚠️ The panel view could not be rendered — see the bot log.')
-        .catch(() => {});
-      return;
-    }
-    await this.postPanelCard(chatId, card);
-    this.syncCard(chatId);
+    await this.panel.showPanel(chatId);
   }
 
-  /** Whether a panel view renders from async data (sessions/pickers/detail —
-   *  everything whose card needs a moment; the menu/input/confirm are sync). */
-  private panelViewIsAsync(view: PanelView): boolean {
-    return view.kind === 'sessions' || view.kind === 'session-detail' || view.kind === 'picker';
-  }
-
-  /** The loading placeholder for an async panel view (Back only). */
-  private loadingPanelCard(view: PanelView): CardJson {
-    const title =
-      view.kind === 'sessions'
-        ? '🗂️ Sessions'
-        : view.kind === 'session-detail'
-          ? '🗂️ Session'
-          : view.kind === 'picker' && view.picker === 'repo'
-            ? '📚 Pick a project'
-            : view.kind === 'picker' && view.picker === 'model'
-              ? '🤖 Model'
-              : '🔐 Permission';
-    return buildPanelNoticeCard({ title, hint: '⏳ Loading…' });
-  }
-
-  /**
-   * THE single wrapper for async panel operations (rename, archive, export,
-   * resume, picks, command/confirm/input handlers). Every async panel action
-   * MUST go through here: it posts an operating placeholder FIRST (an
-   * immediate panel patch, so the callback always carries one — Lark
-   * otherwise restores the pre-click card while the work awaits, the root of
-   * every "panel reverts mid-action" bug), then runs the work, then posts
-   * the outcome as a result card, then runs `finish` (a panel transition,
-   * which patches again). No per-case patch bookkeeping — one structure.
-   * @param chatId - the chat.
-   * @param title - the panel header title to show while operating.
-   * @param work - the async mutation; its outcome is posted as a result card.
-   * @param finish - the completion exit (e.g. popToMenu / popToDetail).
-   */
+  /** THE single wrapper for async panel operations (patch-first guarantee). */
   private async runPanelOperation(
     chatId: string,
     title: string,
-    work: () => CommandResult | void | Promise<CommandResult | void>,
+    work: () => CommandResult | undefined | Promise<CommandResult | undefined>,
     finish: () => Promise<void>,
   ): Promise<void> {
-    await this.postPanelCard(chatId, buildPanelBusyCard(title));
-    try {
-      const result = await work();
-      if (result !== undefined) {
-        await this.replyResultCard(chatId, result);
-      }
-    } catch (error: unknown) {
-      this.options.logger.error(`panel operation failed: ${String(error)}`);
-      await this.replyResultCard(chatId, {
-        kind: 'error',
-        text: `operation failed: ${String(error)}`,
-      });
-    }
-    await finish();
+    await this.panel.runPanelOperation(chatId, title, work, finish);
   }
 
-  /**
-   * Post (or in-place update) the panel card. A NEW card is posted on first
-   * render; every later transition updates the SAME card. A failed update
-   * falls back to posting a fresh card; a failed render/post surfaces as a
-   * text notice — state and the on-screen card never diverge silently.
-   * @param chatId - the chat.
-   * @param card - the panel card to display.
-   */
+  /** Post (or update) the panel card. */
   private async postPanelCard(chatId: string, card: CardJson): Promise<void> {
-    const existing = this.panelMessageIds.get(chatId);
-    try {
-      if (existing !== undefined) {
-        await this.options.transport.updateCard(existing, card);
-      } else {
-        const sent = await this.options.transport.sendCard(chatId, card);
-        this.panelMessageIds.set(chatId, sent.messageId);
-      }
-    } catch (error: unknown) {
-      // NEVER leave the panel state and the on-screen card out of sync: a
-      // failed update falls back to posting a fresh card (and re-records its
-      // id); a failed post surfaces as a text notice.
-      this.options.logger.warn(`panel render failed, reposting: ${String(error)}`);
-      try {
-        const sent = await this.options.transport.sendCard(chatId, card);
-        this.panelMessageIds.set(chatId, sent.messageId);
-      } catch (fallbackError: unknown) {
-        this.options.logger.error(`panel card could not be posted: ${String(fallbackError)}`);
-        await this.options.transport
-          .sendText(chatId, '⚠️ The panel card could not be displayed — see the bot log.')
-          .catch(() => {});
-      }
-    }
+    await this.panel.postPanelCard(chatId, card);
   }
 
-  /**
-   * PUSH a sub-view onto the panel stack and render it (a button entering a
-   * new interface; Back pops back to the parent — stack semantics).
-   */
+  /** PUSH a sub-view onto the panel stack and render it. */
   private async pushPanel(chatId: string, view: PanelView): Promise<void> {
-    this.panelViews.set(chatId, [...this.panelStack(chatId), view]);
-    await this.showPanel(chatId);
+    await this.panel.pushPanel(chatId, view);
   }
 
   /** POP one level (Back); the menu root never pops. */
   private async popPanel(chatId: string): Promise<void> {
-    const stack = this.panelStack(chatId);
-    const next = stack.length > 1 ? stack.slice(0, -1) : stack;
-    this.panelViews.set(chatId, next);
-    await this.showPanel(chatId);
+    await this.panel.popPanel(chatId);
   }
 
-  /** Replace the stack top (e.g. a page flip inside the current view). */
+  /** Replace the stack top (e.g. a page flip). */
   private async replacePanel(chatId: string, view: PanelView): Promise<void> {
-    const stack = this.panelStack(chatId);
-    this.panelViews.set(chatId, [...stack.slice(0, -1), view]);
-    await this.showPanel(chatId);
+    await this.panel.replacePanel(chatId, view);
   }
 
   /** POP back to the menu root (keeping its page). */
   private async popToMenu(chatId: string): Promise<void> {
-    const root = this.panelStack(chatId)[0] ?? { kind: 'menu', page: 0 };
-    this.panelViews.set(chatId, [root]);
-    await this.showPanel(chatId);
+    await this.panel.popToMenu(chatId);
   }
 
   /** POP back to the session detail (after a rename completes), if present. */
   private async popToDetail(chatId: string): Promise<void> {
-    const stack = this.panelStack(chatId);
-    const detailIndex = stack.findLastIndex((view) => view.kind === 'session-detail');
-    const next =
-      detailIndex >= 0 ? stack.slice(0, detailIndex + 1) : [stack[0] ?? { kind: 'menu', page: 0 }];
-    this.panelViews.set(chatId, next);
-    await this.showPanel(chatId);
+    await this.panel.popToDetail(chatId);
   }
 
-  /** The panel view stack for a chat (the menu root is the stack bottom). */
+  /** The panel view stack for a chat. */
   private panelStack(chatId: string): PanelView[] {
-    return this.panelViews.get(chatId) ?? [{ kind: 'menu', page: 0 }];
+    return this.panel.panelStack(chatId);
   }
 
   /** The current panel view (the stack top), defaulting to the menu root. */
   private panelViewFor(chatId: string): PanelView {
-    const stack = this.panelStack(chatId);
-    return stack[stack.length - 1] ?? { kind: 'menu', page: 0 };
+    return this.panel.panelViewFor(chatId);
   }
 
   /** Render the card for one panel view (the single panel render path). */
@@ -2261,40 +2070,6 @@ export class Bridge {
         );
         break;
       }
-      case 'repo-pick': {
-        // Dropdown selections arrive in `option`; the button fallback stamps
-        // the path in `value.path`.
-        const path = action.option ?? action.value.path;
-        if (path === undefined || path === '') {
-          await this.options.transport.sendText(action.chatId, 'Invalid project selection.');
-          break;
-        }
-        const resolved = resolveDirectory(path);
-        if (!resolved.ok) {
-          await this.options.transport.sendText(action.chatId, `⚠️ ${resolved.error}`);
-          break;
-        }
-        this.options.sessionMap.setCwd(action.chatId, resolved.path);
-        this.options.sessionMap.remint(action.chatId);
-        await this.runPanelOperation(
-          action.chatId,
-          '📚 Pick a project',
-          async () => {
-            return {
-              kind: 'success',
-              text: `Working directory set to ${resolved.path} (session restarts on your next message).`,
-            };
-          },
-          () => this.popToMenu(action.chatId),
-        );
-        break;
-      }
-      case 'repo-page': {
-        const page = Number(action.value.page);
-        if (!Number.isInteger(page) || page < 0) break;
-        await this.replacePanel(action.chatId, { kind: 'picker', picker: 'repo', page });
-        break;
-      }
       case 'row-details': {
         const state = this.cardStates.get(action.chatId);
         const id = action.value.id;
@@ -2321,380 +2096,28 @@ export class Bridge {
         }
         break;
       }
-      case 'panel': {
-        await this.popToMenu(action.chatId);
-        break;
-      }
-      case 'panel-page': {
-        const page = Number(action.value.page);
-        if (!Number.isInteger(page) || page < 0) break;
-        // Page flips only apply to the menu root; other views ignore them.
-        const view = this.panelViewFor(action.chatId);
-        if (view.kind !== 'menu') break;
-        await this.replacePanel(action.chatId, { kind: 'menu', page });
-        break;
-      }
-      case 'panel-back': {
-        // POP one level (stack semantics): Back returns to the parent view;
-        // the menu root never pops.
-        await this.popPanel(action.chatId);
-        break;
-      }
-      case 'panel-input-submit': {
-        // The input form's submit button: run the command with the entered
-        // value as its argument, notify the result as a message, POP to menu.
-        const commandName = action.value.command;
-        if (!isPanelInputCommand(commandName)) break;
-        if (
-          this.refuseWhileWorking(action.chatId) &&
-          !Bridge.ALLOWED_WHILE_WORKING.has(commandName)
-        ) {
-          await this.replyCommandResult(action.chatId, {
-            kind: 'error',
-            text: 'a turn is running — stop it first.',
-          });
-          break;
-        }
-        const fieldName = PANEL_INPUT_SPEC[commandName].fieldName;
-        const rawInput = action.formValue?.[fieldName] ?? '';
-        if (commandName === 'find-session') {
-          // Filter the sessions list by id/title fragment — reach any session
-          // past the dropdown cap (user report). No session mutation, so the
-          // working-state gate above is the only refusal.
-          const view = this.panelViewFor(action.chatId);
-          const archived = view.kind === 'sessions' ? view.archived : false;
-          await this.replacePanel(action.chatId, {
-            kind: 'sessions',
-            archived,
-            query: rawInput.trim(),
-          });
-          break;
-        }
-        if (commandName === 'rename-session') {
-          // Rename goes through the host session seam (dsh web parity). The
-          // unified async wrapper posts an operating placeholder first.
-          const sessionId = action.value.sessionId;
-          if (sessionId === undefined || sessionId === '') break;
-          const sessions = this.options.apiProxy?.sessions;
-          if (sessions === undefined) {
-            await this.options.transport.sendText(
-              action.chatId,
-              'Renaming sessions is unavailable on this deployment.',
-            );
-            break;
-          }
-          await this.runPanelOperation(
-            action.chatId,
-            '✏️ Rename session',
-            async () => {
-              try {
-                await sessions.rename({ sessionId, title: rawInput });
-                return { kind: 'success', text: `Renamed session ${sessionId}.` };
-              } catch (error: unknown) {
-                this.options.logger.warn(`session rename failed: ${String(error)}`);
-                return {
-                  kind: 'error',
-                  text: `Rename failed: ${error instanceof Error ? error.message : String(error)}`,
-                };
-              }
-            },
-            () => this.popToDetail(action.chatId),
-          );
-          break;
-        }
-        const command = this.commands.find(commandName);
-        if (command === undefined) break;
-        await this.runPanelOperation(
-          action.chatId,
-          PANEL_INPUT_SPEC[commandName].title,
-          () =>
-            command.handler({
-              chatId: action.chatId,
-              senderOpenId: action.operatorOpenId,
-              rawInput,
-            }),
-          () => this.popToMenu(action.chatId),
-        );
-        break;
-      }
-      case 'panel-confirm': {
-        // The confirm sub-view's confirm button: run the destructive command,
-        // notify, POP to menu.
-        const commandName = action.value.command;
-        const command =
-          commandName === 'clear' || commandName === 'compact'
-            ? this.commands.find(commandName)
-            : undefined;
-        if (command === undefined) break;
-        const confirmCommand = commandName as 'clear' | 'compact';
-        if (
-          this.refuseWhileWorking(action.chatId) &&
-          !Bridge.ALLOWED_WHILE_WORKING.has(confirmCommand)
-        ) {
-          await this.replyCommandResult(action.chatId, {
-            kind: 'error',
-            text: 'a turn is running — stop it first.',
-          });
-          break;
-        }
-        await this.runPanelOperation(
-          action.chatId,
-          PANEL_CONFIRM_SPEC[confirmCommand].title,
-          () =>
-            command.handler({
-              chatId: action.chatId,
-              senderOpenId: action.operatorOpenId,
-              rawInput: '',
-            }),
-          () => this.popToMenu(action.chatId),
-        );
-        break;
-      }
-      case 'command': {
-        // A panel palette button. Every path goes through the panel state
-        // machine: commands with a text dimension open their input sub-view,
-        // destructive commands confirm first, and everything else runs the
-        // same handler as the slash line — then the FINAL outcome leaves the
-        // panel as a pure-information result card and the panel returns to
-        // the menu root (the single completion exit, same as panel-confirm
-        // and panel-input-submit). That exit PATCHES the panel card, which is
-        // what keeps Lark from restoring the pre-click (page-1) card — a
-        // button click with no panel patch reverts the panel (user report).
-        const name = action.value.name;
-        if (name === 'cd' || name === 'group' || name === 'goal' || name === 'feedback') {
-          await this.pushPanel(action.chatId, { kind: 'input', command: name });
-          break;
-        }
-        if (name === 'sessions') {
-          await this.pushPanel(action.chatId, { kind: 'sessions', archived: false });
-          break;
-        }
-        if (name === 'repo' || name === 'model' || name === 'permission') {
-          await this.pushPanel(action.chatId, { kind: 'picker', picker: name, page: 0 });
-          break;
-        }
-        if (name === 'clear' || name === 'compact') {
-          await this.pushPanel(action.chatId, { kind: 'confirm', command: name });
-          break;
-        }
-        const command = name === undefined ? undefined : this.commands.find(name);
-        if (command === undefined) {
-          this.options.logger.warn(`command button for unknown command ${name ?? '(missing)'}`);
-          break;
-        }
-        if (
-          name !== undefined &&
-          this.refuseWhileWorking(action.chatId) &&
-          !Bridge.ALLOWED_WHILE_WORKING.has(name)
-        ) {
-          await this.replyCommandResult(action.chatId, {
-            kind: 'error',
-            text: 'a turn is running — stop it first.',
-          });
-          break;
-        }
-        await this.runPanelOperation(
-          action.chatId,
-          command.buttonLabel ?? command.name,
-          () =>
-            command.handler({
-              chatId: action.chatId,
-              senderOpenId: action.operatorOpenId,
-              rawInput: '',
-            }),
-          () => this.popToMenu(action.chatId),
-        );
-        break;
-      }
-      case 'resume-session': {
-        const sessionId = action.value.sessionId;
-        if (sessionId === undefined || sessionId === '') break;
-        // Resume comes from the session detail view. The card callback's
-        // message id is the OPEN message id (never equal to the stored
-        // message id), so the guard checks the panel view instead.
-        if (this.panelViewFor(action.chatId).kind !== 'session-detail') {
-          this.options.logger.info(`ignoring session resume outside the detail view`);
-          break;
-        }
-        if (this.refuseWhileWorking(action.chatId)) {
-          await this.replyCommandResult(action.chatId, {
-            kind: 'error',
-            text: 'a turn is running — stop it first.',
-          });
-          break;
-        }
-        // The detail row carries the session's cwd so the resumed chat
-        // adopts it as its pinned working directory.
-        await this.runPanelOperation(
-          action.chatId,
-          '🗂️ Session',
-          () => this.resumeSession(action.chatId, sessionId, action.value.cwd),
-          () => this.popToMenu(action.chatId),
-        );
-        break;
-      }
-      case 'session-select': {
-        // Dropdown selections arrive in `option`; the (legacy) button
-        // fallback stamps the session id in `value.sessionId`.
-        const sessionId = action.option ?? action.value.sessionId;
-        if (sessionId === undefined || sessionId === '') break;
-        await this.pushPanel(action.chatId, { kind: 'session-detail', sessionId });
-        break;
-      }
-      case 'sessions-archived-toggle': {
-        const view = this.panelViewFor(action.chatId);
-        const archived = view.kind === 'sessions' ? !view.archived : false;
-        await this.replacePanel(action.chatId, { kind: 'sessions', archived });
-        break;
-      }
-      case 'session-find': {
-        // Reach ANY session past the dropdown cap: type an id/title fragment
-        // and the list filters to it (user report: the dropdown can't show
-        // the whole corpus — Feishu caps select_static options).
-        await this.pushPanel(action.chatId, { kind: 'input', command: 'find-session' });
-        break;
-      }
-      case 'session-rename': {
-        const sessionId = action.value.sessionId;
-        if (sessionId === undefined || sessionId === '') break;
-        await this.pushPanel(action.chatId, {
-          kind: 'input',
-          command: 'rename-session',
-          sessionId,
-        });
-        break;
-      }
-      case 'session-archive': {
-        const sessionId = action.value.sessionId;
-        if (sessionId === undefined || sessionId === '') break;
-        const workspace = this.options.apiProxy?.workspace;
-        if (workspace === undefined) {
-          await this.options.transport.sendText(
-            action.chatId,
-            'Archiving sessions is unavailable on this deployment.',
-          );
-          break;
-        }
-        await this.runPanelOperation(
-          action.chatId,
-          '🗂️ Session',
-          async () => {
-            try {
-              await workspace.archiveSession({ sessionId });
-              return { kind: 'success', text: `Archived session ${sessionId}.` };
-            } catch (error: unknown) {
-              this.options.logger.warn(`session archive failed: ${String(error)}`);
-              return {
-                kind: 'error',
-                text: `Archiving failed: ${error instanceof Error ? error.message : String(error)}`,
-              };
-            }
-          },
-          () => this.replacePanel(action.chatId, { kind: 'sessions', archived: false }),
-        );
-        break;
-      }
-      case 'session-export': {
-        const sessionId = action.value.sessionId;
-        if (sessionId === undefined || sessionId === '') break;
-        await this.runPanelOperation(
-          action.chatId,
-          '🗂️ Session',
-          () => this.exportSessionLog(action.chatId, sessionId),
-          // Export keeps the user on the detail view (the busy card is
-          // replaced by the detail card again).
-          () => this.popToDetail(action.chatId),
-        );
-        break;
-      }
-      case 'permission-pick': {
-        // Dropdown selections arrive in `option`; the (legacy) button
-        // fallback stamps the preset in `value.preset`.
-        const preset = action.option ?? action.value.preset;
-        if (preset === undefined || preset === '') break;
-        if (this.refuseWhileWorking(action.chatId)) {
-          await this.replyCommandResult(action.chatId, {
-            kind: 'error',
-            text: 'a turn is running — stop it first.',
-          });
-          break;
-        }
-        const service = this.options.permissionPresets;
-        const agent = this.liveAgent(action.chatId);
-        if (service === undefined || agent === undefined) {
-          await this.options.transport.sendText(
-            action.chatId,
-            'Permission pick unavailable — the bot may have restarted. Send /permission again.',
-          );
-          break;
-        }
-        try {
-          service.set(agent.session, preset);
-        } catch (error: unknown) {
-          this.options.logger.warn(`permission pick failed: ${String(error)}`);
-          await this.replyCommandResult(action.chatId, {
-            kind: 'error',
-            text: `could not switch to preset ${preset}: ${String(error)}`,
-          });
-          break;
-        }
-        const option = service.optionOf(preset);
-        await this.runPanelOperation(
-          action.chatId,
-          '🔐 Permission',
-          async () => {
-            return {
-              kind: 'success',
-              text: `Permission preset switched to ${option.name ?? preset}.`,
-            };
-          },
-          () => this.popToMenu(action.chatId),
-        );
-        break;
-      }
-      case 'model-pick': {
-        // Dropdown selections arrive in `option` (`provider/model`); the
-        // button fallback stamps it in `value.selection`.
-        const selection = action.option ?? action.value.selection;
-        if (selection === undefined || selection === '') break;
-        if (this.refuseWhileWorking(action.chatId)) {
-          await this.replyCommandResult(action.chatId, {
-            kind: 'error',
-            text: 'a turn is running — stop it first.',
-          });
-          break;
-        }
-        const service = this.options.agentDefaultModel;
-        if (service === undefined) {
-          await this.options.transport.sendText(
-            action.chatId,
-            'Model pick unavailable — the agentDefaultModel service is not mounted.',
-          );
-          break;
-        }
-        const parsed = parseModelArg(selection);
-        if (!parsed.ok) {
-          await this.options.transport.sendText(action.chatId, `⚠️ ${parsed.error}`);
-          break;
-        }
-        await service.saveSelection(parsed.selection);
-        await this.runPanelOperation(
-          action.chatId,
-          '🤖 Model',
-          async () => {
-            return {
-              kind: 'success',
-              text: `Default model set to ${parsed.selection.provider} · ${parsed.selection.model} (applies to new sessions).`,
-            };
-          },
-          () => this.popToMenu(action.chatId),
-        );
-        break;
-      }
+      case 'repo-pick':
+      case 'repo-page':
+      case 'panel':
+      case 'panel-page':
+      case 'panel-back':
+      case 'panel-input-submit':
+      case 'panel-confirm':
+      case 'command':
+      case 'resume-session':
+      case 'session-select':
+      case 'sessions-archived-toggle':
+      case 'session-find':
+      case 'session-rename':
+      case 'session-archive':
+      case 'session-export':
+      case 'permission-pick':
+      case 'model-pick':
       case 'model-page': {
-        const page = Number(action.value.page);
-        if (!Number.isInteger(page) || page < 0) break;
-        await this.replacePanel(action.chatId, { kind: 'picker', picker: 'model', page });
+        // Panel actions are Strategy objects dispatched through the
+        // registry; the base-class template owns the lifecycle (gate /
+        // transition / busy-first operation).
+        await this.panelActions.handle(this.panelContext(), action);
         break;
       }
       case 'approval': {
