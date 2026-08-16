@@ -504,6 +504,7 @@ export class Bridge {
         llm: this.options.llm,
         listSessions: this.options.listSessions,
       },
+      openPanel: (chatId) => this.openPanel(chatId),
       pushPanel: (chatId, view) => this.pushPanel(chatId, view),
       replacePanel: (chatId, view) => this.replacePanel(chatId, view),
       popPanel: (chatId) => this.popPanel(chatId),

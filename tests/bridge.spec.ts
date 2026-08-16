@@ -718,6 +718,34 @@ describe('Bridge', () => {
     const panel = h.transport.sentCards.at(-1);
     expect(panel?.header?.title.content).toBe('⚙️ dsh-feishu panel');
   });
+
+  it('a second panel tap posts a FRESH panel card (off-screen cards must not swallow it)', async () => {
+    // Regression (user report): the streaming card's ⚙️ Panel button is
+    // `kind: 'panel'`. It must OPEN the panel — a fresh card. Updating the
+    // existing panel card in place is invisible when that card is scrolled
+    // up the chat ("the button does nothing").
+    const h = makeHarness();
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+    // First tap opens the panel (card #2).
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel' },
+    });
+    expect(h.transport.sentCards).toHaveLength(2);
+    // Second tap (e.g. from a later streaming card) posts ANOTHER fresh card.
+    await h.bridge.handleCardAction({
+      messageId: 'mem-2',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel' },
+    });
+    expect(h.transport.sentCards).toHaveLength(3);
+    const panel = h.transport.sentCards.at(-1);
+    expect(panel?.header?.title.content).toBe('⚙️ dsh-feishu panel');
+  });
   describe('card action interaction matrix (stop/copy/retry/panel)', () => {
     it('stop on a finished (idle) turn explains instead of hanging', async () => {
       const h = makeHarness();
@@ -783,7 +811,7 @@ describe('Bridge', () => {
           ? runningAction.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
           : [];
       expect(runningLabels).toEqual(['⏹ Stop current turn', '🔁 Retry last', '📋 Copy last']);
-      // Turn ends → agent idle → panel has no Stop button.
+      // Turn ends → agent idle → a fresh panel tap has no Stop button.
       await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
       h.agentStore.setStatus('feishu-session-1', 'idle');
       await h.bridge.handleCardAction({
@@ -792,7 +820,9 @@ describe('Bridge', () => {
         operatorOpenId: 'ou_user',
         value: { kind: 'panel' },
       });
-      const idlePanel = h.transport.updatedCards.at(-1);
+      // The panel button always posts a FRESH panel card (user report: a tap
+      // must never silently update an off-screen card).
+      const idlePanel = h.transport.sentCards.at(-1);
       const idleAction = idlePanel?.elements.find((el) => el.tag === 'action');
       const idleLabels =
         idleAction && 'actions' in idleAction

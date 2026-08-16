@@ -12,7 +12,10 @@ import type { CardAction } from '../../feishu/types.js';
 import { PanelAction } from './ActionRegistry.js';
 import type { PanelActionContext } from './PanelAction.js';
 
-/** `panel` — return to the menu root (the palette's own exit). */
+/** `panel` — the streaming card's ⚙️ Panel button: OPEN the control panel as
+ *  a FRESH card. (A stale panel card may be scrolled far up the chat;
+ *  popToMenu would silently update that off-screen card and the tap would
+ *  look dead — user report.) */
 export class PanelHomeAction extends PanelAction {
   readonly kind = 'panel';
   readonly allowedWhileWorking = true;
@@ -20,7 +23,7 @@ export class PanelHomeAction extends PanelAction {
     return true;
   }
   protected override async transition(ctx: PanelActionContext, action: CardAction): Promise<void> {
-    await ctx.popToMenu(action.chatId);
+    await ctx.openPanel(action.chatId);
   }
 }
 

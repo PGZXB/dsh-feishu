@@ -63,6 +63,7 @@ export interface PanelServices {
 export interface PanelActionContext {
   readonly services: PanelServices;
   /** Panel navigation (stack semantics; every call re-renders in place). */
+  openPanel(chatId: string): Promise<void>;
   pushPanel(chatId: string, view: PanelView): Promise<void>;
   replacePanel(chatId: string, view: PanelView): Promise<void>;
   popPanel(chatId: string): Promise<void>;
