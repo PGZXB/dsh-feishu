@@ -9,6 +9,10 @@
 
 给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）做的飞书 UI——一个 dsh 原生插件。`dsh plugin add` 装上、扫一次二维码，就能在飞书里跑你的 agent。
 
+https://github.com/user-attachments/assets/e9163793-52f2-4e2c-a08a-22b27372be61
+
+*2 分半的演示（控制面板、流式卡片、审批与提问）。*
+
 ## 快速上手
 
 ### 从 npm 安装
@@ -77,8 +81,6 @@ rm -rf ~/.dsh/profiles/feishu ~/.dsh/feishu
 ## 怎么用
 
 一个飞书聊天对应一个 dsh 会话，机器人就是 agent 的化身。一次典型的使用是这样：
-
-https://github.com/user-attachments/assets/e9163793-52f2-4e2c-a08a-22b27372be61
 
 1. **开个聊天。** 直接私聊机器人；也可以发 `/group <名字>` 建个群。群里一般要 @ 机器人（默认策略）；如果群里只有你和机器人，不 @ 直接说也行；@ 策略本身可配置。
 

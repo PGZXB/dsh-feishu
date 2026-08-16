@@ -9,6 +9,10 @@ English | [中文](README.zh.md)
 
 The Feishu UI for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) — a dsh-native plugin. Install it with `dsh plugin add`, scan one QR code, and run your agents from Feishu.
 
+https://github.com/user-attachments/assets/e9163793-52f2-4e2c-a08a-22b27372be61
+
+*2.5-min demo: control panel, streaming card, approval and question.*
+
 ## Quickstart
 
 ### Install from npm
@@ -81,8 +85,6 @@ rm -rf ~/.dsh/profiles/feishu ~/.dsh/feishu
 
 A Feishu chat is a dsh session — the bot is the agent's avatar. A typical
 session goes like this:
-
-https://github.com/user-attachments/assets/e9163793-52f2-4e2c-a08a-22b27372be61
 
 1. **Start a chat.** Direct-message the bot, or run `/group <name>` to
    create a group the bot joins. In a group, @-mention the bot (the
