@@ -4,6 +4,7 @@
   "longConnectionMode": 4,
   "scopes": [
     "im:message",
+    "im:message.group_msg",
     "im:message:send_as_bot",
     "im:chat",
     "im:resource",

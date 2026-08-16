@@ -167,6 +167,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Group messages without an @ are silently dropped on fresh apps** (user
+  report: a 1-user-1-bot group stopped answering un-@ messages after the
+  app was recreated). The quick-setup manifest did not grant
+  `im:message.group_msg` ("receive all group messages"), so the Open
+  Platform only pushed @-mentioned group messages and the in-code
+  `groupMentionMode` solo-group relaxation never saw the un-@ message.
+  `feishu-manifest.json` now includes `im:message.group_msg`; existing apps
+  must add the scope and publish a new version (docs/feishu-setup.md
+  updated).
 - **Panel state machine made complete and failure-proof** (user testing):
   - ALL pickers now render INSIDE the panel card — `/repo`, `/model`,
     `/permission` (and their panel buttons and slash commands) open their

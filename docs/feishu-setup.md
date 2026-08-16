@@ -112,6 +112,7 @@ Current scopes (权限):
 | Scope | Purpose |
 |---|---|
 | `im:message` | Receive messages (`im.message.receive_v1`) |
+| `im:message.group_msg` | Receive **all** group messages, @-mentioned or not (required for the 1-user-1-bot solo-group relaxation under `groupMentionMode: always`) |
 | `im:message:send_as_bot` | Send messages and cards as the bot |
 | `im:chat` | Read chat metadata |
 | `im:resource` | Upload file messages (`/export`) |
