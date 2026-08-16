@@ -86,20 +86,25 @@ session goes like this:
    create a group the bot joins. In a group, @-mention the bot (the
    default policy; a group with just you and the bot also answers plain
    messages, and the policy is configurable).
-2. **Pick a working directory.** The bot refuses work until the chat has
-   one: send `/cd /path/to/project`, or `/repo` to pick from a list.
-3. **Ask.** Send a message — the agent runs and its output streams into a
+2. **Open the control panel.** Send `/panel` to pop up the panel card.
+3. **Pick a working directory.** The bot refuses work until the chat has
+   one: tap **📚 Pick project** to choose from a list (the `/repo`
+   equivalent), or **📁 Change dir** to type a path (the `/cd <path>`
+   equivalent).
+4. **Ask.** Send a message — the agent runs and its output streams into a
    live card (tool calls, reasoning, markdown, tables). The card ends green
    with the full answer inside; Stop, copy, retry, and the ⚙️ panel button
    sit on it.
-4. **Approve or answer when asked.** A permission escalation posts an
+5. **Approve or answer when asked.** A permission escalation posts an
    approval card — tap **Allow once** (or **Reject**). A question posts a
    card you answer with a tap (or a reply).
-5. **Manage sessions.** `/sessions` lists saved sessions (resume from the
-   card), `/resume <id>` moves one into this chat, and `/clear` starts fresh
-   without deleting the old one.
-6. **Everything is also a button.** `/panel` opens a card with every command
-   as a button; `/help` lists them all.
+6. **Manage sessions.** Tap **🗂️ Sessions** to list saved sessions and
+   resume any of them from the card (the `/sessions` equivalent; `/resume
+   <id>` moves one into this chat), and tap **➕ New chat** (the `/clear`
+   equivalent) to start fresh without deleting the old one.
+
+Every button on the panel card maps to a slash command — pick whichever
+feels faster; `/help` lists them all.
 
 ## Commands
 
@@ -124,6 +129,7 @@ session goes like this:
 ## Features
 
 - **Live streaming cards** — tool calls, reasoning, markdown, and tables stream in as the agent works.
+- **One-tap control panel** — `/panel` renders the full command palette as buttons; no command syntax to remember, and each button is the exact equivalent of typing the command.
 - **In-card approvals & questions** — approve a permission escalation or answer the agent's questions in the chat.
 - **Sessions survive restarts** — a chat's session (and its working directory) is persisted across daemon restarts.
 - **Groups & mentions** — @-mention the bot; error notices, approvals, and questions @ the requester.

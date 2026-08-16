@@ -89,6 +89,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **README usage guide is now panel-card-driven.** The walkthrough opens
+  with `/panel` (the control-panel card, whose buttons each map to a slash
+  command), then drives the setup steps through the card with the
+  equivalent slash commands noted per step; the Features list gains a
+  "One-tap control panel" entry (`README.md`, `README.zh.md`).
 - **Architecture refactor: the card surfaces become state machines behind
   seams (no behavior change).** `Bridge`'s monolithic switch/if sprawl (the
   source of every "panel reverted mid-action" / "card went dead" bug class)
