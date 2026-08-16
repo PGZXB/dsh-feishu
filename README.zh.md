@@ -78,12 +78,22 @@ rm -rf ~/.dsh/profiles/feishu ~/.dsh/feishu
 
 一个飞书聊天对应一个 dsh 会话，机器人就是 agent 的化身。一次典型的使用是这样：
 
+<!-- TODO(demo): `docs/assets/demo.mp4` — 约 15 秒的完整流程录屏（MP4）：
+     发消息 → 卡片流式输出 → 变绿定稿 → Allow once → 提问 → 回答。用
+     `<video>` 标签嵌入，让读者先整体看到效果，再看下面的分步截图。 -->
+
 1. **开个聊天。** 直接私聊机器人；也可以发 `/group <名字>` 建个群。群里一般要 @ 机器人（默认策略）；如果群里只有你和机器人，不 @ 直接说也行；@ 策略本身可配置。
+   <!-- TODO(shot): `docs/assets/chat.png` — 与机器人的聊天：私聊，或带 @ 的群聊。 -->
 2. **打开控制面板。** 发 `/panel` 会唤出一张面板卡片。
+   <!-- TODO(shot): `docs/assets/panel.png` — 控制面板卡片（状态/上下文行、Stop / Retry / Copy、分组命令按钮）。 -->
 3. **先定工作目录。** 没定目录之前机器人不会开工：点 **📚 Pick project** 从列表里挑（等价于 `/repo`），或点 **📁 Change dir** 直接输入路径（等价于 `/cd <路径>`）。
+   <!-- TODO(shot): `docs/assets/repo.png` — 项目选择（Pick project）卡片。 -->
 4. **直接问。** 发消息，agent 跑起来，工具调用、思考过程、markdown、表格一行行流进一张卡片。跑完卡片变绿，答案完整留在里面；停止、复制、重试和 ⚙️ 面板按钮就贴在卡片上。
+   <!-- TODO(shots): `docs/assets/streaming-mid.png` + `docs/assets/streaming-done.png` 并排——同一张卡片流式中途与定稿后的样子。 -->
 5. **要审批就批，要回答就答。** agent 需要提权时会弹一张审批卡，点 **Allow once** 放行（或 **Reject** 拒绝）；它有问题会弹提问卡，点选项或直接回一句。
+   <!-- TODO(shots): `docs/assets/approval.png` + `docs/assets/question.png` — 审批卡与提问卡在聊天里的样子。 -->
 6. **管会话。** 点 **🗂️ Sessions** 列出所有已保存的会话、直接在卡片上恢复（等价于 `/sessions`；`/resume <id>` 也能把某个会话搬进当前聊天），点 **➕ New chat** 开新对话、旧的照留（等价于 `/clear`）。
+   <!-- TODO(shot): `docs/assets/sessions.png` — 会话列表（Sessions）卡片。 -->
 
 面板卡片上的每个按钮都对应一个 slash 命令——哪种顺手用哪种；`/help` 会把所有命令列一遍。
 
