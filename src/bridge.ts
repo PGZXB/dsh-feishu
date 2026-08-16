@@ -21,29 +21,24 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
 import { InteractionRegistry } from './cards/interactions.js';
 import {
-  assistantText,
   buildApprovalCard,
   buildApprovalDecidedCard,
-  buildCard,
   buildPanelCard,
   buildQuestionAnsweredCard,
   buildQuestionCard,
   buildResultCard,
-  buildRowDetailsCard,
   buildStatusCard,
-  type CardSnapshot,
-  type CardStatus,
   type ModelOptionView,
   type PanelCommand,
   type QuestionView,
   type StatusView,
-  type ThinkRow,
-  type ToolRow,
-  type TurnRow,
 } from './cards/render.js';
+import {
+  StreamingCardController,
+  type StreamingCardHost,
+} from './cards/StreamingCardController.js';
 import type { SessionDetailView, SessionRowView } from './cards/session-list.js';
 import type { StreamingCardManager } from './cards/streaming.js';
-import { toolRowSummary } from './cards/tool-summary.js';
 import { CommandRegistry, type CommandResult, parseSlash } from './commands.js';
 import type {
   CardAction,
@@ -62,28 +57,15 @@ import { type ProjectInfo, scanMultipleProjects } from './projects.js';
 import { buildSessionExport, type SessionExportEvent } from './session-export.js';
 import type { SessionMap } from './session-map.js';
 
-/**
- * Compaction lifecycle events (`compaction/start|summary|end`). The harness
- * compaction seam merges these into the session event union at runtime, but
- * the installed `dsh-session` types do not carry the plugin keys, so they
- * are matched structurally.
- */
-type CompactionLifecycleEvent = {
-  readonly type: 'compaction/start' | 'compaction/summary' | 'compaction/end';
-  readonly data: { readonly summary?: unknown; readonly error?: unknown };
-};
-
-/** Narrow a session event to the compaction lifecycle (plugin-merged keys). */
-function isCompactionLifecycleEvent(event: SessionEvent): boolean {
-  const type = (event as { type?: unknown }).type;
-  return type === 'compaction/start' || type === 'compaction/summary' || type === 'compaction/end';
-}
-
 export type { PanelInputCommand, PanelView } from './panel/types.js';
 
 import type { PanelView } from './panel/types.js';
 
 export { isPanelInputCommand, PANEL_CONFIRM_SPEC, PANEL_INPUT_SPEC } from './panel/types.js';
+
+import { turnTitle } from './cards/StreamingCardController.js';
+
+export { turnTitle } from './cards/StreamingCardController.js';
 
 /** Minimal logger surface the bridge needs. */
 export interface BridgeLogger {
@@ -351,75 +333,9 @@ export interface BridgeOptions {
   readonly repoRoots?: readonly string[];
 }
 
-/**
- * One chat's streaming-card state — the single authoritative source for the
- * card. The bridge renders the card from THIS state and nothing else; card
- * actions mutate it (or not) and then always call {@link Bridge.syncCard},
- * which re-renders the card from it. This is the state machine the UX is
- * built on: no ad-hoc per-action reasserts.
- *
- * Status transitions:
- *   (none)  --message/retry-->  working  --turn/end-->  done | error
- *   working --stop------------>  (unchanged until turn/end aborts it)
- *   done|error --any action--->  done|error (state unchanged; card re-synced)
- */
-interface ChatCardState {
-  readonly title: string;
-  content: string;
-  /** Chronological think/tool rows (all of them — DSH web layout). */
-  rows: TurnRow[];
-  /** The open think row receiving reasoning deltas, or undefined. */
-  openThinkId: string | undefined;
-  status: CardStatus;
-  /** Collapsed row sequence (per-chat; flips via toggle-rows). */
-  collapsed: boolean;
-  /** The user pressed Stop; the card shows an in-progress Stopping state
-   *  until turn/end(aborted) settles it to `stopped`. */
-  stopRequested: boolean;
-}
-
-const MAX_TITLE_CHARS = 40;
-/** Monotonic counter for think-row ids (stable across the turn). */
-let thinkRowSeq = 0;
-
 /** Whether a group is a 1-person-1-bot solo group (mention gate relaxation). */
 function isSoloGroup(stats: { userCount: number; botCount: number }): boolean {
   return stats.userCount <= 1 && stats.botCount <= 1;
-}
-
-/**
- * Derive the card title for a turn from the user's message.
- * @param text - the inbound user message.
- * @returns a single-line title capped at {@link MAX_TITLE_CHARS}.
- */
-export function turnTitle(text: string): string {
-  const oneLine = text.replace(/\s+/g, ' ').trim();
-  return oneLine.length <= MAX_TITLE_CHARS ? oneLine : `${oneLine.slice(0, MAX_TITLE_CHARS)}…`;
-}
-
-/** Append a row, or update it in place when it already exists (by id). */
-function upsertRow(state: ChatCardState, row: TurnRow): void {
-  const index = state.rows.findIndex((existing) => existing.id === row.id);
-  if (index >= 0) state.rows[index] = row;
-  else state.rows.push(row);
-}
-
-/** Open a think row if reasoning is streaming and none is open. */
-function ensureThinkRow(state: ChatCardState, id: string): void {
-  if (state.openThinkId !== undefined) return;
-  state.openThinkId = id;
-  upsertRow(state, { kind: 'think', id, text: '', settled: false });
-}
-
-/** Settle the open think row (reasoning for this block ended). */
-function settleOpenThink(state: ChatCardState): void {
-  if (state.openThinkId === undefined) return;
-  const id = state.openThinkId;
-  state.openThinkId = undefined;
-  const index = state.rows.findIndex((row) => row.id === id);
-  if (index >= 0 && state.rows[index]?.kind === 'think') {
-    state.rows[index] = { ...state.rows[index], settled: true } as ThinkRow;
-  }
 }
 
 /**
@@ -532,10 +448,8 @@ export class Bridge {
   /** Epoch ms of the last accepted inbound message (any chat), for
    *  `/feishu-status`. */
   private lastInboundAtValue: number | undefined;
-  /** The authoritative streaming-card state per chat (the state machine). */
-  private readonly cardStates = new Map<string, ChatCardState>();
-  private readonly lastPrompts = new Map<string, string>();
-  private readonly lastOutputs = new Map<string, string>();
+  /** The streaming-card state machine (per-chat state + single render path). */
+  private readonly streaming: StreamingCardController;
   /** The panel state machine (view stack + single render path). */
   private readonly panel: PanelController;
   /** Panel card actions (Strategy registry; Template Method lifecycle). */
@@ -562,11 +476,6 @@ export class Bridge {
   private readonly awaitingQuestionAnswers = new Map<string, { readonly requestId: string }>();
   /** Monotonic approval request counter (card callback correlation ids). */
   private approvalSeq = 0;
-  /** Pending two-stage ack reaction per chat (message id + reaction id). */
-  private readonly pendingReactions = new Map<
-    string,
-    { readonly messageId: string; readonly reactionId: string | undefined }
-  >();
   /** Last user whose accepted message started a turn, per chat (proactive
    *  @-mention target for error/approval/question posts in groups). */
   private readonly requesterOpenIds = new Map<string, string>();
@@ -598,17 +507,6 @@ export class Bridge {
     return requester === undefined ? '' : `<at user_id="${requester}"></at> `;
   }
 
-  /** Resolved reaction emojis (config overrides, botmux defaults). */
-  private reactionEmojis(): { received: string; done: string; error: string; stopped: string } {
-    const reactions = this.options.reactions;
-    return {
-      received: reactions?.received ?? 'GoGoGo',
-      done: reactions?.done ?? 'DONE',
-      error: reactions?.error ?? 'WARN',
-      stopped: reactions?.stopped ?? 'WARN',
-    };
-  }
-
   /** The live agent for a chat, or `undefined` (no session or not attached). */
   private liveAgent(chatId: string): Agent | undefined {
     const sessionId = this.options.sessionMap.get(chatId);
@@ -618,6 +516,7 @@ export class Bridge {
   private readonly commands = new CommandRegistry();
 
   constructor(private readonly options: BridgeOptions) {
+    this.streaming = new StreamingCardController(this.streamingHost());
     this.panel = new PanelController(this.panelHost());
     options.transport.onMessage((message) => {
       void this.handleMessage(message).catch((error: unknown) => {
@@ -637,6 +536,23 @@ export class Bridge {
     this.registerCommands();
   }
 
+  /** The StreamingCardHost the streaming controller delegates to: Bridge
+   *  owns agent resolution and proactive mentions; the controller owns the
+   *  card state machine. */
+  private streamingHost(): StreamingCardHost {
+    return {
+      transport: this.options.transport,
+      cards: this.options.cards,
+      logger: this.options.logger,
+      sessionMap: this.options.sessionMap,
+      agentStore: this.options.agentStore,
+      defaultCwd: this.options.defaultCwd,
+      reactions: this.options.reactions,
+      resolveAgent: (chatId, sessionId, cwd) => this.resolveAgent(chatId, sessionId, cwd),
+      textMentionFor: (chatId) => this.textMentionFor(chatId),
+    };
+  }
+
   /** All surface commands (the control-panel button source). */
   commandsList(): readonly import('./commands.js').SurfaceCommand[] {
     return this.commands.list();
@@ -653,7 +569,7 @@ export class Bridge {
         this.panelViews.render(this.panelViewContext(), chatId, view),
       isAsyncView: (view) => this.panelViews.isAsync(view),
       buildMenuCard: (chatId, page) => this.buildPanelCardFor(chatId, page),
-      syncCard: (chatId) => this.syncCard(chatId),
+      syncCard: (chatId) => this.streaming.syncCard(chatId),
       resultCard: (chatId, result) => this.replyResultCard(chatId, result),
       text: (chatId, text) => this.options.transport.sendText(chatId, text),
     };
@@ -833,7 +749,7 @@ export class Bridge {
    * @returns whether the chat is mid-turn (caller should refuse).
    */
   private refuseWhileWorking(chatId: string): boolean {
-    return this.cardStates.get(chatId)?.status === 'working';
+    return this.streaming.isWorking(chatId);
   }
 
   /**
@@ -858,13 +774,7 @@ export class Bridge {
   /** Reset a chat's card state: no live card, no copy/retry targets. Used by
    *  /clear and /resume so the resumed/new conversation starts clean. */
   private resetChatState(chatId: string): void {
-    this.cardStates.delete(chatId);
-    this.lastOutputs.delete(chatId);
-    this.lastPrompts.delete(chatId);
-    // The pending ack reaction belongs to a turn that is being discarded;
-    // drop the tracking entry (the stale emoji may remain on the old
-    // message — cosmetic only).
-    this.pendingReactions.delete(chatId);
+    this.streaming.resetChat(chatId);
   }
 
   /**
@@ -1155,9 +1065,8 @@ export class Bridge {
   private buildPanelCardFor(chatId: string, page: number): CardJson {
     const agent = this.liveAgent(chatId);
     const running = agent !== undefined && agent.status === 'running';
-    const state = this.cardStates.get(chatId);
-    const stopped = state !== undefined && state.status === 'stopped';
-    const output = this.lastOutputs.get(chatId);
+    const stopped = this.streaming.state(chatId)?.status === 'stopped';
+    const output = this.streaming.lastOutput(chatId);
     const statusLine = running
       ? '**Running** — a turn is in progress.'
       : stopped
@@ -1240,7 +1149,7 @@ export class Bridge {
               this.options.logger.warn(`approval card settle update failed: ${String(error)}`);
             });
         }, 0);
-        this.syncCard(chatId);
+        this.streaming.syncCard(chatId);
         resolve(settled);
       });
       if (request.signal !== undefined) {
@@ -1472,43 +1381,19 @@ export class Bridge {
       );
       return;
     }
-    this.lastPrompts.set(message.chatId, message.text);
+    this.streaming.rememberPrompt(message.chatId, message.text);
     // Remember the accepted sender and chat type: proactive @-mentions in
     // groups (error notices, approval cards, question cards) target the user
     // who started this turn.
     this.requesterOpenIds.set(message.chatId, message.senderOpenId);
     this.chatTypes.set(message.chatId, message.chatType === 'group' ? 'group' : 'p2p');
-    // Two-stage ack, stage 1: 👀 on the accepted message. Best-effort — a
-    // failed reaction must never block the turn.
-    const reactionId = await this.options.transport
-      .addReaction(message.messageId, this.reactionEmojis().received)
-      .catch((error: unknown) => {
-        this.options.logger.warn(`received reaction failed: ${String(error)}`);
-        return undefined;
-      });
-    this.pendingReactions.set(message.chatId, { messageId: message.messageId, reactionId });
+    // Two-stage ack stage 1 + the working card state + the card open (the
+    // streaming controller's beginTurn; a failed reaction or card post must
+    // never block the turn).
+    await this.streaming.beginTurn(message.chatId, message.messageId, turnTitle(message.text));
     const sessionId = this.options.sessionMap.ensure(message.chatId);
     const cwd = this.options.sessionMap.cwdFor(message.chatId) ?? this.options.defaultCwd;
     const agent = await this.resolveAgent(message.chatId, sessionId, cwd);
-    // Enter the working state: a fresh card, collapsed by default.
-    this.cardStates.set(message.chatId, {
-      title: turnTitle(message.text),
-      content: '',
-      rows: [],
-      openThinkId: undefined,
-      status: 'working',
-      collapsed: true,
-      stopRequested: false,
-    });
-    // A failed card post must not block the turn: the final answer message
-    // is the text fallback (patches simply no-op without an active card).
-    try {
-      await this.options.cards.open(message.chatId, turnTitle(message.text));
-    } catch (error: unknown) {
-      this.options.logger.warn(
-        `streaming card unavailable, continuing text-only: ${String(error)}`,
-      );
-    }
     this.options.logger.info(`delivering message ${message.messageId} to agent`);
     agent.followup(
       createUserMessage({
@@ -1611,268 +1496,7 @@ export class Bridge {
    * @param event - the session event.
    */
   async handleEvent(sessionId: string, event: SessionEvent): Promise<void> {
-    const chatId = this.options.sessionMap.chatFor(sessionId);
-    if (chatId === undefined) return;
-    // Compaction lifecycle (a /compact transaction, not a turn) is handled
-    // BEFORE the working-state gate because it owns its card lifecycle: the
-    // card opens at compaction/start (immediate feedback for the button tap)
-    // and finalizes at compaction/end. Without this, the checkpoint
-    // `user/message` (plugin source 'compact') opened a card that nothing
-    // ever closed — the chat stayed "working" forever and every later
-    // command was refused with "a turn is running — stop it first."
-    // (user report).
-    if (isCompactionLifecycleEvent(event)) {
-      await this.handleCompactionEvent(chatId, event as unknown as CompactionLifecycleEvent);
-      return;
-    }
-    let state = this.cardStates.get(chatId);
-    if (state === undefined || state.status !== 'working') {
-      // Agent-initiated turn (e.g. a fired schedule reminder): the agent
-      // injected a user message whose source is a plugin. User-initiated
-      // turns always carry a working card state already (set by deliverTurn
-      // before any event), so a card-less chat receiving a plugin-sourced
-      // user message is the surface's cue to open a fresh card — otherwise
-      // the reminder's response would render nowhere.
-      if (
-        event.type === 'user/message' &&
-        event.data.source?.kind === 'plugin' &&
-        typeof event.data.source.plugin === 'string'
-      ) {
-        const plugin = event.data.source.plugin;
-        const title =
-          plugin === 'schedule'
-            ? '⏰ Reminder'
-            : plugin === 'compact'
-              ? '🧹 Compacting…'
-              : `⏰ ${plugin} notification`;
-        this.cardStates.set(chatId, {
-          title,
-          content: '',
-          rows: [],
-          openThinkId: undefined,
-          status: 'working',
-          collapsed: true,
-          stopRequested: false,
-        });
-        try {
-          await this.options.cards.open(chatId, title);
-        } catch (error: unknown) {
-          this.options.logger.warn(`agent-initiated card unavailable: ${String(error)}`);
-        }
-        state = this.cardStates.get(chatId);
-      }
-      if (state === undefined || state.status !== 'working') return;
-    }
-    switch (event.type) {
-      case 'assistant/chunk': {
-        const chunk = event.data.chunk;
-        if (chunk.type === 'text-delta') {
-          state.content += chunk.text;
-          this.syncCard(chatId);
-        } else if (chunk.type === 'reasoning-delta') {
-          // One think row per reasoning block; deltas append to the open row.
-          if (state.openThinkId === undefined) {
-            thinkRowSeq += 1;
-            ensureThinkRow(state, `think-${thinkRowSeq}`);
-          }
-          const id = state.openThinkId;
-          const index = state.rows.findIndex((row) => row.id === id);
-          if (index >= 0 && state.rows[index]?.kind === 'think') {
-            const row = state.rows[index] as ThinkRow;
-            state.rows[index] = { ...row, text: row.text + chunk.text };
-          }
-          this.syncCard(chatId);
-        }
-        break;
-      }
-      case 'tool/call': {
-        settleOpenThink(state);
-        const cwd = this.options.sessionMap.cwdFor(chatId) ?? this.options.defaultCwd;
-        upsertRow(state, {
-          kind: 'tool',
-          id: event.data.callId,
-          name: event.data.name,
-          status: 'running',
-          // The summary derives from the FULL arguments before truncation —
-          // a long command must never render as its raw JSON envelope.
-          summary: toolRowSummary(event.data.name, event.data.arguments, cwd),
-          args: event.data.arguments,
-          result: '',
-        } satisfies ToolRow);
-        this.syncCard(chatId);
-        break;
-      }
-      case 'tool/result': {
-        const resultText = assistantText(event.data.message.content[0]?.content ?? []);
-        const status = event.data.error !== undefined ? 'error' : 'done';
-        const index = state.rows.findIndex(
-          (row): row is ToolRow =>
-            row.kind === 'tool' && row.id === event.data.message.content[0]?.toolCallId,
-        );
-        const target =
-          index >= 0
-            ? index
-            : (() => {
-                // Fall back to the last running tool row when the result does
-                // not carry a correlating call id.
-                for (let i = state.rows.length - 1; i >= 0; i -= 1) {
-                  const row = state.rows[i];
-                  if (row?.kind === 'tool' && row.status === 'running') return i;
-                }
-                return -1;
-              })();
-        if (target >= 0 && state.rows[target]?.kind === 'tool') {
-          const row = state.rows[target] as ToolRow;
-          state.rows[target] = {
-            ...row,
-            status,
-            result: resultText,
-          };
-        }
-        this.syncCard(chatId);
-        break;
-      }
-      case 'assistant/message': {
-        settleOpenThink(state);
-        state.content = assistantText(event.data.message.content);
-        this.syncCard(chatId);
-        break;
-      }
-      case 'turn/end': {
-        const status: CardStatus =
-          event.data.reason.kind === 'error'
-            ? 'error'
-            : event.data.reason.kind === 'aborted'
-              ? 'stopped'
-              : 'done';
-        if (event.data.reason.kind === 'error') {
-          const error = event.data.reason.error;
-          this.options.logger.error(`turn failed: ${error.code}: ${error.message}`);
-          // A corrupt persisted log breaks every turn that resumes it; rebind
-          // the chat to a fresh session so the next message starts clean.
-          if (error.message.includes('corrupt session log')) {
-            this.options.logger.warn(
-              `session log for chat ${chatId} is corrupt; rebinding a fresh session`,
-            );
-            this.options.sessionMap.remint(chatId);
-          }
-        } else {
-          this.options.logger.info(`turn completed for chat ${chatId}`);
-        }
-        settleOpenThink(state);
-        // working → done|stopped|error: the state stays in the map (the
-        // card keeps its rows/content for the ⋯ buttons and re-sync); only
-        // status moves.
-        state.status = status;
-        state.stopRequested = false;
-        // Stage the terminal snapshot from the authoritative state, then
-        // finalize flushes it. (finalize alone only renders when a pending
-        // snapshot exists — after the last working patch was flushed there
-        // is none, and the card would keep the stale working render.)
-        this.options.cards.patch(chatId, this.snapshot(chatId, state));
-        await this.options.cards.finalize(chatId, status);
-        // Two-stage ack, stage 2: swap 👀 for the terminal emoji.
-        await this.ackTurnEnd(chatId, status);
-        const finalText = state.content.trim();
-        if (finalText !== '') this.lastOutputs.set(chatId, finalText);
-        // The card holds the full answer and finalizes in place; the initial
-        // card send already notified, so a completed or stopped turn sends no
-        // second bubble. Failures keep a notice — a broken turn must not go
-        // unnoticed. A stopped turn's '⏹ Stopping…' was already sent by the
-        // stop action; the card's '⏹ Stopped' is the terminal state.
-        if (status === 'error') {
-          // Proactive @ of the requester in groups: a broken turn must not
-          // go unnoticed, and the group must know WHOSE turn failed.
-          await this.options.transport.sendText(
-            chatId,
-            `${this.textMentionFor(chatId)}⚠️ Turn failed — see the card for details`,
-          );
-        }
-        break;
-      }
-    }
-  }
-
-  /**
-   * Render one compaction-lifecycle event into the chat's card. `/compact`
-   * runs a durable transaction (compaction/start → compaction/summary →
-   * compaction/end) that is NOT a turn — no turn/end follows it, so the
-   * surface must open its own card at start and finalize it at end;
-   * otherwise the chat is left permanently "working" (user report).
-   * @param chatId - the owning chat.
-   * @param event - the compaction lifecycle event.
-   */
-  private async handleCompactionEvent(
-    chatId: string,
-    event: CompactionLifecycleEvent,
-  ): Promise<void> {
-    switch (event.type) {
-      case 'compaction/start': {
-        let state = this.cardStates.get(chatId);
-        if (state === undefined || state.status !== 'working') {
-          state = {
-            title: '🧹 Compacting…',
-            content: '',
-            rows: [],
-            openThinkId: undefined,
-            status: 'working',
-            collapsed: true,
-            stopRequested: false,
-          };
-          this.cardStates.set(chatId, state);
-          try {
-            await this.options.cards.open(chatId, '🧹 Compacting…');
-          } catch (error: unknown) {
-            this.options.logger.warn(`compaction card unavailable: ${String(error)}`);
-          }
-        }
-        break;
-      }
-      case 'compaction/summary': {
-        const state = this.cardStates.get(chatId);
-        if (state !== undefined && state.status === 'working') {
-          state.content = typeof event.data.summary === 'string' ? event.data.summary : '';
-          this.syncCard(chatId);
-        }
-        break;
-      }
-      case 'compaction/end': {
-        const state = this.cardStates.get(chatId);
-        if (state !== undefined && state.status === 'working') {
-          // The seam appends compaction/end on success AND failure (a failed
-          // close carries `error`) — either way the surface must finalize:
-          // a compaction transaction is not a turn, so no turn/end follows.
-          const failed = event.data.error !== null && typeof event.data.error === 'object';
-          const status: CardStatus = failed ? 'error' : 'done';
-          if (failed) {
-            const message =
-              (event.data.error as { message?: unknown } | null | undefined)?.message ?? undefined;
-            if (state.content.trim() === '') {
-              state.content =
-                message !== undefined && typeof message === 'string'
-                  ? `⚠️ ${message}`
-                  : '⚠️ Compaction failed.';
-            }
-          }
-          state.status = status;
-          state.stopRequested = false;
-          this.options.cards.patch(chatId, this.snapshot(chatId, state));
-          await this.options.cards.finalize(chatId, status);
-          await this.ackTurnEnd(chatId, status);
-          const finalText = state.content.trim();
-          if (finalText !== '') this.lastOutputs.set(chatId, finalText);
-          if (status === 'error') {
-            // A failed compaction must not go unnoticed (same rule as a
-            // failed turn).
-            await this.options.transport.sendText(
-              chatId,
-              `${this.textMentionFor(chatId)}⚠️ Compaction failed — see the card for details`,
-            );
-          }
-        }
-        break;
-      }
-    }
+    await this.streaming.handleEvent(sessionId, event);
   }
 
   /**
@@ -1896,123 +1520,14 @@ export class Bridge {
       `card action ${kind ?? '?'} from ${action.operatorOpenId} in ${action.chatId}`,
     );
     switch (kind) {
-      case 'stop': {
-        const agent = this.liveAgent(action.chatId);
-        if (agent === undefined) {
-          // No session mapping or no attached agent (e.g. the plugin
-          // restarted and the card is stale): surface that instead of
-          // silently ignoring the tap.
-          this.options.logger.info(
-            `stop for chat ${action.chatId}: no live agent (stale card or restarted)`,
-          );
-          await this.options.transport.sendText(
-            action.chatId,
-            'No active session to stop — the bot may have restarted. Send a message to start fresh.',
-          );
-          break;
-        }
-        if (agent.status !== 'running') {
-          // The DSH web Stop cancels a running turn; an idle agent has
-          // nothing to cancel (agent.cancel is a no-op then — sending
-          // "Stopping…" with no follow-up read as a hang, user report).
-          this.options.logger.info(`stop for chat ${action.chatId}: agent idle, nothing to stop`);
-          await this.options.transport.sendText(
-            action.chatId,
-            'No active turn to stop — the last turn already finished.',
-          );
-          break;
-        }
-        // The same cancel the DSH web Stop button issues (session.cancel →
-        // agent.cancel({kind:'user'}, {keepInbox:true})): abort the active
-        // turn/driver. keepInbox preserves queued work for the next turn.
-        agent.cancel({ kind: 'user' }, { keepInbox: true });
-        this.options.logger.info(`stop requested for chat ${action.chatId}`);
-        // The card carries the acknowledgment: mark it Stopping and
-        // re-render — no separate text bubble (user report: the standalone
-        // '⏹ Stopping…' message was unnecessary).
-        const state = this.cardStates.get(action.chatId);
-        if (state !== undefined && state.status === 'working') {
-          state.stopRequested = true;
-          this.syncCard(action.chatId);
-        }
-        break;
-      }
-      case 'copy': {
-        const output = this.lastOutputs.get(action.chatId);
-        if (output !== undefined && output !== '') {
-          await this.options.transport.sendText(action.chatId, output);
-        } else {
-          // A silent no-op reads as broken (user report pattern).
-          await this.options.transport.sendText(
-            action.chatId,
-            'Nothing to copy — no completed answer yet.',
-          );
-        }
-        break;
-      }
-      case 'retry': {
-        const prompt = this.lastPrompts.get(action.chatId);
-        if (prompt === undefined || prompt === '') {
-          await this.options.transport.sendText(
-            action.chatId,
-            'Nothing to retry — send a message first.',
-          );
-          break;
-        }
-        // No working-directory gate here: an unpinned chat can never have a
-        // remembered prompt (turns are refused before lastPrompts is set), so
-        // the "Nothing to retry" branch above is the only reachable path.
-        const sessionId = this.options.sessionMap.ensure(action.chatId);
-        const cwd = this.options.sessionMap.cwdFor(action.chatId) ?? this.options.defaultCwd;
-        const agent = await this.resolveAgent(action.chatId, sessionId, cwd);
-        this.cardStates.set(action.chatId, {
-          title: turnTitle(prompt),
-          content: '',
-          rows: [],
-          openThinkId: undefined,
-          status: 'working',
-          collapsed: true,
-          stopRequested: false,
-        });
-        try {
-          await this.options.cards.open(action.chatId, turnTitle(prompt));
-        } catch (error: unknown) {
-          this.options.logger.warn(
-            `retry card unavailable, continuing text-only: ${String(error)}`,
-          );
-        }
-        agent.followup(
-          createUserMessage({
-            content: [{ type: 'text', text: prompt }],
-            source: { kind: 'user' },
-          }),
-        );
-        break;
-      }
-      case 'row-details': {
-        const state = this.cardStates.get(action.chatId);
-        const id = action.value.id;
-        const row = (state?.rows ?? []).find((r) => r.id === id);
-        if (row === undefined) {
-          this.options.logger.warn(`row details for unknown id ${id}`);
-          break;
-        }
-        await this.options.transport.sendCard(action.chatId, buildRowDetailsCard(row));
-        // The state machine's single render path re-asserts the streaming
-        // card after the callback (botmux rule: Lark can restore the
-        // pre-click card, dropping the expanded view).
-        this.syncCard(action.chatId);
-        break;
-      }
+      case 'stop':
+      case 'copy':
+      case 'retry':
+      case 'row-details':
       case 'toggle-rows': {
-        // Flip the collapsed bit on the authoritative state, then re-render
-        // through the single path. Whether the turn is live or finished is
-        // syncCard's concern — no per-case patching.
-        const state = this.cardStates.get(action.chatId);
-        if (state !== undefined) {
-          state.collapsed = !state.collapsed;
-          this.syncCard(action.chatId);
-        }
+        // Streaming-card actions are handled by the streaming state
+        // machine controller (they mutate the card state).
+        await this.streaming.handleStreamingAction(action);
         break;
       }
       case 'repo-pick':
@@ -2210,7 +1725,7 @@ export class Bridge {
       handler: (invocation) => {
         const sessionId = options.sessionMap.get(invocation.chatId);
         const agent = sessionId === undefined ? undefined : options.agentStore.get(sessionId);
-        const output = this.lastOutputs.get(invocation.chatId);
+        const output = this.streaming.lastOutput(invocation.chatId);
         const lines = [
           `chat: ${invocation.chatId}`,
           `session: ${sessionId ?? '(none yet)'}`,
@@ -2552,72 +2067,5 @@ export class Bridge {
     const result = await options.executeCommand(agent, `/${name}${invocation.rawInput}`);
     if (result !== undefined) return result;
     return { kind: 'error', text: `/${name} is unavailable on this deployment.` };
-  }
-
-  /**
-   * The single render path of the card state machine: render the chat's
-   * authoritative {@link ChatCardState} into the streaming card. A live
-   * (working) card goes through the streaming manager; a finished (done /
-   * error) card is re-patched in place. Deferred via a macrotask so the
-   * card-callback ACK lands first — Lark can otherwise restore the
-   * pre-click card (botmux rule), which is the root of the "card reverts
-   * to working after any action" bugs.
-   */
-  private syncCard(chatId: string): void {
-    const state = this.cardStates.get(chatId);
-    if (state === undefined) return;
-    if (state.status === 'working') {
-      this.options.cards.patch(chatId, this.snapshot(chatId, state));
-      return;
-    }
-    const messageId = this.options.cards.lastMessageId(chatId);
-    if (messageId === undefined) return;
-    const card = buildCard(this.snapshot(chatId, state));
-    setTimeout(() => {
-      void this.options.transport.updateCard(messageId, card).catch((error: unknown) => {
-        this.options.logger.warn(`streaming card sync failed: ${String(error)}`);
-      });
-    }, 0);
-  }
-
-  /**
-   * Two-stage ack, stage 2: remove the received reaction and add the
-   * terminal one (done / error / stopped). Best-effort; failures log only.
-   */
-  private async ackTurnEnd(chatId: string, status: CardStatus): Promise<void> {
-    const pending = this.pendingReactions.get(chatId);
-    if (pending === undefined) return;
-    this.pendingReactions.delete(chatId);
-    const terminal =
-      status === 'done'
-        ? this.reactionEmojis().done
-        : status === 'stopped'
-          ? this.reactionEmojis().stopped
-          : this.reactionEmojis().error;
-    if (pending.reactionId !== undefined) {
-      await this.options.transport
-        .removeReaction(pending.messageId, pending.reactionId)
-        .catch((error: unknown) => {
-          this.options.logger.warn(`ack reaction remove failed: ${String(error)}`);
-        });
-    }
-    await this.options.transport
-      .addReaction(pending.messageId, terminal)
-      .catch((error: unknown) => {
-        this.options.logger.warn(`ack reaction add failed: ${String(error)}`);
-      });
-  }
-
-  /** Build the render snapshot from the authoritative state. */
-  private snapshot(chatId: string, state: ChatCardState): CardSnapshot {
-    return {
-      title: state.title,
-      content: state.content,
-      rows: state.rows,
-      cwd: this.options.sessionMap.cwdFor(chatId) ?? this.options.defaultCwd,
-      collapsed: state.collapsed,
-      stopRequested: state.stopRequested,
-      status: state.status,
-    };
   }
 }
