@@ -138,11 +138,11 @@ timeout 30 dsh --profile feishu-dev       # boot; expect the "[feishu]" log line
 
 ## 文档映射
 
-每个文档都有对应的变更类型；改动到该层面的 PR 必须在同一个 PR 里更新对应文档（见 AGENTS.md → "Docs move with their feature"）。标 `*` 的文档，agent 未经维护者审核不得提交；其余文档可直接提交。
+每个文档都有对应的变更类型；改动到该层面的 PR 必须在同一个 PR 里更新对应文档（见 AGENTS.md → "Docs move with their feature"）。标 `*` 的文档变更需维护者审核后才能落地。
 
 | 文档 | 何时更新 |
 | --- | --- |
-| `README.md` / `README.zh.md` `*` | 用户可见面：安装、快速开始、功能、兼容性、徽章——agent 未经维护者审核不得提交任何改动 |
+| `README.md` / `README.zh.md` `*` | 用户可见面：安装、快速开始、功能、兼容性、徽章——任何改动都需维护者审核后才能落地 |
 | `CHANGELOG.md` | 每个用户可见变更（Keep a Changelog） |
 | `docs/architecture.md`（+ `.zh.md`） | 结构、状态机、surface、数据流 |
 | `docs/ux-specification.md`（+ `.zh.md`） | 交互行为：卡片、面板、动作、审批、提问 |
@@ -187,7 +187,7 @@ PR body 遵循固定模板——改了什么、为什么、同步更新了哪些
 ## Docs
 
 <本 PR 按文档映射更新的文档，或 "none — no doc surface affected"。
-README 改动：agent 必须等待维护者审核。>
+README 改动：等待维护者审核。>
 
 ## Verification
 

@@ -203,12 +203,12 @@ timeout 30 dsh --profile feishu-dev       # boot; expect the "[feishu]" log line
 
 Every doc below has an owner change type; a PR that touches that surface
 updates the doc IN THE SAME PR (see AGENTS.md → "Docs move with their
-feature"). `*` marks docs that agents must NOT commit without maintainer
-review; all other docs may be committed directly.
+feature"). `*` marks docs whose changes require maintainer review before
+they land.
 
 | Doc | Updated when |
 | --- | --- |
-| `README.md` / `README.zh.md` `*` | user-facing surface: install, quickstart, features, compatibility, badges — agents must NOT commit ANY edit without maintainer review |
+| `README.md` / `README.zh.md` `*` | user-facing surface: install, quickstart, features, compatibility, badges — ANY edit requires maintainer review before it lands |
 | `CHANGELOG.md` | every user-visible change (Keep a Changelog) |
 | `docs/architecture.md` (+ `.zh.md`) | structure, state machines, surfaces, data flow |
 | `docs/ux-specification.md` (+ `.zh.md`) | interactive behavior: cards, panels, actions, approvals, questions |
@@ -264,7 +264,7 @@ commits; the merge only keeps the title):
 ## Docs
 
 <docs updated by this PR per the Documentation map, or "none — no doc
-surface affected". README changes: agents must hold for maintainer review.>
+surface affected". README changes: held for maintainer review.>
 
 ## Verification
 
