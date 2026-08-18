@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **dsh family bumped to `0.1.0-rc.7`.** `@deepseek-ai/dsh` is pinned
+  exactly in devDependencies; the rest of the `@deepseek-ai/*` surface
+  moves to `^0.1.0-rc.7`. Compatible with dsh `0.1.0-rc.7` (badge + Note in
+  `README.md`, `README.zh.md`).
+
+### Added
+
+- **Canary workflow** (`.github/workflows/canary.yml`): runs the full suite
+  daily (UTC 02:00) and on demand against the newest `@deepseek-ai/*`
+  release (`@next` dist-tag), surfacing upstream breaking changes before
+  users hit them.
+
 ## [0.2.0] - 2026-08-17
 
 ### Added
