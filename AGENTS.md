@@ -124,10 +124,14 @@ pnpm run lint         # biome check src tests
 pnpm run lint:fix     # biome check --write src tests
 pnpm run test         # vitest run
 pnpm run test:watch   # vitest watch
+pnpm run check        # convention checks (tracked docs public-clean, mirror leaks, doc pairs, commit messages)
+pnpm run gates        # lint + typecheck + build + test(FEISHU_INT_REQUIRED=1), exit codes checked
+pnpm run verify       # check + gates
 ```
 
 All gates must pass locally before committing: `lint`, `typecheck`, `test`,
-`build`. CI runs the same gates.
+`build`. `pnpm run verify` runs the convention checks plus every gate with
+exit codes checked — use it before any PR. CI runs the same gates.
 
 ## Repository layout
 
