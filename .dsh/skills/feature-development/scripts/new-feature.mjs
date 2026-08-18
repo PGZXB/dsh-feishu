@@ -30,7 +30,7 @@ if (name === undefined || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name)) {
   process.exit(1);
 }
 
-const ROOT = new URL('..', import.meta.url).pathname;
+const ROOT = new URL('../../..', import.meta.url).pathname;
 const worktreeDir = join(ROOT, '_dev', `dsh-feishu-${name}`);
 const branch = `feat/${name}`;
 
