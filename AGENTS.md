@@ -51,11 +51,12 @@ functionality with unit tests and docs, and lands on `main`.
   "Documentation map"). A PR that changes behavior without touching its
   mapped doc is incomplete; call out "no docs change needed" explicitly in
   the PR body.
-- **README.md / README.zh.md are maintainer-gated.** They are the public
-  face of the project: ANY edit — wording, badges, structure, links — must
-  be reviewed by the maintainer before commit or merge. Never commit README
-  changes without explicit approval; put README edits in their own commit so
-  they can be dropped independently.
+- **README.md / README.zh.md are maintainer-gated for agents.** They are the
+  public face of the project: an agent must NOT commit ANY README edit —
+  wording, badges, structure, links — without explicit maintainer review
+  first. Other docs may be committed directly; README always needs review,
+  so put README edits in their own commit that can be reviewed/dropped
+  independently.
 - **Feishu permissions manifest, kept in sync in the same change.** Any
   feature that needs a new Feishu scope, event, or card callback updates
   `src/setup/feishu-manifest.json` — the single source of truth for the
