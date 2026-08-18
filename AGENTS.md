@@ -139,6 +139,11 @@ scripts/              # repo tooling (release, verification)
 - Comments state contracts and context, not reasoning transcripts.
 - Conventional Commits: `feat:`, `fix:`, `docs:`, `test:`, `refactor:`,
   `chore:`. The CHANGELOG (Keep a Changelog format) is updated per change.
+- **PR titles follow Conventional Commits too** (`fix: …`, `chore(ci): …`;
+  multi-type PRs pick the dominant type).
+- **Squash-merge every PR** into one `main` commit titled
+  `<PR title> (#<number>)`; PR bodies use the What / Why / Verification
+  template (`docs/development.md` → "Pull requests and CI").
 
 ## Iterating
 

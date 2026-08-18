@@ -212,13 +212,34 @@ echo it:
 TOKEN=$(cat _dev/gh-token)
 ```
 
-Open a PR (head = your pushed branch, base = `main`):
+Open a PR (head = your pushed branch, base = `main`). The PR title must be a
+Conventional Commit (`feat: …`, `fix: …`, `docs: …`, `chore: …`, optionally
+scoped like `chore(ci): …`) — it is what lands on `main` as the merge title,
+and history stays uniform when every PR reads as one commit:
 
 ```sh
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H 'Accept: application/vnd.github+json' -H 'Content-Type: application/json' \
   https://api.github.com/repos/PGZXB/dsh-feishu/pulls \
   --data '{"title":"...","head":"<branch>","base":"main","body":"..."}'
+```
+
+The PR body follows a fixed template — what changed, why, and how it was
+verified (a reviewer reads the body, not the commits; the merge only keeps
+the title):
+
+```md
+## What
+
+<one line per change, concrete>
+
+## Why
+
+<context: the problem this solves, references to issues/PRs if any>
+
+## Verification
+
+<gates run + how the behavior was confirmed (manual steps, test names)>
 ```
 
 Watch CI until it concludes — the workflow runs the full gate matrix,
@@ -231,16 +252,20 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   "https://api.github.com/repos/PGZXB/dsh-feishu/actions/runs?head_sha=$SHA"
 ```
 
-Merge once the PR's `mergeable_state` is `clean` (checks green). Use
-`merge_method: "rebase"` to keep `main` linear — "merge" always adds a merge
-commit even when a fast-forward is possible, leaving two commits per PR:
+Merge once the PR's `mergeable_state` is `clean` (checks green). Always
+**squash-merge** (`merge_method: "squash"`) with
+`commit_title: "<PR title> (#<number>)"` — one Conventional Commit per PR on
+`main`, each traceable to its PR:
 
 ```sh
 curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
   -H 'Accept: application/vnd.github+json' -H 'Content-Type: application/json' \
   https://api.github.com/repos/PGZXB/dsh-feishu/pulls/<number>/merge \
-  --data '{"commit_title":"...","merge_method":"rebase"}'
+  --data '{"commit_title":"<PR title> (#<number>)","merge_method":"squash"}'
 ```
+
+Do NOT use "merge" (adds a merge commit) or "rebase" (replays a multi-commit
+PR as several `main` commits with no PR trace).
 
 Before opening the PR, rebase onto the latest `origin/main` and re-run the
 gates: the main tree moves under concurrent work, and conflicts are cheapest
