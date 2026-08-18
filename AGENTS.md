@@ -177,6 +177,28 @@ scripts/              # repo tooling (release, verification)
    `pnpm run build` and confirm each returns 0 before committing with a
    Conventional Commit message.
 
+## Adapting to a new dsh release
+
+dsh is pre-release (`0.1.0-rc.x`) and can break between releases. The canary
+workflow (`.github/workflows/canary.yml`) runs the suite against
+`@deepseek-ai/*@next` daily — red canary means a compatibility fix is due.
+When adapting:
+
+- Bump versions: `devDependencies.@deepseek-ai/dsh` pinned EXACT, other
+  `@deepseek-ai/*` caret (`^0.1.0-rc.7`); CLI bundles all sub-packages, so
+  lockfile and CLI bumps land together.
+- Read upstream release notes first; grep our code for renamed modes/commands
+  (rc.7: Code mode → PTC mode) in card labels, snapshots, tests.
+- Check surface shapes against the INSTALLED `.d.ts` (getters vs methods) —
+  compiling against new types is no guarantee of a working runtime.
+- Confirm the session-log reader still parses new logs (zstd frames, `seq`
+  continuity).
+- Refresh the lockfile against the official registry (npmmirror misses
+  `@deepseek-ai/dsh-bash-env`).
+- Re-verify all gates (`FEISHU_INT_REQUIRED=1`) with a profile installed from
+  the NEW CLI; never touch `~/.dsh` — only `_dev/` test homes.
+- Update the compat badge + Note in `README.md` / `README.zh.md`.
+
 ## Worktree + PR workflow
 
 The main working tree is shared: a human or another agent may be editing it at
