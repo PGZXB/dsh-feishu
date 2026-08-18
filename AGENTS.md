@@ -39,6 +39,13 @@ functionality with unit tests and docs, and lands on `main`.
   Path examples are `$(pwd)`-anchored (`_dev/…` is git-ignored local state)
   or generic placeholders; environment anecdotes are phrased so any
   contributor's machine applies.
+- **Git-tracked docs are public — no internal pointers.** Everything under
+  `README`, `docs/`, `AGENTS.md`, the CHANGELOG is visible to anyone once
+  pushed. Never reference internal-only artifacts (git-ignored `_dev/`
+  files, local analyses, private reports, ambient environment values) or
+  point readers at them ("see the internal report" is a dead link to
+  everyone else). Every tracked doc must stand alone and be self-explanatory
+  to an outside reader.
 - **Every feature module ships unit tests.** A new module in `src/` must come
   with a co-located test in `tests/` covering its behavior. Fixing a bug
   first adds a failing test. No untested feature lands.
