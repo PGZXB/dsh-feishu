@@ -19,7 +19,7 @@ Feature list and TODO tracker for dsh-feishu. ✅ = shipped, 📋 = planned
 | Diagnostics | `/feishu-status` shows a diagnostic card (connection state, sessions, last inbound) | Read-only status card, usable mid-turn | ✅ |
 | Inbound attachments | Images/files the user sends are no longer ignored: images go to the agent, files become downloadable links | Image → agent processes it (reads it); file → download-link card | 📋 |
 | Outbound files/images | Agent-produced images/files send as native Feishu image/file messages | Tap to view original / download | 📋 |
-| Session hard delete | Remove a session for real (currently only reversible archive) | Session-detail card Delete + confirm view | 📋 |
+| Session hard delete | Remove a session from the active list (archive + hide, restorable from the archived list) | Session-detail card Delete + confirm view | 📋 |
 | Agent preset selection | Pick an agent preset (e.g. PTC mode) when choosing a working directory | Mode dropdown on the `/repo` / `/cd` picker card; preset binds to the new session | 📋 |
 | Subagent manager | Tree view of subagents (parent→child, status, tokens, duration), open or cancel one | Panel tree view | 📋 |
 | Settings panel | View models/providers, manage API keys, review default cwd/preset | Panel settings view | 📋 |
