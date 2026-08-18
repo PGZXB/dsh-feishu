@@ -212,7 +212,10 @@ echo it:
 TOKEN=$(cat _dev/gh-token)
 ```
 
-Open a PR (head = your pushed branch, base = `main`):
+Open a PR (head = your pushed branch, base = `main`). The PR title must be a
+Conventional Commit (`feat: …`, `fix: …`, `docs: …`, `chore: …`, optionally
+scoped like `chore(ci): …`) — it is what lands on `main` as the merge title,
+and history stays uniform when every PR reads as one commit:
 
 ```sh
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
