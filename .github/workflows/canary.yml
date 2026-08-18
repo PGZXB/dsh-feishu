@@ -1,0 +1,79 @@
+name: Canary (latest dsh)
+
+# Daily check against the NEWEST @deepseek-ai/dsh release (not the
+# lockfile-pinned one the main CI uses). DeepSeek Harness is pre-release
+# (0.1.0-rc.x) and can break consumers between releases; this workflow
+# surfaces upstream breakage before our users hit it. A red run means
+# dsh-feishu needs a compatibility fix for the latest dsh.
+#
+# Use the @next dist-tag: for most @deepseek-ai/* packages the npm
+# `latest` tag still points at the old 0.0.1-rc.x line (e.g.
+# dsh-session@latest = 0.0.1-rc.1, whose peer @deepseek-ai/dsh-type-meta
+# was never published), while `next` tracks the current 0.1.0-rc.x line.
+#
+# Triggered on a schedule (UTC 02:00, i.e. 10:00 Beijing) and manually via
+# workflow_dispatch.
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  canary:
+    name: unit + integration against latest dsh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # Upgrade EVERY dsh-family dependency to the newest release via the
+      # @next dist-tag (not the lockfile-pinned rc.7, and not @latest —
+      # see the header comment), so the whole seam surface is exercised
+      # against the newest release. The dsh CLI bundles its sub-packages,
+      # but our direct dev/peer deps must be lifted too.
+      - name: Install with newest dsh (@next, not frozen)
+        run: |
+          pnpm add -D @deepseek-ai/dsh@next \
+            @deepseek-ai/dsh-agent@next @deepseek-ai/dsh-llm@next \
+            @deepseek-ai/dsh-session@next \
+            @deepseek-ai/dsh-user-approval@next \
+            @deepseek-ai/dsh-user-questions@next \
+            @deepseek-ai/dsh-credentials@next \
+            @deepseek-ai/dsh-commands@next @deepseek-ai/dsh-schedule@next
+          pnpm install --no-frozen-lockfile
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Build
+        run: pnpm run build
+
+      # Same integration profile preparation as ci.yml; DSH_BIN is the
+      # freshly installed latest CLI.
+      - name: Prepare integration-test profile
+        env:
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home
+        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
+
+      - name: Prepare scenario integration-test profile
+        env:
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-scenarios
+        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
+
+      - name: Test (unit + integration, FEISHU_INT_REQUIRED)
+        env:
+          DSH_BIN: ${{ github.workspace }}/node_modules/.bin/dsh
+          FEISHU_INT_REQUIRED: '1'
+        run: pnpm run test
