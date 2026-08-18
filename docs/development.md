@@ -222,6 +222,7 @@ they land.
 | `docs/ux-specification.md` (+ `.zh.md`) | interactive behavior: cards, panels, actions, approvals, questions |
 | `docs/feishu-setup.md` (+ `.zh.md`) | Feishu setup, permissions, events, callbacks (kept in sync with `src/setup/feishu-manifest.json`) |
 | `docs/development.md` (+ `.zh.md`) | dev workflow, commands, gates, toolchain, PR/CI process |
+| `docs/features.md` (+ `.zh.md`) | feature list / TODO tracker — every shipped or planned feature updates its row |
 | `docs/pitfalls.md` (+ `.zh.md`) | field-proven failure modes; every entry ships with its regression test |
 | `AGENTS.md` | agent guidance, conventions, workflow (this file) |
 | `CONTRIBUTING.md` / `SECURITY.md` | contribution guidance / security posture (rare, deliberate) |

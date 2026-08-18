@@ -150,6 +150,7 @@ timeout 30 dsh --profile feishu-dev       # boot; expect the "[feishu]" log line
 | `docs/ux-specification.md`（+ `.zh.md`） | 交互行为：卡片、面板、动作、审批、提问 |
 | `docs/feishu-setup.md`（+ `.zh.md`） | 飞书配置、权限、事件、回调（与 `src/setup/feishu-manifest.json` 同步） |
 | `docs/development.md`（+ `.zh.md`） | 开发流程、命令、门槛、工具链、PR/CI 流程 |
+| `docs/features.md`（+ `.zh.md`） | 功能列表 / TODO 追踪——每个已实现或计划中的功能都更新其行 |
 | `docs/pitfalls.md`（+ `.zh.md`） | 实战踩坑；每条都伴随回归测试 |
 | `AGENTS.md` | agent 指南、约定、流程（本文件） |
 | `CONTRIBUTING.md` / `SECURITY.md` | 贡献指南 / 安全姿态（低频、刻意为之） |
