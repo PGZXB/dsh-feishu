@@ -199,6 +199,29 @@ timeout 30 dsh --profile feishu-dev       # boot; expect the "[feishu]" log line
 4. Update the relevant `docs/` page and `CHANGELOG.md`.
 5. Run all gates; commit with a Conventional Commit message.
 
+## Documentation map
+
+Every doc below has an owner change type; a PR that touches that surface
+updates the doc IN THE SAME PR (see AGENTS.md → "Docs move with their
+feature"). `*` marks docs whose changes are maintainer-gated.
+
+| Doc | Updated when |
+| --- | --- |
+| `README.md` / `README.zh.md` `*` | user-facing surface: install, quickstart, features, compatibility, badges — ANY edit needs maintainer review before commit |
+| `CHANGELOG.md` | every user-visible change (Keep a Changelog) |
+| `docs/architecture.md` (+ `.zh.md`) | structure, state machines, surfaces, data flow |
+| `docs/ux-specification.md` (+ `.zh.md`) | interactive behavior: cards, panels, actions, approvals, questions |
+| `docs/feishu-setup.md` (+ `.zh.md`) | Feishu setup, permissions, events, callbacks (kept in sync with `src/setup/feishu-manifest.json`) |
+| `docs/development.md` (+ `.zh.md`) | dev workflow, commands, gates, toolchain, PR/CI process |
+| `docs/pitfalls.md` (+ `.zh.md`) | field-proven failure modes; every entry ships with its regression test |
+| `AGENTS.md` | agent guidance, conventions, workflow (this file) |
+| `CONTRIBUTING.md` / `SECURITY.md` | contribution guidance / security posture (rare, deliberate) |
+
+A behavior change with no doc impact is possible but must be stated: the PR
+body's `## Docs` line says which docs changed, or "none — no doc surface
+affected". README edits always sit in their own commit so the maintainer can
+review or drop them independently.
+
 ## Pull requests and CI
 
 _Maintainer-only automation — contributors open PRs through the GitHub UI._
@@ -224,9 +247,9 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   --data '{"title":"...","head":"<branch>","base":"main","body":"..."}'
 ```
 
-The PR body follows a fixed template — what changed, why, and how it was
-verified (a reviewer reads the body, not the commits; the merge only keeps
-the title):
+The PR body follows a fixed template — what changed, why, which docs
+moved with it, and how it was verified (a reviewer reads the body, not the
+commits; the merge only keeps the title):
 
 ```md
 ## What
@@ -236,6 +259,11 @@ the title):
 ## Why
 
 <context: the problem this solves, references to issues/PRs if any>
+
+## Docs
+
+<docs updated by this PR per the Documentation map, or "none — no doc
+surface affected". README changes: flagged for maintainer review.>
 
 ## Verification
 
