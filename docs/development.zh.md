@@ -136,6 +136,24 @@ timeout 30 dsh --profile feishu-dev       # boot; expect the "[feishu]" log line
 4. 更新相关的 `docs/` 页面和 `CHANGELOG.md`。
 5. 运行全部质量门槛；用 Conventional Commit 消息提交。
 
+## 文档映射
+
+每个文档都有对应的变更类型；改动到该层面的 PR 必须在同一个 PR 里更新对应文档（见 AGENTS.md → "Docs move with their feature"）。标 `*` 的文档变更需维护者审核后才能落地。
+
+| 文档 | 何时更新 |
+| --- | --- |
+| `README.md` / `README.zh.md` `*` | 用户可见面：安装、快速开始、功能、兼容性、徽章——任何改动都需维护者审核后才能落地 |
+| `CHANGELOG.md` | 每个用户可见变更（Keep a Changelog） |
+| `docs/architecture.md`（+ `.zh.md`） | 结构、状态机、surface、数据流 |
+| `docs/ux-specification.md`（+ `.zh.md`） | 交互行为：卡片、面板、动作、审批、提问 |
+| `docs/feishu-setup.md`（+ `.zh.md`） | 飞书配置、权限、事件、回调（与 `src/setup/feishu-manifest.json` 同步） |
+| `docs/development.md`（+ `.zh.md`） | 开发流程、命令、门槛、工具链、PR/CI 流程 |
+| `docs/pitfalls.md`（+ `.zh.md`） | 实战踩坑；每条都伴随回归测试 |
+| `AGENTS.md` | agent 指南、约定、流程（本文件） |
+| `CONTRIBUTING.md` / `SECURITY.md` | 贡献指南 / 安全姿态（低频、刻意为之） |
+
+行为变更如果确实不影响任何文档，必须在 PR body 的 `## Docs` 里写明："none — no doc surface affected"。README 改动总是放在独立 commit 里，便于维护者单独审核或丢弃。
+
 ## Pull requests 与 CI
 
 _仅维护者使用的自动化——贡献者请直接通过 GitHub UI 提 PR。_
@@ -146,13 +164,34 @@ _仅维护者使用的自动化——贡献者请直接通过 GitHub UI 提 PR�
 TOKEN=$(cat _dev/gh-token)
 ```
 
-打开 PR（head = 你 push 的分支，base = `main`）：
+打开 PR（head = 你 push 的分支，base = `main`）。PR 标题必须是 Conventional Commit（`feat: …`、`fix: …`、`docs: …`、`chore: …`，可带 scope 如 `chore(ci): …`）——它最终会成为 main 上的 merge title，历史保持统一：
 
 ```sh
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H 'Accept: application/vnd.github+json' -H 'Content-Type: application/json' \
   https://api.github.com/repos/PGZXB/dsh-feishu/pulls \
   --data '{"title":"...","head":"<branch>","base":"main","body":"..."}'
+```
+
+PR body 遵循固定模板——改了什么、为什么、同步更新了哪些文档、如何验证（评审者读 body 而不是 commits；merge 只保留标题）：
+
+```md
+## What
+
+<每个变更一行，具体>
+
+## Why
+
+<背景：解决的问题，相关 issue/PR 引用>
+
+## Docs
+
+<本 PR 按文档映射更新的文档，或 "none — no doc surface affected"。
+README 改动：等待维护者审核。>
+
+## Verification
+
+<运行的门槛 + 行为如何确认（手动步骤、测试名）>
 ```
 
 等待 CI 得出结论——workflow 会运行完整的门槛矩阵，包括 real-composition 集成套件：
@@ -164,14 +203,16 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   "https://api.github.com/repos/PGZXB/dsh-feishu/actions/runs?head_sha=$SHA"
 ```
 
-一旦 PR 的 `mergeable_state` 变为 `clean`（checks 全绿）即可合并。使用 `merge_method: "rebase"` 以保持 `main` 线性——"merge" 即使在可以 fast-forward 时也总是会新增一个 merge commit，导致每个 PR 留下两个 commit：
+一旦 PR 的 `mergeable_state` 变为 `clean`（checks 全绿）即可合并。一律使用 **squash 合并**（`merge_method: "squash"`），`commit_title` 为 `"<PR title> (#<number>)"`——每个 PR 在 main 上只留一个 Conventional Commit，且能追溯到 PR 号：
 
 ```sh
 curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
   -H 'Accept: application/vnd.github+json' -H 'Content-Type: application/json' \
   https://api.github.com/repos/PGZXB/dsh-feishu/pulls/<number>/merge \
-  --data '{"commit_title":"...","merge_method":"rebase"}'
+  --data '{"commit_title":"<PR title> (#<number>)","merge_method":"squash"}'
 ```
+
+不要用 "merge"（会产生 merge commit）或 "rebase"（多 commit PR 会在 main 上拆成多个 commit、丢失 PR 追溯）。
 
 打开 PR 之前，先 rebase 到最新的 `origin/main` 并重新运行质量门槛：main 树在并发工作下会移动，在 PR 存在之前解决冲突成本最低。如果 CI 变红，在 worktree 中修复并重新 push——GitHub 会在新的 head 上重新运行 checks。端到端实践见 AGENTS.md → "Worktree + PR workflow"。
 

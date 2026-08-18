@@ -45,6 +45,17 @@ functionality with unit tests and docs, and lands on `main`.
 - **Write docs promptly after a feature.** Completing a feature updates the
   relevant `docs/` page(s) and the CHANGELOG in the same change. No feature
   lands without its documentation.
+- **Docs move with their feature — never in a later PR.** Every change that
+  touches behavior, commands, UX, setup, or architecture updates the
+  corresponding doc in the SAME PR (map: `docs/development.md` →
+  "Documentation map"). A PR that changes behavior without touching its
+  mapped doc is incomplete; call out "no docs change needed" explicitly in
+  the PR body.
+- **README.md / README.zh.md are maintainer-gated.** They are the public
+  face of the project: never commit ANY README edit — wording, badges,
+  structure, links — without explicit maintainer review first. Other docs
+  may be committed directly; README always needs review, so put README
+  edits in their own commit that can be reviewed/dropped independently.
 - **Feishu permissions manifest, kept in sync in the same change.** Any
   feature that needs a new Feishu scope, event, or card callback updates
   `src/setup/feishu-manifest.json` — the single source of truth for the
