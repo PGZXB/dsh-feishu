@@ -75,6 +75,8 @@ scripts/              # repo tooling
 
 CI 在每次 push 时都运行该套件（两个 node 版本分支都跑）：workflow 构建 checkout、准备 profile，并以 `FEISHU_INT_REQUIRED=1` 运行测试——这样缺少前置条件会响亮地让任务失败，而不是静默跳过。dsh CLI 是 devDependency（`@deepseek-ai/dsh`），原生构建脚本（node-pty 及其同类）在 `pnpm-workspace.yaml` 中获准——不涉及任何凭据；正是上面这些 Feishu 和 LLM mock 让套件在无需密钥的情况下也能运行。
 
+另有独立的 **canary workflow**（`.github/workflows/canary.yml`）每天（UTC 02:00）及按需对最新的 `@deepseek-ai/*` 发布运行同一套件，通过 `@next` dist-tag 安装（不是 lockfile 锁定的版本，也不是 `@latest`——对多数 harness 包，npm `latest` 仍指向旧的 `0.0.1-rc.x` 线）。canary 变红意味着上游破坏性变更波及我们的代码；见 AGENTS.md → "Adapting to a new dsh release"。
+
 ```sh
 pnpm run build        # ensure lib/ is current (the profile links the checkout)
 pnpm run test         # unit + integration (integration self-skips as needed)

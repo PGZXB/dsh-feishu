@@ -110,6 +110,14 @@ instead of silently skipping. The dsh CLI is a devDependency
 allowed in `pnpm-workspace.yaml` — no credentials are involved; the Feishu
 and LLM mocks above are what make the suite runnable without secrets.
 
+A separate **canary workflow** (`.github/workflows/canary.yml`) runs the
+same suite daily (UTC 02:00) and on demand against the NEWEST
+`@deepseek-ai/*` release via the `@next` dist-tag (not the lockfile-pinned
+version, and not `@latest` — for most harness packages npm `latest` still
+points at the old `0.0.1-rc.x` line). A red canary means an upstream
+breaking change reached our code; see AGENTS.md → "Adapting to a new dsh
+release".
+
 ```sh
 pnpm run build        # ensure lib/ is current (the profile links the checkout)
 pnpm run test         # unit + integration (integration self-skips as needed)
