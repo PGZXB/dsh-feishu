@@ -35,7 +35,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "setup:feishu": "node scripts/setup-feishu.mjs",
-    "prepublishOnly": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build"
+    "prepublishOnly": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build",
+    "check": "node scripts/check-conventions.mjs",
+    "gates": "node scripts/run-gates.mjs",
+    "verify": "node scripts/check-conventions.mjs && node scripts/run-gates.mjs",
+    "check:mergeable": "node scripts/check-mergeable.mjs"
   },
   "dependencies": {
     "@deepseek-ai/dsh-llm": "^0.1.0-rc.7",
