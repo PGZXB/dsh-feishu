@@ -142,8 +142,13 @@ scripts/              # repo tooling (release, verification)
 - **PR titles follow Conventional Commits too.** A PR title is the summary
   of its change and should read as a Conventional Commit (`fix: …`,
   `feat: …`, `docs: …`, `chore: …`) with a scope where it helps
-  (`chore(ci): …`); multi-type PRs pick the dominant type. Merge titles
-  keep the convention and may append `(#<number>)`.
+  (`chore(ci): …`); multi-type PRs pick the dominant type.
+- **PRs are SQUASH-merged.** The PR's commits collapse into ONE commit on
+  `main` whose title is `<PR title> (#<number>)` — `git log` reads as one
+  Conventional Commit per PR, each traceable to its PR number. Never use
+  "merge" (merge commit) or "rebase" (per-commit replay) for the merge.
+  PR bodies follow the What / Why / Verification template in
+  `docs/development.md` → "Pull requests and CI".
 
 ## Iterating
 

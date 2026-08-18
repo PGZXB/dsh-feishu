@@ -224,6 +224,24 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   --data '{"title":"...","head":"<branch>","base":"main","body":"..."}'
 ```
 
+The PR body follows a fixed template — what changed, why, and how it was
+verified (a reviewer reads the body, not the commits; the merge only keeps
+the title):
+
+```md
+## What
+
+<one line per change, concrete>
+
+## Why
+
+<context: the problem this solves, references to issues/PRs if any>
+
+## Verification
+
+<gates run + how the behavior was confirmed (manual steps, test names)>
+```
+
 Watch CI until it concludes — the workflow runs the full gate matrix,
 including the real-composition integration suite:
 
@@ -234,16 +252,23 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   "https://api.github.com/repos/PGZXB/dsh-feishu/actions/runs?head_sha=$SHA"
 ```
 
-Merge once the PR's `mergeable_state` is `clean` (checks green). Use
-`merge_method: "rebase"` to keep `main` linear — "merge" always adds a merge
-commit even when a fast-forward is possible, leaving two commits per PR:
+Merge once the PR's `mergeable_state` is `clean` (checks green). Always
+**squash-merge** (`merge_method: "squash"`): the PR's commits collapse into
+ONE commit on `main`, and the commit title must be the PR title with the PR
+number appended — `git log` then reads as one Conventional Commit per PR and
+every change is traceable back to its PR. `commit_title` must be
+`"<PR title> (#<number>)"`:
 
 ```sh
 curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
   -H 'Accept: application/vnd.github+json' -H 'Content-Type: application/json' \
   https://api.github.com/repos/PGZXB/dsh-feishu/pulls/<number>/merge \
-  --data '{"commit_title":"...","merge_method":"rebase"}'
+  --data '{"commit_title":"<PR title> (#<number>)","merge_method":"squash"}'
 ```
+
+Do NOT use "merge" (adds a merge commit and buries the PR's changes in the
+history) or "rebase" (replays the PR's commits individually, so a multi-commit
+PR splits across several `main` commits with no PR-number trace).
 
 Before opening the PR, rebase onto the latest `origin/main` and re-run the
 gates: the main tree moves under concurrent work, and conflicts are cheapest
