@@ -89,6 +89,12 @@ row. All further work happens inside that worktree.
    implementation exists. This is expected.
 3. Keep the scenarios real: unique message ids, filter waits by `chatId`,
    assert card contents not completion counts, restore test-written settings.
+4. **Read callback values FROM the rendered card, never construct them by
+   hand.** A real click submits exactly what the renderer put in the card —
+   the rename regression (a submit that "silently did nothing") existed
+   because tests built the action directly with the session id and bypassed
+   the render. Find the button in `readOutbox()`, read its `value`, and
+   submit THAT. If the render is wrong, the test must fail.
 
 ### 4. Implement
 
@@ -97,7 +103,18 @@ row. All further work happens inside that worktree.
 2. Wire through the command registry / view registry / card controller as the
    feature demands. Feature-detect optional services with `ctx.get(name)`;
    fail loud when a required referent is missing.
-3. If a new Feishu scope, event, or card callback is needed, update
+3. **Lazily resolve async-initialized host services.** A service that
+   initializes asynchronously after `apply` (e.g. `workspaceRegistry`) returns
+   `undefined` from `ctx.get` at startup FOREVER if snapshotted once — pass a
+   getter (`getWorkspaceRegistry: () => ctx.get('workspaceRegistry')`) and
+   resolve at use time, never at construction.
+4. **Verify the seam mounts in the REAL composition, not just the fakes.** The
+   rename/archive buttons were invisible in production because the code
+   feature-detected `apiProxy` — a gateway service dsh-base does NOT mount —
+   while the unit tests injected a fake. Assert in the integration test that
+   the feature's surface actually appears (buttons render, actions reach the
+   host), so a wrong seam fails the suite instead of silently degrading.
+5. If a new Feishu scope, event, or card callback is needed, update
    `src/setup/feishu-manifest.json` and `docs/feishu-setup.md` IN THE SAME
    change.
 
@@ -175,12 +192,24 @@ subagents). Each feature owns its own worktree and branch; shared seams
 — coordinate through the state of the repository, never through shared
 working trees.
 
+**Parallel execution is headless — no real-bot verification step.** The
+integration suite (real dsh process, memory transport, mock LLM) IS the
+composition proof for interactive features; it runs unattended in CI.
+Driving a real Feishu bot requires a human in the loop (credentials,
+on-device taps, chat traffic), which cannot be parallelized — so the SKILL
+has no real-device step. A maintainer may still run the runbook in
+`docs/development.md` → "Running the live test bot" (with `FEISHU_DEBUG=1`)
+as a manual acceptance pass; treat that as maintainer-side verification,
+never as a subagent deliverable.
+
 ## Acceptance checklist (before any PR)
 
 - [ ] Scaffolded via `scripts/new-feature.mjs` (worktree + branch + spec skeleton)
 - [ ] Spec recorded in `docs/ux-specification.md` (part, per the template) + mapped doc page
 - [ ] One authoritative state object + one render path
 - [ ] Integration tests written first from the brainstormed matrix; scenarios cover errors and edges, not just the happy path
+- [ ] Integration tests read callback values FROM the rendered card (never hand-constructed actions)
+- [ ] Host seams feature-detected against what actually mounts; async-init services lazily resolved; integration test proves the surface renders
 - [ ] Unit tests co-located; coverage pushed on the state machine and handlers
 - [ ] Integration tests re-brainstormed after implementation; new scenarios added
 - [ ] `pnpm run check` passes (tracked docs public-clean, no mirror leaks, doc pairs, conventional commits)

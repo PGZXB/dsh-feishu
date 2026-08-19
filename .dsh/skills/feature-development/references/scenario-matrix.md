@@ -32,8 +32,20 @@ story.
 |---|---|---|---|---|
 | ... | ... | ... | ... | ... |
 
+## Driving the action
+
+Drive every callback with the value READ FROM the rendered card — find the
+button in the outbox (`readOutbox()`), read its `value`/`option`, and submit
+THAT. Never hand-construct the action payload: a real click submits exactly
+what the renderer wrote, so a render bug (e.g. a dropped session id that
+made rename "silently do nothing") only fails the test if the test uses the
+rendered value.
+
 ## After-implementation re-brainstorm
 
 With the real behavior visible, ask again: what did the first pass miss?
 New scenarios go into the same matrix and become tests. Then run
-`pnpm run check` + `pnpm run gates` (exit codes checked).
+`pnpm run check` + `pnpm run gates` (exit codes checked). The integration
+suite IS the composition proof — parallel execution is headless, so there
+is no real-bot step (see the SKILL → "Parallel features"); a maintainer
+may run the live-bot runbook as a manual acceptance pass.

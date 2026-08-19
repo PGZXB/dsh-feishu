@@ -6,7 +6,7 @@
  * checklist.
  *
  * Usage (run from a clean main worktree):
- *   node scripts/new-feature.mjs <kebab-case-feature-name> [<short-description>]
+ *   node .dsh/skills/feature-development/scripts/new-feature.mjs <kebab-case-feature-name> [<short-description>]
  *
  * Creates:
  *   _dev/dsh-feishu-<name>/        worktree on branch feat/<name>
