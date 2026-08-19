@@ -51,15 +51,14 @@ const touchedReadme = changed.some((f) => f === 'README.md' || f === 'README.zh.
 if (changedSrc.length === 0) {
   pass('no src/ changes (docs/tooling-only PR)');
 } else {
-  // Every src change should carry a co-located test.
-  const missingTests = changedSrc.filter((f) => {
-    const base = f.replace(/^src\//, '').replace(/\.ts$/, '');
-    return !changedTests.some((t) => t.includes(base.replace(/\//g, '/')));
-  });
-  if (missingTests.length > 0) {
-    fail(`src changes without a changed test: ${missingTests.join(', ')}`);
+  // Every behavior change must carry tests. Filename matching is too brittle
+  // (a bridge feature lives in bridge.spec.ts, not index.spec.ts) — any
+  // changed test file satisfies the requirement; the reviewer confirms
+  // coverage on the human checklist.
+  if (changedTests.length === 0) {
+    fail('src/ changed but no test file changed — add/update tests');
   } else {
-    pass('every changed src module has a changed test');
+    pass(`tests updated (${changedTests.length} file(s))`);
   }
   // Features doc should be touched when behavior changes.
   if (!changedDocs.some((f) => f.includes('features'))) {
