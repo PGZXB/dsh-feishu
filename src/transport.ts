@@ -30,6 +30,7 @@ import type {
   ChatStats,
   FeishuMessage,
   FeishuTransport,
+  InboundAttachment,
   SentCard,
 } from './feishu/types.js';
 
@@ -104,7 +105,28 @@ export class FeishuApiError extends Error {
 const MENTION_PATTERN = /<at[^>]*>.*?<\/at>/g;
 
 /** Message types the surface understands; everything else is ignored. */
-const SUPPORTED_MESSAGE_TYPE = 'text';
+const SUPPORTED_MESSAGE_TYPES = new Set(['text', 'image', 'file']);
+
+/** Parse an image/file message's content JSON into its attachment, or
+ *  `undefined` when the content is malformed. */
+function parseAttachment(content: string, messageType: string): InboundAttachment | undefined {
+  try {
+    const parsed = JSON.parse(content) as Record<string, string>;
+    if (messageType === 'image') {
+      const key = parsed.image_key;
+      if (typeof key === 'string' && key !== '') return { kind: 'image', key };
+      return undefined;
+    }
+    const key = parsed.file_key;
+    if (typeof key === 'string' && key !== '') {
+      const name = parsed.file_name;
+      return { kind: 'file', key, ...(typeof name === 'string' && name !== '' ? { name } : {}) };
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Normalize a raw Feishu `im.message.receive_v1` payload into a surface
@@ -115,22 +137,30 @@ const SUPPORTED_MESSAGE_TYPE = 'text';
  */
 export function normalizeMessageEvent(data: RawMessageEvent): FeishuMessage | undefined {
   const message = data.message;
-  if (message.message_type !== SUPPORTED_MESSAGE_TYPE) return undefined;
+  if (!SUPPORTED_MESSAGE_TYPES.has(message.message_type)) return undefined;
   const senderOpenId = data.sender?.sender_id?.open_id ?? '';
   let text = '';
-  try {
-    const parsed = JSON.parse(message.content) as { text?: string };
-    text = parsed.text ?? '';
-  } catch {
-    return undefined;
+  let attachment: InboundAttachment | undefined;
+  if (message.message_type === 'text') {
+    try {
+      const parsed = JSON.parse(message.content) as { text?: string };
+      text = parsed.text ?? '';
+    } catch {
+      return undefined;
+    }
+    text = text.replace(MENTION_PATTERN, ' ').replace(/\s+/g, ' ').trim();
+  } else {
+    attachment = parseAttachment(message.content, message.message_type);
+    // A malformed image/file content (no key) is not a usable message.
+    if (attachment === undefined) return undefined;
   }
-  text = text.replace(MENTION_PATTERN, ' ').replace(/\s+/g, ' ').trim();
   return {
     messageId: message.message_id,
     chatId: message.chat_id,
     chatType: message.chat_type === 'group' ? 'group' : 'p2p',
     senderOpenId,
     text,
+    attachments: attachment === undefined ? [] : [attachment],
     mentions: (message.mentions ?? [])
       .map((mention) => mention.id?.open_id)
       .filter((id): id is string => id !== undefined && id !== ''),
@@ -415,6 +445,42 @@ export class LarkTransport implements FeishuTransport {
     } catch (error: unknown) {
       this.logger?.warn(`message recall failed for ${messageId}: ${String(error)}`);
     }
+  }
+
+  /**
+   * Download an inbound image message's bytes (`im.v1.image.get`). The image
+   * resource endpoint returns the raw raster bytes (not JSON); the declared
+   * media type is derived from the message event. Throws on unknown/stale
+   * keys or a missing `im:resource` scope.
+   */
+  async downloadImage(key: string): Promise<{ data: Uint8Array; mediaType: string }> {
+    this.logger?.debug(`transport downloadImage ${key}`);
+    // im.v1.image.get streams the resource; the SDK resolves the response
+    // body as a Buffer for binary resources.
+    const response = (await this.client.im.v1.image.get({
+      path: { image_key: key },
+    })) as unknown as { file?: Buffer; data?: { image?: Buffer } };
+    const bytes = response.file ?? response.data?.image;
+    if (bytes === undefined) {
+      throw new FeishuApiError('im.v1.image.get', -1, 'response carried no image bytes');
+    }
+    // The image resource API does not echo the media type; the message
+    // content declares it, so callers pass it through. Default to png when
+    // unknown — saveImage re-detects the real format from bytes.
+    return { data: new Uint8Array(bytes), mediaType: 'image/png' };
+  }
+
+  /** Download an inbound file message's bytes (`im.v1.file.get`). */
+  async downloadFile(key: string): Promise<Uint8Array> {
+    this.logger?.debug(`transport downloadFile ${key}`);
+    const response = (await this.client.im.v1.file.get({
+      path: { file_key: key },
+    })) as unknown as { file?: Buffer; data?: { file?: Buffer } };
+    const bytes = response.file ?? response.data?.file;
+    if (bytes === undefined) {
+      throw new FeishuApiError('im.v1.file.get', -1, 'response carried no file bytes');
+    }
+    return new Uint8Array(bytes);
   }
 
   /** Create a message in a chat; assert the API succeeded. */

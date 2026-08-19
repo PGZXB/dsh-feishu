@@ -105,6 +105,18 @@ class RecordingTransport implements FeishuTransport {
   async deleteMessage(messageId: string): Promise<void> {
     this.deletedMessages.push(messageId);
   }
+  /** Configurable inbound-download behavior (default: fail — tests seed
+   *  success/failure per scenario). */
+  downloadImageImpl?: (key: string) => Promise<{ data: Uint8Array; mediaType: string }>;
+  downloadFileImpl?: (key: string) => Promise<Uint8Array>;
+  async downloadImage(key: string): Promise<{ data: Uint8Array; mediaType: string }> {
+    if (this.downloadImageImpl === undefined) throw new Error(`no downloadImage for ${key}`);
+    return this.downloadImageImpl(key);
+  }
+  async downloadFile(key: string): Promise<Uint8Array> {
+    if (this.downloadFileImpl === undefined) throw new Error(`no downloadFile for ${key}`);
+    return this.downloadFileImpl(key);
+  }
   deliver(message: FeishuMessage): void {
     this.handler?.(message);
   }
@@ -221,6 +233,7 @@ function makeHarness(
     readSession?: NonNullable<BridgeOptions['readSession']>;
     sessionTitle?: NonNullable<BridgeOptions['sessionTitle']>;
     getWorkspaceRegistry?: NonNullable<BridgeOptions['getWorkspaceRegistry']>;
+    getSaveImage?: NonNullable<BridgeOptions['getSaveImage']>;
   } = {},
 ): Harness {
   const transport = new RecordingTransport();
@@ -271,6 +284,7 @@ function makeHarness(
     ...(options.getWorkspaceRegistry !== undefined
       ? { getWorkspaceRegistry: options.getWorkspaceRegistry }
       : {}),
+    ...(options.getSaveImage !== undefined ? { getSaveImage: options.getSaveImage } : {}),
     // Tests default the working-directory gate OFF (production defaults it
     // ON); the gate's own tests enable it explicitly.
     requireWorkingDir: options.requireWorkingDir ?? false,
@@ -298,6 +312,7 @@ function message(overrides: Partial<FeishuMessage> = {}): FeishuMessage {
     senderOpenId: 'ou_user',
     text: 'hello',
     mentions: [],
+    attachments: [],
     createdAt: 1_700_000_000_000,
     ...overrides,
   };
@@ -360,6 +375,149 @@ describe('Bridge', () => {
     expect(followups).toHaveLength(1);
     expect(followups?.[0]?.content).toEqual([{ type: 'text', text: 'hello' }]);
     expect(h.transport.sentCards).toHaveLength(1);
+  });
+
+  describe('inbound attachments', () => {
+    const pngBytes = new Uint8Array([137, 80, 78, 71]);
+
+    /** An llm catalog where the current model advertises image input. */
+    const imageCapableLlm = (): LlmService => ({
+      listProviders: () => [{ id: 'pi-ai', name: 'pi-ai' }],
+      async listModels(provider: string) {
+        return [
+          { provider, id: 'pi-1.5-vision', name: 'pi vision', inputModalities: ['text', 'image'] },
+        ];
+      },
+    });
+    /** Point the default model at the image-capable entry. */
+    const imageCapableDefault = (): NonNullable<BridgeOptions['agentDefaultModel']> => ({
+      currentSelection: () => ({ provider: 'pi-ai', model: 'pi-1.5-vision' }),
+      saveSelection: async () => {},
+    });
+
+    it('injects an image message as an image content block', async () => {
+      const saved: unknown[] = [];
+      const h = makeHarness({
+        llm: imageCapableLlm(),
+        agentDefaultModel: imageCapableDefault(),
+        getSaveImage: () => (input: { data: Uint8Array; mediaType: string }) => {
+          saved.push(input);
+          return Promise.resolve({
+            attachmentId: 'att-1',
+            mediaType: input.mediaType,
+            bytes: input.data.length,
+            width: 1,
+            height: 1,
+          });
+        },
+      });
+      h.transport.downloadImageImpl = async () => ({ data: pngBytes, mediaType: 'image/png' });
+      await h.bridge.handleMessage(
+        message({
+          text: '',
+          attachments: [{ kind: 'image', key: 'img-1' }],
+        }),
+      );
+      const followups = h.agentStore.followups.get('feishu-session-1');
+      expect(saved).toEqual([{ data: pngBytes, mediaType: 'image/png' }]);
+      const blocks = followups?.[0]?.content as unknown[];
+      expect(blocks?.[0]).toMatchObject({ type: 'image' });
+      // No receipt card for images.
+      expect(h.transport.sentCards).toHaveLength(1);
+    });
+
+    it('posts a file receipt card and names the file to the agent', async () => {
+      const h = makeHarness();
+      h.transport.downloadFileImpl = async () => new Uint8Array([1, 2, 3]);
+      await h.bridge.handleMessage(
+        message({
+          text: '',
+          attachments: [{ kind: 'file', key: 'file-1', name: 'notes.txt' }],
+        }),
+      );
+      // Receipt card + streaming card.
+      expect(h.transport.sentCards).toHaveLength(2);
+      expect(h.transport.sentCards[0]?.header?.title.content).toBe('📎 File received');
+      const followups = h.agentStore.followups.get('feishu-session-1');
+      const blocks = followups?.[0]?.content as unknown[];
+      expect(blocks?.[0]).toEqual({ type: 'text', text: '[user sent a file: notes.txt]' });
+    });
+
+    it('a failed image download notices loudly and the turn continues text-only', async () => {
+      const h = makeHarness({
+        llm: imageCapableLlm(),
+        agentDefaultModel: imageCapableDefault(),
+        getSaveImage: () => (input: { data: Uint8Array; mediaType: string }) =>
+          Promise.resolve({
+            attachmentId: 'att-1',
+            mediaType: input.mediaType,
+            bytes: input.data.length,
+            width: 1,
+            height: 1,
+          }),
+      });
+      // downloadImageImpl left unset → throws.
+      await h.bridge.handleMessage(
+        message({
+          text: '',
+          attachments: [{ kind: 'image', key: 'missing' }],
+        }),
+      );
+      expect(h.transport.sentTexts.some((t) => t.text.includes('could not be read'))).toBe(true);
+      // The turn still ran (text-only).
+      expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(1);
+    });
+
+    it('degrades to the file path when the attachment service is absent', async () => {
+      const h = makeHarness({
+        llm: imageCapableLlm(),
+        agentDefaultModel: imageCapableDefault(),
+      }); // no getSaveImage
+      h.transport.downloadImageImpl = async () => ({ data: pngBytes, mediaType: 'image/png' });
+      await h.bridge.handleMessage(
+        message({
+          text: '',
+          attachments: [{ kind: 'image', key: 'img-1' }],
+        }),
+      );
+      // Degraded: receipt card (file path) + file-name note; image NOT saved.
+      expect(h.transport.sentCards[0]?.header?.title.content).toBe('📎 File received');
+      const followups = h.agentStore.followups.get('feishu-session-1');
+      const blocks = followups?.[0]?.content as unknown[];
+      expect(JSON.stringify(blocks)).toContain('img-1');
+      expect(JSON.stringify(blocks)).not.toContain('"type":"image"');
+    });
+
+    it('degrades to the file path when the model cannot see images', async () => {
+      // FakeLlmService (DeepSeek, no image modality) + no capability → the
+      // image becomes a file receipt, never an injected image block.
+      const h = makeHarness({
+        llm: new FakeLlmService(),
+        agentDefaultModel: {
+          currentSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-v4-flash' }),
+          saveSelection: async () => {},
+        },
+        getSaveImage: () => (input: { data: Uint8Array; mediaType: string }) =>
+          Promise.resolve({
+            attachmentId: 'att-1',
+            mediaType: input.mediaType,
+            bytes: input.data.length,
+            width: 1,
+            height: 1,
+          }),
+      });
+      h.transport.downloadImageImpl = async () => ({ data: pngBytes, mediaType: 'image/png' });
+      await h.bridge.handleMessage(
+        message({
+          text: '',
+          attachments: [{ kind: 'image', key: 'img-1' }],
+        }),
+      );
+      expect(h.transport.sentCards[0]?.header?.title.content).toBe('📎 File received');
+      const followups = h.agentStore.followups.get('feishu-session-1');
+      const blocks = followups?.[0]?.content as unknown[];
+      expect(JSON.stringify(blocks)).not.toContain('"type":"image"');
+    });
   });
 
   it('wires inbound transport messages into the bridge', async () => {

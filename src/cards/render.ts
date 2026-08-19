@@ -905,6 +905,20 @@ export function buildPanelNoticeCard(options: {
 }
 
 /**
+ * The inbound-file receipt card: posted when a user sends a file message.
+ * The agent cannot read arbitrary file bytes, so the surface acknowledges
+ * the file (name) as a standalone card and tells the agent the file exists
+ * by name — there is no downloadable URL for a Feishu `file_key`.
+ */
+export function buildInboundFileCard(name: string): CardJson {
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: '📎 File received' }, template: 'blue' },
+    elements: [{ tag: 'markdown', content: `**${name}**\n\nTell me what to do with it.` }],
+  };
+}
+
+/**
  * A busy/operating placeholder card (NO buttons — blocks mis-taps while an
  * async panel operation runs). Posted FIRST in the callback so the panel
  * always carries an immediate patch (Lark otherwise restores the pre-click

@@ -63,8 +63,13 @@ class RecordingTransport implements FeishuTransport {
     this.updated.push(card);
   }
   async deleteMessage(_messageId: string): Promise<void> {}
+  async downloadImage(_key: string): Promise<{ data: Uint8Array; mediaType: string }> {
+    throw new Error('downloadImage not implemented in this fake');
+  }
+  async downloadFile(_key: string): Promise<Uint8Array> {
+    throw new Error('downloadFile not implemented in this fake');
+  }
 }
-
 function snapshot(overrides: Partial<CardSnapshot> = {}): CardSnapshot {
   return { title: 'T', content: '', rows: [], status: 'working', ...overrides };
 }

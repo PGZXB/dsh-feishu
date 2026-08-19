@@ -682,3 +682,100 @@ deployments. `canMutateSessions` flips from `apiProxy !== undefined` to
 - `@deepseek-ai/dsh-storage-domain` — durable KV domain backing the
   workspace registry; web-app bundle mounts storage ×3 + workspace
   (`packages/bundle/web-app/cordis.patch.yml`).**
+
+
+## Part: inbound-attachments
+
+> Inbound images/files from Feishu are no longer ignored: images are injected
+> into the agent's user message (the model sees them), files surface as a
+> receipt card with the agent informed by name.
+
+### Intended behavior
+
+**Trigger** — an `im.message.receive_v1` event whose `message_type` is
+`image` or `file` (the surface today only accepts `text`). The message may
+arrive in a p2p chat or a group (mention gate applies exactly as for text).
+
+**Message normalization** — `normalizeMessageEvent` learns two more types:
+
+| message_type | content JSON | Normalized |
+|---|---|---|
+| `image` | `{"image_key": "img_v2_…"}` | `text: ''`, one image attachment |
+| `file` | `{"file_key": "file_v2_…"}` | `text: ''`, one file attachment |
+
+`FeishuMessage` gains an optional `attachments` array
+(`{kind:'image'|'file'; key: string; name?: string}`). Unknown types stay
+ignored. A mixed message is not a Feishu concept — each message is one type.
+
+**Image path (agent sees the image)** — the transport downloads the image
+bytes (`im.v1.image.get`, needs the existing `im:resource` scope), then the
+bridge saves them through the host's attachment store (`ctx.attachments`
+— `dsh-attachment-local` is part of the dsh-base bundle, so the seam is
+REALLY mounted, unlike `apiProxy`) and injects
+`{type:'image', attachment}` as a content block of the agent's user message
+(the reference is `packages/host/apiproxy/src/api-proxy.ts` →
+`durablePromptContent`: `saveImages(bytes) → refs → {type:'image'}` blocks).
+The turn then runs normally; the model can describe/read the image.
+
+**Image capability gate** — the DeepSeek chat-completions adapter REJECTS
+image content (`UNSUPPORTED_CONTENT` → the whole turn ends in error), while
+pi-ai accepts it. The bridge therefore injects an `image` block ONLY when
+the chat's current model advertises `image` in its input modalities
+(`ctx.llm.listModels` → `inputModalities`, via the same model directory the
+`/model` picker reads). Unknown model capability → conservative: treat the
+image as a file (receipt + name note). A turn must never error because of
+an attachment.
+
+**File path (receipt card)** — the agent cannot read arbitrary file bytes,
+so the file becomes a receipt: the bridge posts a small
+`📎 File received` card (file name when derivable, else the key) and the
+agent's user message carries a text note `[user sent a file: <name>]` so
+the model knows a file exists and can ask for its content. There is no
+downloadable URL for a Feishu `file_key` — the receipt is the surface's
+acknowledgement (user requirement "files become downloadable links" is not
+achievable on the platform; the receipt replaces it).
+
+**States & transitions** — this feature has NO new state machine: it feeds
+the existing turn pipeline. The only new branch is inside
+`deliverTurn` (build the content blocks before `createUserMessage`):
+
+| Step | Image (model supports) | Image (not) / File |
+|---|---|---|
+| Download | `image.get` → bytes + mediaType | `file.get` / `image.get` → bytes + name |
+| Save | `ctx.attachments.saveImage` → ref | — (not injected) |
+| Content | `[text, {type:'image', attachment}]` | `[text note]` |
+| Card | none (streaming card already opens) | `📎 File received` receipt card |
+| Failure | card + text notice, turn still runs text-only | same |
+
+**Card/panel shape** — no new panel views. The receipt card is a plain
+markdown card (like the approval/question notices), posted before
+`beginTurn` so it never interferes with the streaming card.
+
+**Failure modes**:
+- `image.get` / `file.get` download fails (scope missing, key expired):
+  log loudly, post a `⚠️ Could not download` text notice, and run the turn
+  text-only — a broken attachment must never wedge the chat.
+- `ctx.attachments` absent (attachment-local not mounted): feature-detect
+  and degrade — images fall back to the file path (receipt + text note)
+  with a loud log, matching the "hide the row, don't fail" seam rule.
+- `saveImage` rejects bytes (unsupported format, over limits): loud log +
+  text notice; turn continues without the image block.
+- Group message without mention: the existing mention gate drops it before
+  any download — no attachment handling for ignored messages.
+- Stale/unknown `image_key` at download time: same as download failure.
+
+**Acceptance checklist**:
+- [ ] `image` message + image-capable model → agent's user message carries an
+      `image` content block (unit-tested via a fake image-capable llm)
+- [ ] `image` message + text-only model → degrades to a `📎 File received`
+      receipt + name note; turn completes (no UNSUPPORTED_CONTENT error)
+      (unit + integration tested)
+- [ ] `file` message → receipt card posted, agent's message carries the
+      file-name note (unit + integration tested)
+- [ ] Group messages still gated by the mention gate (no attachment handling
+      for ignored messages)
+- [ ] Download failure → loud notice, turn continues text-only (unit-tested)
+- [ ] `attachments` service absent → image degrades to the file path, loud log
+      (unit-tested)
+- [ ] `im:resource` scope reused — manifest unchanged, feishu-setup.md
+      description updated

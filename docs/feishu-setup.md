@@ -119,7 +119,7 @@ Current scopes (权限):
 | `im:chat` | Read chat metadata |
 | `im:chat.members:read` | Read group members (multi-bot / roster awareness) |
 | `im:chat.members:write_only` | Invite members into groups (botmux parity for group flows) |
-| `im:resource` | Upload file messages (`/export`) |
+| `im:resource` | Upload file messages (`/export`) and download inbound image/file messages (attachments) |
 
 ### 4. Publish
 

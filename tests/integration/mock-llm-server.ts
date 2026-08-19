@@ -41,6 +41,12 @@ export interface MockLlmServer {
   /** Number of /chat/completions requests served (for assertions). */
   completionRequests(): number;
   /**
+   * The raw JSON body of the MOST RECENT /chat/completions request, or
+   * `undefined` when none arrived yet. Lets a test assert what content the
+   * agent actually received (e.g. an injected `image` content block).
+   */
+  lastRequestBody(): unknown;
+  /**
    * Serve one scripted response per completion request, in order. The agent
    * loop issues a new completion request after each tool result, so a
    * tool-calling turn needs two entries (tool call, then final answer).
@@ -82,6 +88,7 @@ function sseToolCallDelta(index: number, id: string, name: string, argumentsDelt
 /** Start a mock DeepSeek API server on a random local port. */
 export async function startMockLlmServer(): Promise<MockLlmServer> {
   let completions = 0;
+  let lastBody: unknown;
   let scripts: readonly (readonly MockScriptChunk[])[] | undefined;
   let hold = false;
   let releaseHold: (() => void) | undefined;
@@ -138,8 +145,17 @@ export async function startMockLlmServer(): Promise<MockLlmServer> {
     const url = req.url ?? '';
     if (req.method === 'POST' && url === '/chat/completions') {
       completions += 1;
-      // Drain the request body so the connection is reusable.
-      req.resume();
+      // Capture the full request body for `lastRequestBody()` assertions —
+      // the body is drained anyway, so read it instead of discarding it.
+      const bodyChunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => bodyChunks.push(chunk));
+      req.on('end', () => {
+        try {
+          lastBody = JSON.parse(Buffer.concat(bodyChunks).toString('utf8'));
+        } catch {
+          lastBody = undefined;
+        }
+      });
       // A scripted error responds 500 BEFORE any streaming headers — writing
       // them first would make the 500 throw ("headers already sent") and hang
       // the adapter on an open body.
@@ -194,6 +210,7 @@ export async function startMockLlmServer(): Promise<MockLlmServer> {
         server.close(() => resolve());
       }),
     completionRequests: () => completions,
+    lastRequestBody: () => lastBody,
     setScripts: (next) => {
       scripts = next;
     },
