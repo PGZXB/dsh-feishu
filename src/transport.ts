@@ -391,6 +391,15 @@ export class LarkTransport implements FeishuTransport {
     this.assertOk(response, 'im.v1.message.patch');
   }
 
+  /** Recall (delete) a previously sent message; never throws (fire-and-forget). */
+  async deleteMessage(messageId: string): Promise<void> {
+    try {
+      await this.client.im.v1.message.delete({ path: { message_id: messageId } });
+    } catch (error: unknown) {
+      this.logger?.warn(`message recall failed for ${messageId}: ${String(error)}`);
+    }
+  }
+
   /** Create a message in a chat; assert the API succeeded. */
   private async createMessage(
     chatId: string,

@@ -1,9 +1,12 @@
 /**
- * The panel controller: ONE authoritative view stack per chat and ONE render
- * path (`showPanel`) — the state-machine rule applied to the control panel.
+ * The panel controller: ONE authoritative view stack per PANEL CARD and ONE
+ * render path (`showPanel`) — the state-machine rule applied to the control
+ * panel. Each card owns its stack, so a callback updates the card it was
+ * tapped on, never a different one.
  *
  * Responsibilities (all panel mechanics, no business logic):
- * - the per-chat view stack (`menu` root at the bottom; push/pop/replace);
+ * - the per-(chat, card) view stacks (`menu` root at the bottom; push/pop/
+ *   replace); unknown cards default to the menu root;
  * - the single render path `showPanel` — posts a `⏳ Loading…` placeholder
  *   first for async-data views, then the real card, then re-asserts the
  *   streaming card; a render failure resets the stack to the menu root and
@@ -35,6 +38,8 @@ export interface PanelLogger {
   info(message: string): void;
   warn(message: string): void;
   error(message: string): void;
+  /** Debug tracing (printed only when FEISHU_DEBUG=1). */
+  debug(message: string): void;
 }
 
 /**
@@ -97,63 +102,157 @@ const PANEL_TITLE_BY_INPUT: Record<string, string> = {
 
 /**
  * The panel state machine controller. One instance per bridge; state is
- * per-chat (the view stack and the panel card message id).
+ * per-(chat, card) (each panel card's own view stack, plus the chat's latest
+ * panel card id and palette root).
  */
 export class PanelController {
-  /** The most recently opened panel card per chat (updates it in place). */
+  /** The panel view stack per (chat, card): each panel card owns its own
+   *  stack, so tapping an old card updates THAT card, never a different one
+   *  (user report: "tap this card, another card reacts"). A card that was
+   *  never seen in this process (left on screen before a daemon restart)
+   *  starts at the menu root when first tapped. */
+  private readonly panelViews = new Map<string, Map<string, PanelView[]>>();
+  /** The most recently posted panel card per chat (openPanel posts fresh). */
   private readonly panelMessageIds = new Map<string, string>();
-  /** The panel view stack per chat (menu root at the bottom). */
-  private readonly panelViews = new Map<string, PanelView[]>();
+  /** The palette menu root per chat (page), used by popToMenu. */
+  private readonly panelMessageRoots = new Map<string, PanelView>();
 
   constructor(private readonly host: PanelHost) {}
 
-  /**
-   * Open (or page) the control panel: a FRESH card (user request) and a
-   * reset stack to the menu root.
-   * @param chatId - the chat.
-   * @param page - zero-based palette page.
-   */
-  async openPanel(chatId: string, page = 0): Promise<void> {
-    this.panelViews.set(chatId, [{ kind: 'menu', page }]);
-    this.panelMessageIds.delete(chatId);
-    await this.showPanel(chatId);
+  /** The most recently posted panel card of a chat, or `undefined` when
+   *  none was opened in this process. Commands (slash lines) that open a
+   *  panel view update this card; card callbacks update their OWN card. */
+  latestPanelCardId(chatId: string): string | undefined {
+    return this.panelMessageIds.get(chatId);
+  }
+
+  /** The stack for one (chat, card); unknown cards default to the menu root. */
+  private stacksFor(chatId: string): Map<string, PanelView[]> {
+    let cards = this.panelViews.get(chatId);
+    if (cards === undefined) {
+      cards = new Map();
+      this.panelViews.set(chatId, cards);
+    }
+    return cards;
+  }
+
+  private stackFor(chatId: string, messageId: string): PanelView[] {
+    const stacks = this.stacksFor(chatId);
+    let stack = stacks.get(messageId);
+    if (stack === undefined) {
+      stack = [{ kind: 'menu', page: 0 }];
+      stacks.set(messageId, stack);
+    }
+    return stack;
   }
 
   /**
-   * Render the CURRENT panel view (the stack top) IN PLACE on the panel
-   * card. Async-data views post a `⏳ Loading…` placeholder FIRST (an
-   * immediate patch — Lark otherwise restores the pre-click card while the
-   * data loads), then the real card. A render failure resets the stack to
-   * the menu root and reposts the menu card so the panel is never left
-   * dead.
+   * Open (or page) the control panel: a FRESH card (user request) and a
+   * reset stack to the menu root. The new card is independent — earlier
+   * panel cards stay on screen and keep working (tap them and they update
+   * themselves); the chat therefore never "swaps" one card for another.
    * @param chatId - the chat.
+   * @param page - zero-based palette page.
    */
-  async showPanel(chatId: string): Promise<void> {
-    const view = this.panelViewFor(chatId);
+  async openPanel(chatId: string, page = 0): Promise<string> {
+    this.host.logger.debug(`panel OPEN (menu page ${page}) in chat ${chatId}`);
+    this.panelMessageIds.delete(chatId);
+    this.panelMessageRoots.set(chatId, { kind: 'menu', page });
+    const sent = await this.showPanel(chatId, undefined, { kind: 'menu', page });
+    return sent.messageId;
+  }
+
+  /**
+   * Open a FRESH panel card seeded directly with a sub-view (slash commands
+   * like /sessions or /repo). The card renders that view immediately — no
+   * transient menu card — and owns its own stack. The palette menu root is
+   * still the menu (popToMenu returns there).
+   * @param chatId - the chat.
+   * @param view - the view to seed the new card with.
+   * @returns the new card's message id.
+   */
+  async openPanelView(chatId: string, view: PanelView): Promise<string> {
+    this.host.logger.debug(`panel OPEN VIEW ${view.kind} in chat ${chatId}`);
+    this.panelMessageIds.delete(chatId);
+    this.panelMessageRoots.set(chatId, { kind: 'menu', page: 0 });
+    const sent = await this.showPanel(chatId, undefined, view);
+    return sent.messageId;
+  }
+
+  /**
+   * Render one panel card's current view (the stack top) IN PLACE on THAT
+   * card. `messageId` selects the card; `undefined` (a fresh open) posts a
+   * new card and records it. Async-data views post a `⏳ Loading…`
+   * placeholder FIRST (an immediate patch — Lark otherwise restores the
+   * pre-click card while the data loads), then the real card. A render
+   * failure resets that card's stack to the menu root and reposts the menu
+   * card so the panel is never left dead.
+   * @param chatId - the chat.
+   * @param messageId - the card to update, or `undefined` to post a fresh one.
+   * @param seed - optional initial stack when `messageId` is `undefined`.
+   */
+  async showPanel(
+    chatId: string,
+    messageId: string | undefined,
+    seed?: PanelView,
+  ): Promise<{ messageId: string }> {
+    if (messageId === undefined) {
+      const view = seed ?? { kind: 'menu', page: 0 };
+      const isMenu = view.kind === 'menu';
+      // Async seeds (sessions/pickers) post a Loading placeholder FIRST on
+      // the fresh card, then the real card updates it in place.
+      const initial = isMenu
+        ? this.host.buildMenuCard(chatId, 0)
+        : this.host.isAsyncView(view)
+          ? this.loadingPanelCard(view)
+          : undefined;
+      const sent = await this.postPanelCard(
+        chatId,
+        undefined,
+        initial ?? this.host.buildMenuCard(chatId, 0),
+      );
+      const stack = this.stackFor(chatId, sent.messageId);
+      stack[0] = view;
+      // Non-menu seeds (slash commands: picker/sessions) render their view
+      // onto the fresh card in place — no transient menu card.
+      if (!isMenu) {
+        let card: CardJson;
+        try {
+          card = await this.host.renderPanelView(chatId, view);
+        } catch (error: unknown) {
+          this.host.logger.error(`panel seed render failed: ${String(error)}`);
+          card = this.host.buildMenuCard(chatId, 0);
+        }
+        await this.postPanelCard(chatId, sent.messageId, card);
+      }
+      this.host.syncCard(chatId);
+      return sent;
+    }
+    const stack = this.stackFor(chatId, messageId);
+    const view = stack[stack.length - 1] ?? { kind: 'menu', page: 0 };
     if (this.host.isAsyncView(view)) {
-      await this.postPanelCard(chatId, this.loadingPanelCard(view));
+      await this.postPanelCard(chatId, messageId, this.loadingPanelCard(view));
     }
     let card: CardJson;
     try {
       card = await this.host.renderPanelView(chatId, view);
     } catch (error: unknown) {
       this.host.logger.error(`panel view render failed: ${String(error)}`);
-      // The stack may hold the view that failed to render (e.g. a picker
-      // whose data source is broken). Reset to the menu root and repost the
-      // menu card so page flips and Back keep working.
-      this.panelViews.set(chatId, [this.panelStack(chatId)[0] ?? { kind: 'menu', page: 0 }]);
+      stack[0] = { kind: 'menu', page: 0 };
+      stack.length = 1;
       try {
-        await this.postPanelCard(chatId, this.host.buildMenuCard(chatId, 0));
+        await this.postPanelCard(chatId, messageId, this.host.buildMenuCard(chatId, 0));
       } catch (postError: unknown) {
         this.host.logger.warn(
           `panel menu repost after render failure failed: ${String(postError)}`,
         );
       }
       await this.host.text(chatId, '⚠️ The panel view could not be rendered — see the bot log.');
-      return;
+      return { messageId };
     }
-    await this.postPanelCard(chatId, card);
+    await this.postPanelCard(chatId, messageId, card);
     this.host.syncCard(chatId);
+    return { messageId };
   }
 
   /** The loading placeholder for an async panel view (Back only). */
@@ -171,20 +270,26 @@ export class PanelController {
    * the outcome as a result card, then runs `finish` (a panel transition,
    * which patches again). No per-case patch bookkeeping — one structure.
    * @param chatId - the chat.
+   * @param messageId - the card the operation runs on.
    * @param title - the panel header title to show while operating.
    * @param work - the async mutation; its outcome is posted as a result card.
    * @param finish - the completion exit (e.g. popToMenu / popToDetail).
    */
   async runPanelOperation(
     chatId: string,
+    messageId: string,
     title: string,
     work: () => CommandResult | undefined | Promise<CommandResult | undefined>,
     finish: () => Promise<void>,
   ): Promise<void> {
-    await this.postPanelCard(chatId, buildPanelBusyCard(title));
+    this.host.logger.debug(`panel OPERATION '${title}' on card ${messageId} (chat ${chatId})`);
+    await this.postPanelCard(chatId, messageId, buildPanelBusyCard(title));
     try {
       const result = await work();
       if (result !== undefined) {
+        this.host.logger.debug(
+          `panel operation '${title}' result: ${result.kind} (${result.text.slice(0, 60)})`,
+        );
         await this.host.resultCard(chatId, result);
       }
     } catch (error: unknown) {
@@ -198,81 +303,108 @@ export class PanelController {
   }
 
   /**
-   * Post (or in-place update) the panel card. A NEW card is posted on first
-   * render; every later transition updates the SAME card. A failed update
+   * Post (or in-place update) ONE panel card. With `messageId`, updates that
+   * card (it must be a known panel card — unknown ids post fresh and are
+   * recorded); without it (a fresh open), posts a new card. A failed update
    * falls back to posting a fresh card; a failed render/post surfaces as a
    * text notice — state and the on-screen card never diverge silently.
    * @param chatId - the chat.
+   * @param messageId - the card to update, or `undefined` to post a fresh one.
    * @param card - the panel card to display.
+   * @returns the message id of the card shown.
    */
-  async postPanelCard(chatId: string, card: CardJson): Promise<void> {
-    const existing = this.panelMessageIds.get(chatId);
-    try {
-      if (existing !== undefined) {
-        await this.host.transport.updateCard(existing, card);
-      } else {
-        const sent = await this.host.transport.sendCard(chatId, card);
-        this.panelMessageIds.set(chatId, sent.messageId);
-      }
-    } catch (error: unknown) {
-      this.host.logger.warn(`panel render failed, reposting: ${String(error)}`);
+  async postPanelCard(
+    chatId: string,
+    messageId: string | undefined,
+    card: CardJson,
+  ): Promise<{ messageId: string }> {
+    if (messageId !== undefined) {
+      this.host.logger.debug(
+        `panel update card ${messageId} in chat ${chatId}: ${card.header?.title?.content ?? '(no title)'}`,
+      );
       try {
-        const sent = await this.host.transport.sendCard(chatId, card);
-        this.panelMessageIds.set(chatId, sent.messageId);
-      } catch (fallbackError: unknown) {
-        this.host.logger.error(`panel card could not be posted: ${String(fallbackError)}`);
-        await this.host.text(chatId, '⚠️ The panel card could not be displayed — see the bot log.');
+        await this.host.transport.updateCard(messageId, card);
+        return { messageId };
+      } catch (error: unknown) {
+        this.host.logger.warn(`panel render failed, reposting: ${String(error)}`);
       }
+    }
+    try {
+      const sent = await this.host.transport.sendCard(chatId, card);
+      this.panelMessageIds.set(chatId, sent.messageId);
+      this.host.logger.debug(
+        `panel SENT new card ${sent.messageId} in chat ${chatId} (was updating ${messageId ?? '(none)'}): ${card.header?.title?.content ?? '(no title)'}`,
+      );
+      return sent;
+    } catch (fallbackError: unknown) {
+      this.host.logger.error(`panel card could not be posted: ${String(fallbackError)}`);
+      await this.host.text(chatId, '⚠️ The panel card could not be displayed — see the bot log.');
+      return { messageId: '' };
     }
   }
 
-  /** PUSH a sub-view onto the panel stack and render it (a button entering a
+  /** PUSH a sub-view onto a card's stack and render it (a button entering a
    *  new interface; Back pops back to the parent — stack semantics). */
-  async pushPanel(chatId: string, view: PanelView): Promise<void> {
-    this.panelViews.set(chatId, [...this.panelStack(chatId), view]);
-    await this.showPanel(chatId);
+  async pushPanel(chatId: string, messageId: string, view: PanelView): Promise<void> {
+    this.host.logger.debug(`panel PUSH ${view.kind} on card ${messageId} (chat ${chatId})`);
+    const stack = this.stackFor(chatId, messageId);
+    stack.push(view);
+    await this.showPanel(chatId, messageId);
   }
 
-  /** POP one level (Back); the menu root never pops. */
-  async popPanel(chatId: string): Promise<void> {
-    const stack = this.panelStack(chatId);
-    const next = stack.length > 1 ? stack.slice(0, -1) : stack;
-    this.panelViews.set(chatId, next);
-    await this.showPanel(chatId);
+  /** POP one level on a card (Back); the menu root never pops. */
+  async popPanel(chatId: string, messageId: string): Promise<void> {
+    this.host.logger.debug(`panel POP on card ${messageId} (chat ${chatId})`);
+    const stack = this.stackFor(chatId, messageId);
+    if (stack.length > 1) stack.pop();
+    await this.showPanel(chatId, messageId);
   }
 
-  /** Replace the stack top (e.g. a page flip inside the current view). */
-  async replacePanel(chatId: string, view: PanelView): Promise<void> {
-    const stack = this.panelStack(chatId);
-    this.panelViews.set(chatId, [...stack.slice(0, -1), view]);
-    await this.showPanel(chatId);
+  /** Replace a card's stack top (e.g. a page flip inside the current view). */
+  async replacePanel(chatId: string, messageId: string, view: PanelView): Promise<void> {
+    this.host.logger.debug(`panel REPLACE -> ${view.kind} on card ${messageId} (chat ${chatId})`);
+    const stack = this.stackFor(chatId, messageId);
+    if (stack.length > 0) stack[stack.length - 1] = view;
+    await this.showPanel(chatId, messageId);
   }
 
-  /** POP back to the menu root (keeping its page). */
-  async popToMenu(chatId: string): Promise<void> {
-    const root = this.panelStack(chatId)[0] ?? { kind: 'menu', page: 0 };
-    this.panelViews.set(chatId, [root]);
-    await this.showPanel(chatId);
+  /** POP a card back to the menu root (keeping its page). */
+  async popToMenu(chatId: string, messageId: string): Promise<void> {
+    this.host.logger.debug(`panel popToMenu on card ${messageId} (chat ${chatId})`);
+    const stack = this.stackFor(chatId, messageId);
+    // The menu root: the LAST menu view on this card's stack when present
+    // (page flips keep the page), else the chat's palette root (a card
+    // seeded with a sub-view by a slash command still returns to the menu).
+    const lastMenu = [...stack].reverse().find((view) => view.kind === 'menu');
+    const root = lastMenu ?? this.panelMessageRoots.get(chatId) ?? { kind: 'menu', page: 0 };
+    stack.length = 0;
+    stack.push(root);
+    await this.showPanel(chatId, messageId);
   }
 
-  /** POP back to the session detail (after a rename completes), if present. */
-  async popToDetail(chatId: string): Promise<void> {
-    const stack = this.panelStack(chatId);
+  /** POP a card back to the session detail (after a rename completes), if present. */
+  async popToDetail(chatId: string, messageId: string): Promise<void> {
+    this.host.logger.debug(`panel popToDetail on card ${messageId} (chat ${chatId})`);
+    const stack = this.stackFor(chatId, messageId);
     const detailIndex = stack.findLastIndex((view) => view.kind === 'session-detail');
-    const next =
-      detailIndex >= 0 ? stack.slice(0, detailIndex + 1) : [stack[0] ?? { kind: 'menu', page: 0 }];
-    this.panelViews.set(chatId, next);
-    await this.showPanel(chatId);
+    if (detailIndex >= 0) {
+      stack.length = detailIndex + 1;
+    } else {
+      const root = stack[0] ?? { kind: 'menu', page: 0 };
+      stack.length = 0;
+      stack.push(root);
+    }
+    await this.showPanel(chatId, messageId);
   }
 
-  /** The panel view stack for a chat (the menu root is the stack bottom). */
-  panelStack(chatId: string): PanelView[] {
-    return this.panelViews.get(chatId) ?? [{ kind: 'menu', page: 0 }];
+  /** The panel view stack for one (chat, card) — unknown cards default to menu. */
+  panelStack(chatId: string, messageId: string): PanelView[] {
+    return this.stackFor(chatId, messageId);
   }
 
-  /** The current panel view (the stack top), defaulting to the menu root. */
-  panelViewFor(chatId: string): PanelView {
-    const stack = this.panelStack(chatId);
+  /** The current view of one (chat, card), defaulting to the menu root. */
+  panelViewFor(chatId: string, messageId: string): PanelView {
+    const stack = this.stackFor(chatId, messageId);
     return stack[stack.length - 1] ?? { kind: 'menu', page: 0 };
   }
 }

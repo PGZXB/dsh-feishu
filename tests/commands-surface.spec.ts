@@ -49,6 +49,7 @@ class FakeTransport implements FeishuTransport {
     return { messageId: `msg-${this.sentCards.length}` };
   }
   async updateCard(_messageId: string, _card: CardJson): Promise<void> {}
+  async deleteMessage(_messageId: string): Promise<void> {}
 }
 
 /** A fake agent (cast — only session id is used by the commands). */
@@ -78,7 +79,7 @@ function makeCommands(overrides: Partial<SurfaceCommandHost> = {}): {
       resume: async () => agent,
       create: async () => agent,
     },
-    logger: { info: () => {}, warn: () => {}, error: () => {} },
+    logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
     executeCommand: undefined,
     readSession: undefined,
     permissionPresets: undefined,
@@ -91,7 +92,7 @@ function makeCommands(overrides: Partial<SurfaceCommandHost> = {}): {
     transportMode: undefined,
     unknownCommand: undefined,
     lastInboundAt: undefined,
-    openPanel: async () => {},
+    openPanel: async () => 'msg-panel',
     pushPanel: async () => {},
     ensureAgent: async () => agent,
     resumeSession: async () => ({ kind: 'success', text: 'resumed' }),

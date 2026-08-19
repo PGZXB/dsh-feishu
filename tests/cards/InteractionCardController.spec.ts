@@ -48,6 +48,7 @@ class RecordingTransport implements FeishuTransport {
   async updateCard(_messageId: string, card: CardJson): Promise<void> {
     this.updatedCards.push(card);
   }
+  async deleteMessage(_messageId: string): Promise<void> {}
 }
 
 /** A minimal agent fake (session id only). */

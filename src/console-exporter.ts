@@ -23,13 +23,18 @@ export function formatMessage(message: Pick<Message, 'ts' | 'name' | 'type'>): s
 
 /**
  * Build a console exporter: `error`/`warn` to stderr, `info` to stdout,
- * `debug` dropped (noise; raise the threshold later via config if needed).
+ * `debug` printed ONLY when `FEISHU_DEBUG` is set (the test bot runs with
+ * it; production stays quiet).
  * @returns a cordis logger exporter.
  */
 export function consoleExporter(): Exporter {
+  const debugEnabled = process.env.FEISHU_DEBUG === '1';
   return {
+    // cordis filters by exporter.levels before export(): debug is level 3,
+    // the logger default is 1, so without this debug never reaches us.
+    levels: { default: 3 },
     export(message) {
-      if (message.type === 'debug') return;
+      if (message.type === 'debug' && !debugEnabled) return;
       const line = formatMessage(message);
       const write =
         message.type === 'error' || message.type === 'warn' ? console.error : console.log;

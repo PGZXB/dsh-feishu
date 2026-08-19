@@ -116,7 +116,7 @@ export interface SurfaceCommandHost {
   /** Epoch ms of the last accepted inbound message (for /feishu-status). */
   readonly lastInboundAt: number | undefined;
   /** Open the control panel (the /panel command). */
-  openPanel(chatId: string): Promise<void>;
+  openPanel(chatId: string): Promise<string>;
   /** PUSH a panel sub-view (pickers / sessions list). */
   pushPanel(chatId: string, view: PanelView): Promise<void>;
   /** Ensure a live agent exists for the chat (harness passthrough). */

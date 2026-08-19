@@ -62,6 +62,7 @@ class RecordingTransport implements FeishuTransport {
     }
     this.updated.push(card);
   }
+  async deleteMessage(_messageId: string): Promise<void> {}
 }
 
 function snapshot(overrides: Partial<CardSnapshot> = {}): CardSnapshot {

@@ -67,6 +67,7 @@ class FakeTransport implements FeishuTransport {
     return { messageId: 'msg-1' };
   }
   async updateCard(_messageId: string, _card: CardJson): Promise<void> {}
+  async deleteMessage(_messageId: string): Promise<void> {}
 }
 
 /** Minimal fake of the cordis context surface the plugin touches. */

@@ -48,7 +48,7 @@ export interface MemoryTransportOptions {
 /** One recorded send/update in the outbox. */
 export interface MemoryOutboxRecord {
   readonly seq: number;
-  readonly kind: 'text' | 'card' | 'patch' | 'file' | 'reaction';
+  readonly kind: 'text' | 'card' | 'patch' | 'file' | 'reaction' | 'delete';
   readonly at: number;
   readonly chatId?: string;
   readonly messageId?: string;
@@ -172,6 +172,11 @@ export class MemoryTransport implements FeishuTransport {
   /** Record a card update in the outbox. */
   async updateCard(messageId: string, card: CardJson): Promise<void> {
     this.record({ kind: 'patch', messageId, card });
+  }
+
+  /** Record a message recall in the outbox. */
+  async deleteMessage(messageId: string): Promise<void> {
+    this.record({ kind: 'delete', messageId });
   }
 
   /** Direct same-process delivery (bypasses the file channel) for tests. */

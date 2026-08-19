@@ -95,8 +95,15 @@ class RecordingTransport implements FeishuTransport {
     this.sentCards.push(card);
     return { messageId: `msg-${this.sentCards.length}` };
   }
-  async updateCard(_messageId: string, card: CardJson): Promise<void> {
+  async updateCard(messageId: string, card: CardJson): Promise<void> {
     this.updatedCards.push(card);
+    this.updatedMessageIds.push(messageId);
+  }
+  /** Which card each in-place update targeted (per-card stack assertions). */
+  readonly updatedMessageIds: string[] = [];
+  readonly deletedMessages: string[] = [];
+  async deleteMessage(messageId: string): Promise<void> {
+    this.deletedMessages.push(messageId);
   }
   deliver(message: FeishuMessage): void {
     this.handler?.(message);
@@ -240,7 +247,7 @@ function makeHarness(
     onSessionEvent,
     cards,
     defaultCwd: '/work',
-    logger: { info: () => {}, warn: () => {}, error: () => {} },
+    logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
     ...(options.groupMentionMode !== undefined
       ? { groupMentionMode: options.groupMentionMode }
       : {}),
@@ -739,7 +746,9 @@ describe('Bridge', () => {
       value: { kind: 'panel' },
     });
     expect(h.transport.sentCards).toHaveLength(2);
-    // Second tap (e.g. from a later streaming card) posts ANOTHER fresh card.
+    // Second tap posts ANOTHER fresh card. Each panel card is INDEPENDENT
+    // (own view stack): the first card is not recalled, and a tap on EITHER
+    // card updates that card itself, never the other.
     await h.bridge.handleCardAction({
       messageId: 'mem-2',
       chatId: 'oc_chat',
@@ -749,6 +758,50 @@ describe('Bridge', () => {
     expect(h.transport.sentCards).toHaveLength(3);
     const panel = h.transport.sentCards.at(-1);
     expect(panel?.header?.title.content).toBe('⚙️ dsh-feishu panel');
+    // Neither panel card is recalled (independent cards stay on screen).
+    expect(h.transport.deletedMessages).toEqual([]);
+  });
+
+  it('tapping an OLD panel card updates that card, never the latest one', async () => {
+    const h = makeHarness();
+    await h.bridge.handleMessage(message());
+    await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+    // Card A: first /panel tap posts card #2.
+    await h.bridge.handleCardAction({
+      messageId: 'mem-1',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel' },
+    });
+    const cardA = lastCardId(h);
+    // Card B: a second tap posts card #3 — the latest panel card.
+    await h.bridge.handleCardAction({
+      messageId: 'mem-2',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel' },
+    });
+    const cardB = lastCardId(h);
+    expect(cardB).not.toBe(cardA);
+    h.transport.updatedMessageIds.length = 0;
+    // Drive card A (an old card): its page flip must update A, never B —
+    // the per-card state machine regression ("tap this card, another card
+    // reacts" was the old per-chat single-stack behavior).
+    await h.bridge.handleCardAction({
+      messageId: cardA,
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel-page', page: '1' },
+    });
+    expect(h.transport.updatedMessageIds).toEqual([cardA]);
+    // And card B's own page flip updates B (each card tracks its own page).
+    await h.bridge.handleCardAction({
+      messageId: cardB,
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel-page', page: '1' },
+    });
+    expect(h.transport.updatedMessageIds).toEqual([cardA, cardB]);
   });
   describe('card action interaction matrix (stop/copy/retry/panel)', () => {
     it('stop on a finished (idle) turn explains instead of hanging', async () => {
@@ -1496,6 +1549,7 @@ describe('working directory commands', () => {
     const target = join(SCRATCH, 'my project dir');
     mkdirSync(target, { recursive: true });
     const h = makeHarness();
+
     await h.bridge.handleMessage(message({ text: `/cd ${target}` }));
     expect(h.sessionMap.cwdFor('oc_chat')).toBe(target);
   });
@@ -2138,22 +2192,30 @@ describe('session commands (/sessions /resume /clear /new)', () => {
 describe('panel command palette', () => {
   it('panel-back pops to the PARENT view (stack semantics)', async () => {
     const h = makeHarness({ listSessions: async () => sessionRows() });
+    // Open the panel (fresh card), then drive it with that card's id.
+    await h.bridge.handleCardAction({
+      messageId: 'mem-open',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel' },
+    });
+    const cardId = lastCardId(h);
     // menu → sessions (via the Sessions button) → detail → back → sessions.
     await h.bridge.handleCardAction({
-      messageId: 'mem-1',
+      messageId: cardId,
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'command', name: 'sessions' },
     });
     await h.bridge.handleCardAction({
-      messageId: lastCardId(h),
+      messageId: cardId,
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'session-select', sessionId: 'feishu-session-9' },
     });
     expect(h.transport.updatedCards.at(-1)?.header?.title.content).toBe('🗂️ Session');
     await h.bridge.handleCardAction({
-      messageId: lastCardId(h),
+      messageId: cardId,
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'panel-back' },
@@ -2162,7 +2224,7 @@ describe('panel command palette', () => {
     expect(h.transport.updatedCards.at(-1)?.header?.title.content).toBe('🗂️ Sessions');
     // Back from the list → menu.
     await h.bridge.handleCardAction({
-      messageId: lastCardId(h),
+      messageId: cardId,
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'panel-back' },
@@ -2170,7 +2232,7 @@ describe('panel command palette', () => {
     expect(h.transport.updatedCards.at(-1)?.header?.title.content).toBe('⚙️ dsh-feishu panel');
     // Back from the menu → still the menu (no-op).
     await h.bridge.handleCardAction({
-      messageId: lastCardId(h),
+      messageId: cardId,
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'panel-back' },
@@ -2181,21 +2243,30 @@ describe('panel command palette', () => {
   it('panel-page is ignored outside the menu root', async () => {
     const h = makeHarness({ listSessions: async () => sessionRows() });
     await h.bridge.handleCardAction({
-      messageId: 'mem-1',
+      messageId: 'mem-open',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel' },
+    });
+    const cardId = lastCardId(h);
+    await h.bridge.handleCardAction({
+      messageId: cardId,
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'command', name: 'cd' },
     });
     const before = h.transport.updatedCards.length;
     await h.bridge.handleCardAction({
-      messageId: lastCardId(h),
+      messageId: cardId,
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'panel-page', page: '1' },
     });
     expect(h.transport.updatedCards.length).toBe(before);
     // The cd input card (first panel render) is untouched.
-    expect(h.transport.sentCards.at(-1)?.header?.title.content).toBe('📁 Change working directory');
+    expect(h.transport.updatedCards.at(-1)?.header?.title.content).toBe(
+      '📁 Change working directory',
+    );
   });
 
   it('an empty input submit runs the command with an empty argument', async () => {
@@ -2230,7 +2301,14 @@ describe('panel command palette', () => {
       }),
     });
     await h.bridge.handleCardAction({
-      messageId: 'mem-1',
+      messageId: 'mem-open',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel' },
+    });
+    const cardId = lastCardId(h);
+    await h.bridge.handleCardAction({
+      messageId: cardId,
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'command', name: 'sessions' },
@@ -2260,13 +2338,20 @@ describe('panel command palette', () => {
       }),
     });
     await h.bridge.handleCardAction({
-      messageId: 'mem-1',
+      messageId: 'mem-open',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel' },
+    });
+    const cardId = lastCardId(h);
+    await h.bridge.handleCardAction({
+      messageId: cardId,
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'command', name: 'sessions' },
     });
     // Active view hides the archived session.
-    const active = h.transport.sentCards.at(-1);
+    const active = h.transport.updatedCards.at(-1);
     expect(JSON.stringify(active?.elements)).not.toContain('feishu-session-9');
     // Toggle to archived: only the archived session shows.
     await h.bridge.handleCardAction({
@@ -2636,18 +2721,26 @@ describe('panel command palette', () => {
 
   it('a text-input command opens the input form; submit runs it with the value', async () => {
     const h = makeHarness();
+    await h.bridge.handleCardAction({
+      messageId: 'mem-open',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel' },
+    });
+    const cardId = lastCardId(h);
+
     const { mkdirSync } = await import('node:fs');
     const target = join(SCRATCH, 'cd-panel-input');
     mkdirSync(target, { recursive: true });
     // The cd button opens the input sub-view: a root-level form with one
     // input and a form_submit button (botmux v1 schema).
     await h.bridge.handleCardAction({
-      messageId: 'mem-1',
+      messageId: cardId,
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'command', name: 'cd' },
     });
-    const inputCard = h.transport.sentCards.at(-1);
+    const inputCard = h.transport.updatedCards.at(-1);
     expect(inputCard?.header?.title.content).toBe('📁 Change working directory');
     const form = inputCard?.elements.find((el) => el.tag === 'form');
     expect(form && 'elements' in form ? form.elements.some((e) => e.tag === 'input') : false).toBe(
@@ -2673,7 +2766,15 @@ describe('panel command palette', () => {
   it('a command button executes the same handler as the slash line', async () => {
     const h = makeHarness();
     await h.bridge.handleCardAction({
-      messageId: 'mem-1',
+      messageId: 'mem-open',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel' },
+    });
+    const cardId = lastCardId(h);
+
+    await h.bridge.handleCardAction({
+      messageId: cardId,
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'command', name: 'help' },
@@ -2688,7 +2789,7 @@ describe('panel command palette', () => {
     // clear is destructive: the panel button first shows the confirm view
     // (the panel card already exists after the help exit, so it updates)…
     await h.bridge.handleCardAction({
-      messageId: 'mem-1',
+      messageId: cardId,
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'command', name: 'clear' },
@@ -2711,30 +2812,37 @@ describe('panel command palette', () => {
   it('a mutating command button is refused while working; read-only allowed', async () => {
     const h = makeHarness();
     await h.bridge.handleMessage(message());
+    await h.bridge.handleCardAction({
+      messageId: 'mem-open',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel' },
+    });
+    const cardId = lastCardId(h);
     // clear's panel button opens the confirm view even while working; the
     // gate fires on the CONFIRM button (the mutating step).
     await h.bridge.handleCardAction({
-      messageId: 'mem-1',
+      messageId: cardId,
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'command', name: 'clear' },
     });
-    expect(h.transport.sentCards.at(-1)?.header?.title.content).toBe('✨ New chat');
+    expect(h.transport.updatedCards.at(-1)?.header?.title.content).toBe('✨ New chat');
     await h.bridge.handleCardAction({
-      messageId: lastCardId(h),
+      messageId: cardId,
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'panel-confirm', command: 'clear' },
     });
     expect(h.transport.sentTexts.some((t) => t.text.includes('a turn is running'))).toBe(true);
     await h.bridge.handleCardAction({
-      messageId: lastCardId(h),
+      messageId: cardId,
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'panel-back' },
     });
     await h.bridge.handleCardAction({
-      messageId: 'mem-1',
+      messageId: cardId,
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'command', name: 'help' },
@@ -2930,6 +3038,12 @@ describe('stateful web wrappers (/permission picker, /plan toggle)', () => {
   it('a permission pick applies the preset through the service and replies', async () => {
     const service = new FakePermissionService();
     const h = makeHarness({ permissionPresets: service });
+    await h.bridge.handleCardAction({
+      messageId: 'mem-open',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel' },
+    });
     await h.bridge.handleMessage(message({ text: '/permission' }));
     await h.bridge.handleCardAction({
       messageId: lastCardId(h),
@@ -4152,6 +4266,12 @@ describe('compaction lifecycle (user report regression)', () => {
 
   it('a failed compaction (end with error) finalizes as error and still unlocks the chat', async () => {
     const h = makeHarness({ throttleMs: 0 });
+    await h.bridge.handleCardAction({
+      messageId: 'mem-open',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel' },
+    });
     h.sessionMap.set('oc_chat', 'feishu-session-1');
     await h.bridge.handleEvent('feishu-session-1', compactionStartEvent());
     await h.bridge.handleEvent('feishu-session-1', {
@@ -4181,15 +4301,22 @@ describe('compaction lifecycle (user report regression)', () => {
     });
     await h.bridge.handleMessage(message());
     await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+    await h.bridge.handleCardAction({
+      messageId: 'mem-open',
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel' },
+    });
+    const cardId = lastCardId(h);
     // compact's panel button opens the confirm view first (first panel
     // render posts a card)…
     await h.bridge.handleCardAction({
-      messageId: 'mem-1',
+      messageId: cardId,
       chatId: 'oc_chat',
       operatorOpenId: 'ou_user',
       value: { kind: 'command', name: 'compact' },
     });
-    expect(h.transport.sentCards.at(-1)?.header?.title.content).toBe('🧹 Compact');
+    expect(h.transport.updatedCards.at(-1)?.header?.title.content).toBe('🧹 Compact');
     // …the confirm button runs it: informational reply, no compaction card,
     // chat NOT left working.
     await h.bridge.handleCardAction({

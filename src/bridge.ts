@@ -63,6 +63,8 @@ export interface BridgeLogger {
   info(message: string): void;
   warn(message: string): void;
   error(message: string): void;
+  /** Debug tracing (printed only when FEISHU_DEBUG=1). */
+  debug(message: string): void;
 }
 
 /** Adapts the dsh agent registry to the surface's needs (injectable for tests). */
@@ -507,8 +509,10 @@ export class Bridge {
   /** The seam every panel action runs against: navigation (the panel
    *  controller), the working-state gate, the command registry, and the
    *  Bridge's business helpers. Actions depend on this interface, never on
-   *  Bridge internals (see `panel/actions/PanelAction.ts`). */
-  private panelContext(): PanelActionContext {
+   *  Bridge internals (see `panel/actions/PanelAction.ts`). The context is
+   *  bound to ONE panel card (`messageId`) — every navigation updates that
+   *  card, so tapping an old card updates itself, never a different one. */
+  private panelContext(messageId: string): PanelActionContext {
     return {
       services: {
         transport: this.options.transport,
@@ -526,16 +530,17 @@ export class Bridge {
         llm: this.options.llm,
         listSessions: this.options.listSessions,
       },
+      messageId,
       openPanel: (chatId) => this.openPanel(chatId),
-      pushPanel: (chatId, view) => this.pushPanel(chatId, view),
-      replacePanel: (chatId, view) => this.replacePanel(chatId, view),
-      popPanel: (chatId) => this.popPanel(chatId),
-      popToMenu: (chatId) => this.popToMenu(chatId),
-      popToDetail: (chatId) => this.popToDetail(chatId),
-      panelViewFor: (chatId) => this.panelViewFor(chatId),
-      panelStack: (chatId) => this.panelStack(chatId),
+      pushPanel: (chatId, view) => this.pushPanel(chatId, messageId, view),
+      replacePanel: (chatId, view) => this.replacePanel(chatId, messageId, view),
+      popPanel: (chatId) => this.popPanel(chatId, messageId),
+      popToMenu: (chatId) => this.popToMenu(chatId, messageId),
+      popToDetail: (chatId) => this.popToDetail(chatId, messageId),
+      panelViewFor: (chatId) => this.panelViewFor(chatId, messageId),
+      panelStack: (chatId) => this.panelStack(chatId, messageId),
       runPanelOperation: (chatId, title, work, finish) =>
-        this.runPanelOperation(chatId, title, work, finish),
+        this.runPanelOperation(chatId, messageId, title, work, finish),
       replyResultCard: (chatId, result) => this.replyResultCard(chatId, result),
       replyText: (chatId, text) => this.options.transport.sendText(chatId, text),
       isWorking: (chatId) => this.refuseWhileWorking(chatId),
@@ -578,9 +583,13 @@ export class Bridge {
     const text = stripMentions(message.text);
     const slash = parseSlash(text);
     if (slash !== undefined) {
+      this.options.logger.debug(
+        `message ${message.messageId} -> slash command /${slash.name} (chat ${message.chatId})`,
+      );
       await this.handleCommand(message, slash);
       return;
     }
+    this.options.logger.debug(`message ${message.messageId} -> turn (chat ${message.chatId})`);
     await this.deliverTurn(text === message.text ? message : { ...message, text });
   }
 
@@ -918,63 +927,54 @@ export class Bridge {
   }
 
   /** Open (or page) the control panel: a fresh card + reset stack. */
-  private async openPanel(chatId: string, page = 0): Promise<void> {
-    await this.panel.openPanel(chatId, page);
-  }
-
-  /** Render the current panel view in place (single render path). */
-  private async showPanel(chatId: string): Promise<void> {
-    await this.panel.showPanel(chatId);
+  private async openPanel(chatId: string, page = 0): Promise<string> {
+    return this.panel.openPanel(chatId, page);
   }
 
   /** THE single wrapper for async panel operations (patch-first guarantee). */
   private async runPanelOperation(
     chatId: string,
+    messageId: string,
     title: string,
     work: () => CommandResult | undefined | Promise<CommandResult | undefined>,
     finish: () => Promise<void>,
   ): Promise<void> {
-    await this.panel.runPanelOperation(chatId, title, work, finish);
-  }
-
-  /** Post (or update) the panel card. */
-  private async postPanelCard(chatId: string, card: CardJson): Promise<void> {
-    await this.panel.postPanelCard(chatId, card);
+    await this.panel.runPanelOperation(chatId, messageId, title, work, finish);
   }
 
   /** PUSH a sub-view onto the panel stack and render it. */
-  private async pushPanel(chatId: string, view: PanelView): Promise<void> {
-    await this.panel.pushPanel(chatId, view);
+  private async pushPanel(chatId: string, messageId: string, view: PanelView): Promise<void> {
+    await this.panel.pushPanel(chatId, messageId, view);
   }
 
   /** POP one level (Back); the menu root never pops. */
-  private async popPanel(chatId: string): Promise<void> {
-    await this.panel.popPanel(chatId);
+  private async popPanel(chatId: string, messageId: string): Promise<void> {
+    await this.panel.popPanel(chatId, messageId);
   }
 
   /** Replace the stack top (e.g. a page flip). */
-  private async replacePanel(chatId: string, view: PanelView): Promise<void> {
-    await this.panel.replacePanel(chatId, view);
+  private async replacePanel(chatId: string, messageId: string, view: PanelView): Promise<void> {
+    await this.panel.replacePanel(chatId, messageId, view);
   }
 
   /** POP back to the menu root (keeping its page). */
-  private async popToMenu(chatId: string): Promise<void> {
-    await this.panel.popToMenu(chatId);
+  private async popToMenu(chatId: string, messageId: string): Promise<void> {
+    await this.panel.popToMenu(chatId, messageId);
   }
 
   /** POP back to the session detail (after a rename completes), if present. */
-  private async popToDetail(chatId: string): Promise<void> {
-    await this.panel.popToDetail(chatId);
+  private async popToDetail(chatId: string, messageId: string): Promise<void> {
+    await this.panel.popToDetail(chatId, messageId);
   }
 
   /** The panel view stack for a chat. */
-  private panelStack(chatId: string): PanelView[] {
-    return this.panel.panelStack(chatId);
+  private panelStack(chatId: string, messageId: string): PanelView[] {
+    return this.panel.panelStack(chatId, messageId);
   }
 
   /** The current panel view (the stack top), defaulting to the menu root. */
-  private panelViewFor(chatId: string): PanelView {
-    return this.panel.panelViewFor(chatId);
+  private panelViewFor(chatId: string, messageId: string): PanelView {
+    return this.panel.panelViewFor(chatId, messageId);
   }
 
   /** Construct the panel card for a chat at the given command page. */
@@ -1315,7 +1315,10 @@ export class Bridge {
         // Panel actions are Strategy objects dispatched through the
         // registry; the base-class template owns the lifecycle (gate /
         // transition / busy-first operation).
-        await this.panelActions.handle(this.panelContext(), action);
+        this.options.logger.debug(
+          `panel action ${kind} on card ${action.messageId} (chat ${action.chatId}) -> registry`,
+        );
+        await this.panelActions.handle(this.panelContext(action.messageId), action);
         break;
       }
       case 'approval':
@@ -1392,7 +1395,16 @@ export class Bridge {
         return bridge.lastInboundAtValue;
       },
       openPanel: (chatId) => bridge.openPanel(chatId),
-      pushPanel: (chatId, view) => bridge.pushPanel(chatId, view),
+      // Slash commands (e.g. /sessions) open a panel view on the LATEST
+      // panel card when one exists, else a fresh card seeded with the view.
+      pushPanel: async (chatId, view) => {
+        const latest = bridge.panel.latestPanelCardId(chatId);
+        if (latest === undefined) {
+          await bridge.panel.openPanelView(chatId, view);
+        } else {
+          await bridge.panel.pushPanel(chatId, latest, view);
+        }
+      },
       ensureAgent: (chatId) => bridge.ensureAgent(chatId),
       resumeSession: (chatId, sessionId, cwd) => bridge.resumeSession(chatId, sessionId, cwd),
       isWorking: (chatId) => bridge.refuseWhileWorking(chatId),

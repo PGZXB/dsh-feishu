@@ -2,9 +2,10 @@
  * Panel state-machine shared types: the view stack model, the input/confirm
  * sub-view copy, and the marker payloads stamped on card actions.
  *
- * The panel is a state machine — one authoritative view stack per chat, one
+ * The panel is a state machine — one authoritative view stack PER PANEL CARD
+ * (each card owns its stack: `Map<chatId, Map<messageId, PanelView[]>>`), one
  * render path — NOT a set of ad-hoc patches. Every view renders in place on
- * the SAME panel card; a button PUSHES a sub-view, Back POPS, completion
+ * the card it was tapped on; a button PUSHES a sub-view, Back POPS, completion
  * pops to the menu root.
  *
  * @module @dsh-feishu/dsh-feishu/panel/types

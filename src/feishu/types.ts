@@ -233,6 +233,8 @@ export interface FeishuTransport {
   sendCard(chatId: string, card: CardJson): Promise<SentCard>;
   /** Update an already-sent card in place (silent: no unread notification). */
   updateCard(messageId: string, card: CardJson): Promise<void>;
+  /** Recall (delete) a previously sent message. Fire-and-forget-safe: never throws. */
+  deleteMessage(messageId: string): Promise<void>;
   /**
    * Membership counts for a chat, or `undefined` when unknown/unavailable.
    * Used for the 1-person-1-bot solo relaxation of the group mention gate.

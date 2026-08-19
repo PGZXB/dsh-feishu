@@ -64,8 +64,14 @@ export interface PanelServices {
 /** The seam every panel action runs against. */
 export interface PanelActionContext {
   readonly services: PanelServices;
+  /** The message id of the card this callback came from. Every panel
+   *  navigation updates THAT card — tap a card and it updates itself, never
+   *  a different one (user report: "tap this card, another card reacts").
+   *  A card not seen in this process (left over from before a restart)
+   *  starts at the menu root. */
+  readonly messageId: string;
   /** Panel navigation (stack semantics; every call re-renders in place). */
-  openPanel(chatId: string): Promise<void>;
+  openPanel(chatId: string): Promise<string>;
   pushPanel(chatId: string, view: PanelView): Promise<void>;
   replacePanel(chatId: string, view: PanelView): Promise<void>;
   popPanel(chatId: string): Promise<void>;
