@@ -56,9 +56,28 @@ harness 沙箱（以及本 checkout 的环境）有一些特定规则：
   必须指向它们自己的 `FEISHU_INT_DSH_HOME`（或 `_dev/dsh-home`），绝不要
   使用环境中的值。
 - **`kill $!` 杀死的是 bash 包装器，而不是子进程** —— `nohup` 子进程
-  存活下来，并堆积出并发的 dsh 进程（曾发生过会话损坏事件）。始终使用
-  `pkill -f "dsh --profile feishu-d[e]v"`，并在重启前后验证确实只有一个
-  进程。
+  存活下来，并堆积出并发的 dsh 进程（曾发生过会话损坏事件，以及一次
+  "卡片更新乱套"事件：N 个 bot 进程同时连着同一个飞书 app，各自维护
+  自己的内存面板状态，互相覆盖对方的卡片）。真实进程是
+  `node …/dsh/lib/bin.js --profile <名字>` —— `pkill -f "dsh --profile …"`
+  **匹配不到它**（前面有 `node` 前缀）。按真实命令行杀，并**验证**只剩
+  一个进程：
+
+  ```sh
+  pkill -f "bin.js --profile feishu-d[e]v"   # [e] 防止匹配到自身
+  sleep 2
+  ps aux | grep "bin.js --profile" | grep -v grep   # 期望恰好一个（或零个）
+  ```
+
+  任何重启前后都要数一下 bot 进程 —— 卡片行为异常时，残留的第二个
+  bot 是第一嫌疑。
+- **调试追踪需要 `FEISHU_DEBUG=1` 且 exporter 的 `levels` 配合。**
+  console exporter 只有在 `process.env.FEISHU_DEBUG` 为 `1` 时才输出
+  debug 记录，而 cordis 还会跳过高于 exporter `levels` 阈值的记录 ——
+  在 exporter 上设置 `levels: { default: 3 }`，debug（level 3）才会到达
+  它。之后面板/消息调试行会精确显示每个动作的目标卡片
+  （`panel action <kind> on card <messageId>` → `panel update card
+  <messageId>`），这是排查"哪张卡被更新了"问题的工具。
 
 ## Feishu SDK（lark-oapi）与开放平台 API
 

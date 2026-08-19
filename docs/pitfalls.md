@@ -63,8 +63,29 @@ The harness sandbox (and this checkout's environment) has specific rules:
   `_dev/dsh-home`), never the ambient value.
 - **`kill $!` kills the bash wrapper, not the child** — `nohup` children
   survive and pile up concurrent dsh processes (a corrupt-session
-  incident). Always `pkill -f "dsh --profile feishu-d[e]v"` and verify
-  exactly one process before/after restarts.
+  incident, and a "cards update chaotically" incident: N bot processes all
+  connected to the same Feishu app, each with its own in-memory panel
+  state, overwriting each other's cards). The actual process is
+  `node …/dsh/lib/bin.js --profile <name>` — `pkill -f "dsh --profile …"`
+  does NOT match it (the `node` prefix). Kill by the real command line and
+  VERIFY exactly one process remains:
+
+  ```sh
+  pkill -f "bin.js --profile feishu-d[e]v"   # the [e] guards against self-match
+  sleep 2
+  ps aux | grep "bin.js --profile" | grep -v grep   # expect exactly one (or zero)
+  ```
+
+  Before/after any restart, always count the bot processes — a stray
+  second bot is the first suspect when cards misbehave.
+- **Debug tracing needs `FEISHU_DEBUG=1` AND the exporter's `levels`.** The
+  console exporter filters debug records unless `process.env.FEISHU_DEBUG`
+  is `1`, and cordis further skips records above the exporter's `levels`
+  threshold — set `levels: { default: 3 }` on the exporter so debug
+  (level 3) reaches it. Panel/message debug lines then show exactly which
+  card each action targets (`panel action <kind> on card <messageId>` →
+  `panel update card <messageId>`), the tool for diagnosing "which card
+  updated" questions.
 
 ## Feishu SDK (lark-oapi) and Open Platform API
 

@@ -53,7 +53,7 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 | `src/cards/interactions.ts` | 由审批和提问共享的 pending-interaction 注册表：仅解析一次、超时、过期回调拒绝、中止、释放。 |
 | `src/cards/InteractionCardController.ts` | 审批/提问**卡片流程**：`handleApprovalRequest` / `askQuestions`（单选、多选 toggle、经下一条聊天消息回答的文本题）、交互卡片动作与 `answerFreeText`——依赖 `InteractionCardHost` seam。 |
 | `src/panel/types.ts` | 面板视图联合类型（`PanelView`）与输入/确认子视图文案（`PANEL_INPUT_SPEC`、`PANEL_CONFIRM_SPEC`）。 |
-| `src/panel/PanelController.ts` | 面板**状态机**：每个聊天一份权威视图栈、单一 `showPanel` 渲染路径（异步视图先发 Loading 占位、渲染失败重置菜单）、以及 `runPanelOperation`——唯一的异步操作包装（busy 占位 → 工作 → 结果 → 退出），依赖 `PanelHost` seam。 |
+| `src/panel/PanelController.ts` | 面板**状态机**：每张面板卡一份权威视图栈（`Map<chatId, Map<messageId, PanelView[]>>`——点旧卡就更新那张卡）、单一 `showPanel` 渲染路径（异步视图先发 Loading 占位、渲染失败重置菜单）、以及 `runPanelOperation`——唯一的异步操作包装（busy 占位 → 工作 → 结果 → 退出），依赖 `PanelHost` seam。 |
 | `src/panel/actions/` | 作为 **Strategy 对象**的面板卡片动作：`PanelAction` 基类（模板方法——transition → gate → busy → work → result → exit 顺序）+ `PanelActionRegistry`（kind → action）+ 每个动作族一个类（导航、选择器、session 操作、命令）。 |
 | `src/panel/views/` | 作为 **Strategy 对象**的面板视图：每个视图一个 `PanelViewState`（自声明 `asyncData`）+ `PanelViewRegistry`；选择器是独立状态（`picker:repo` / `picker:model` / `picker:permission`）。 |
 | `src/commands/surface.ts` | surface 命令集：插件自有斜杠命令（及其面板按钮）的完整注册 + `runHarnessCommand`，依赖 `SurfaceCommandHost` seam。 |
@@ -64,7 +64,7 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 
 - **带按钮对等的斜杠命令。** 所有 surface 命令（`/help /status /cancel /cd /repo /group /sessions /resume /clear /new /export /model /feishu-status /schedule`，外加五个 dsh web 包装 `/plan /goal /compact /feedback /permission`，以及 `/panel`——仅斜杠，其调色板按钮隐藏）在斜杠行和面板调色板按钮之间共享同一个处理器。`ctx.commands.execute` 透传处理其余任何命令。`/export` 以文件消息发送会话日志，`/model` 是 surface 原生的（web 的 `/model` 是一个没有宿主命令的客户端弹窗）。
 - **Session 生命周期。** `/sessions` 打开持久化语料的**下拉选择器**（`ctx.sessionQuery.listSessions()` + 批量 `readTitleSnapshots()`，服务缺失时退化为 bound-sessions 兜底）；选择选项后在面板状态机栈上推入**会话详情子视图**。当没有 live agent 时，`/resume <id>` 和详情的 Resume 按钮会重绑该聊天（`SessionMap.set`——1:1 模型）并 `agents.resume`；正在运行的目标会被拒绝；resume 会重置卡片状态（不重放历史）。Rename/Archive 经由宿主 `apiProxy` seam（`sessions.rename`、`workspace.archiveSession`——可逆）。`/clear`/`/new` 非破坏性地重新铸造一个新 session（旧 session 保持已保存且可恢复）。
-- **面板状态机。** 控制面板是每个聊天的一份权威视图栈（`PanelView[]`，菜单根在栈底）加单一渲染路径：按钮 PUSH 子视图（输入表单、确认、sessions、会话详情、选择器），Back POPS，完成时回到菜单。中间步骤原地更新**同一张**面板卡片；最终结果发布一张**新的纯信息结果卡片**（面板原则——用户需求）。
+- **面板状态机。** 控制面板是**每张面板卡**一份权威视图栈（`Map<chatId, Map<messageId, PanelView[]>>`，菜单根在栈底）加单一渲染路径：按钮 PUSH 子视图（输入表单、确认、sessions、会话详情、选择器），Back POPS，完成时回到菜单。点旧面板卡就更新**那张卡**——绝不会更新别的卡（每张卡拥有自己的栈；守护进程重启前留在屏幕上的卡从菜单根开始）。中间步骤原地更新同一张面板卡片；最终结果发布一张**新的纯信息结果卡片**（面板原则——用户需求）。
 - **工作状态 gate。** 回合运行期间，只有只读命令可以执行（`/help /status /feishu-status /schedule /sessions /cancel /group /model /panel`）；变更类命令会带着解释被拒绝，以保持状态机一致（见 ux-spec §8.4）。
 - **工作目录 gate。** 没有显式固定 cwd（/repo 或 /cd）的聊天会带着指引拒绝回合——不创建 session/卡片，消息也不会被记住；`defaultCwd` 永远不会是隐式选择（`requireWorkingDir`，默认为 true）。`/clear` 保留固定；`/resume` 采用被恢复 session 的 cwd（选择器按钮值，或 session-list 查找），使恢复后的聊天保持可用（见 ux-spec §8.3）。
 - **交互式审批。** `ctx.on('approval/request')` 发布一张审批卡片（工具 + 原因，Allow once / Reject），并通过共享的 `InteractionRegistry` 结算——来自卡片回调的 `'allowed-once'` / `'rejected'`，信号中止或超时时的 `'cancelled'`，当聊天未知或卡片失败时 fail-closed 的 `'unavailable'`。已决定的卡片是一张静态的无按钮卡片。

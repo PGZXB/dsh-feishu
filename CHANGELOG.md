@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exactly in devDependencies; the rest of the `@deepseek-ai/*` surface
   moves to `^0.1.0-rc.7`. Compatible with dsh `0.1.0-rc.7` (badge + Note in
   `README.md`, `README.zh.md`).
+- **Panel cards each own an independent state machine.** The panel view
+  stack moved from per-chat to per-(chat, card): tapping an old panel card
+  updates THAT card, never a different one ("tap this card, another card
+  reacts" user report). Slash commands open a fresh card
+  (`openPanel`/`openPanelView`); card callbacks always update their own
+  card; unknown cards (left on screen before a daemon restart) start at the
+  menu root. `FEISHU_DEBUG=1` now traces panel transitions (`panel action
+  <kind> on card <id>` → `panel update card <id>`).
 
 ### Added
 

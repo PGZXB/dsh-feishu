@@ -422,14 +422,24 @@ session rebind/remint can never corrupt the live card.
 
 ### 8.6 Panel palette and the panel state machine
 
-The panel is a **state machine**, not a stateless re-post: one authoritative
-view stack per chat (`PanelView[]`, menu root at the bottom) and one render
-path (`renderPanelView` → the single panel card). A button PUSHES a sub-view
-(`input` form, `confirm`, `sessions`, `session-detail`, `picker`); Back POPS;
-completion/refusal pops to the menu root (or back to the detail after a
-rename). Every transition updates the SAME panel card in place (patch); when
-an update fails the card is reposted and the new id recorded. `/panel` from a
-fresh chat posts a new card and resets the stack to `[menu(page 0)]`.
+The panel is a **state machine**, not a stateless re-post — and the
+authoritative view stack is **PER CARD, not per chat**: `PanelController`
+keeps `Map<chatId, Map<messageId, PanelView[]>>` (menu root at the bottom)
+with one render path (`renderPanelView`). Each panel card owns its own stack,
+so a button on a card PUSHES / POPs / REPLACEs THAT card's stack and renders
+THAT card in place — tapping an old card updates that card, never a different
+one (user report: "tap this card, another card reacts"). A card left on
+screen from before a daemon restart starts at the menu root when first tapped.
+A button PUSHES a sub-view (`input` form, `confirm`, `sessions`,
+`session-detail`, `picker`); Back POPS; completion/refusal pops to the menu
+root (or back to the detail after a rename). Every transition updates the
+same card in place (patch); when an update fails the card is reposted and the
+new id recorded. `/panel` and slash commands that open a view
+(`openPanel` / `openPanelView`) post a FRESH card with a reset stack — earlier
+panel cards stay on screen and keep working independently, the chat never
+"swaps" one card for another. Slash-line commands update the chat's most
+recently posted panel card (`latestPanelCardId`); card callbacks always
+update their OWN card.
 Async-data views (`sessions`, `session-detail`, `picker`) post a **⏳
 Loading… placeholder** (Back only) FIRST, then the real card — the callback
 must carry a panel patch immediately, or Lark restores the pre-click (menu)

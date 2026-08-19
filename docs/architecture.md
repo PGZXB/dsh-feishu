@@ -62,7 +62,7 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 | `src/cards/interactions.ts` | Pending-interaction registry shared by approvals and questions: resolve-once, timeout, stale-callback rejection, abort, disposal. |
 | `src/cards/InteractionCardController.ts` | The approval/question **card flows**: `handleApprovalRequest` / `askQuestions` (single-select, multi-select toggles, free-text via the next chat message), the interaction card actions, and `answerFreeText` — behind the `InteractionCardHost` seam. |
 | `src/panel/types.ts` | Panel view union (`PanelView`) and the input/confirm sub-view copy (`PANEL_INPUT_SPEC`, `PANEL_CONFIRM_SPEC`). |
-| `src/panel/PanelController.ts` | The panel **state machine**: one authoritative view stack per chat, one `showPanel` render path (Loading placeholder first for async views, failure-proof menu reset), and `runPanelOperation` — THE single async-operation wrapper (busy placeholder → work → result → exit) behind the `PanelHost` seam. |
+| `src/panel/PanelController.ts` | The panel **state machine**: one authoritative view stack PER PANEL CARD (`Map<chatId, Map<messageId, PanelView[]>>` — tapping an old card updates THAT card), one `showPanel` render path (Loading placeholder first for async views, failure-proof menu reset), and `runPanelOperation` — THE single async-operation wrapper (busy placeholder → work → result → exit) behind the `PanelHost` seam. |
 | `src/panel/actions/` | Panel card actions as **Strategy objects**: `PanelAction` base class (Template Method — transition → gate → busy → work → result → exit order) + `PanelActionRegistry` (kind → action) + one class per action family (navigators, pickers, session ops, commands). |
 | `src/panel/views/` | Panel view **Strategy objects**: one `PanelViewState` per view (declaring its own `asyncData`) + `PanelViewRegistry`; the pickers are separate states (`picker:repo` / `picker:model` / `picker:permission`). |
 | `src/commands/surface.ts` | The surface command set: full registration of the plugin-owned slash commands (and their panel buttons) + `runHarnessCommand`, behind the `SurfaceCommandHost` seam. |
@@ -94,10 +94,13 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
   remint a fresh session non-destructively (the
   old session stays saved and resumable).
 - **Panel state machine.** The control panel is one authoritative view stack
-  per chat (`PanelView[]`, menu root at the bottom) with a single render
-  path: buttons PUSH sub-views (input form, confirm, sessions, session
-  detail, pickers), Back POPS, completion pops to the menu. Intermediate
-  steps update the SAME panel card in place; a final outcome posts a NEW
+  PER PANEL CARD (`Map<chatId, Map<messageId, PanelView[]>>`, menu root at
+  the bottom) with a single render path: buttons PUSH sub-views (input form,
+  confirm, sessions, session detail, pickers), Back POPS, completion pops to
+  the menu. Tapping an old panel card updates THAT card — never a different
+  one (each card owns its stack; unknown cards from before a daemon restart
+  start at the menu root). Intermediate
+  steps update the same panel card in place; a final outcome posts a NEW
   pure-information result card (the panel principle — user requirement).
 - **Working-state gate.** While a turn runs, only read-only commands run
   (`/help /status /feishu-status /schedule /sessions /cancel /group /model /panel`);

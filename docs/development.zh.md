@@ -130,6 +130,28 @@ timeout 30 dsh --profile feishu-dev       # boot; expect the "[feishu]" log line
 - 无凭据启动会记录"未配置"通知并注册 `feishu-status`；凭据来自 `appId`/`appSecret` 配置键或 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` 环境变量。
 - 清理：`rm -rf _dev/dsh-home`（或删除 `feishu-dev` profile）。
 
+## 运行真实测试 bot
+
+需要对着**真实飞书平台**做端到端验证时（某些卡只在真机上出错、时序问题、面板交互），用仓库自带的测试应用凭据启动 bot，而不是集成测试的 mock。checkout 里有一个 git-ignored 的测试 bot 环境：
+
+```sh
+source _dev/bot-env.sh        # 设置 DSH_HOME=_dev/dsh-home 并 source _dev/secrets.env
+```
+
+`_dev/secrets.env` 存放测试应用的 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` / `DEEPSEEK_API_KEY`；`bot-env.sh` 同时会 unset 代理环境变量（飞书长连接**不能**走沙箱代理）。
+
+- **调试追踪**：设置 `FEISHU_DEBUG=1` 打印面板/消息调试行（`panel action <kind> on card <id>`、`panel update card <id>`、`inbound message … -> slash/turn`）。面板日志会精确显示每个动作更新的是哪张卡——排查"哪张卡响应了"的问题就靠它。
+- **只能有 ONE 个 bot 进程**：每次启动/重启前后都确认只有一个进程连着测试应用（见 `docs/pitfalls.md` → "环境与代理坑"——残留的第二个 bot 会让卡片更新乱套，因为每个进程各自维护自己的面板状态）。
+- **脱离 bash 作业启动**，防止作业结束时回收进程：
+
+  ```sh
+  source _dev/bot-env.sh && export FEISHU_DEBUG=1
+  nohup ./node_modules/.bin/dsh --profile feishu-dev > _dev/bot.log 2>&1 < /dev/null & disown
+  sleep 15 && grep "bridge ready" _dev/bot.log
+  ```
+
+  停止用 `pkill -f "bin.js --profile feishu-d[e]v"`，并确认进程数为零。
+
 ## 添加功能模块
 
 1. 创建 `src/<module>.ts`，在模块及其导出的函数上写 JSDoc。

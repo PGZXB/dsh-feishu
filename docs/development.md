@@ -196,6 +196,40 @@ timeout 30 dsh --profile feishu-dev       # boot; expect the "[feishu]" log line
   or the `FEISHU_APP_ID` / `FEISHU_APP_SECRET` environment variables.
 - Teardown: `rm -rf _dev/dsh-home` (or drop the `feishu-dev` profile).
 
+## Running the live test bot
+
+For end-to-end verification against the REAL Feishu platform (a card that
+only misbehaves on device, a timing issue, a panel interaction), boot the
+bot with the repository's test-app credentials instead of the integration
+mocks. The checkout keeps a git-ignored test-bot environment:
+
+```sh
+source _dev/bot-env.sh        # sets DSH_HOME=_dev/dsh-home + sources _dev/secrets.env
+```
+
+`_dev/secrets.env` holds `FEISHU_APP_ID` / `FEISHU_APP_SECRET` /
+`DEEPSEEK_API_KEY` for the test app; `bot-env.sh` also unsets the proxy vars
+(the Feishu long connection must NOT go through the sandbox proxy).
+
+- **Debug tracing**: set `FEISHU_DEBUG=1` to print the panel/message debug
+  lines (`panel action <kind> on card <id>`, `panel update card <id>`,
+  `inbound message … -> slash/turn`). The panel logs show exactly which
+  card each action updates — the tool for "which card reacted" questions.
+- **Exactly ONE bot process**: before/after every start or restart, verify
+  only one process is attached to the test app (see `docs/pitfalls.md` →
+  "Environment and proxy quirks" — a stray second bot makes cards update
+  chaotically because each process owns its own panel state).
+- **Start detached** so the bash job does not reap it:
+
+  ```sh
+  source _dev/bot-env.sh && export FEISHU_DEBUG=1
+  nohup ./node_modules/.bin/dsh --profile feishu-dev > _dev/bot.log 2>&1 < /dev/null & disown
+  sleep 15 && grep "bridge ready" _dev/bot.log
+  ```
+
+  Stop with `pkill -f "bin.js --profile feishu-d[e]v"` and verify zero
+  processes remain.
+
 ## Adding a feature module
 
 1. Create `src/<module>.ts` with JSDoc on the module and its exported
