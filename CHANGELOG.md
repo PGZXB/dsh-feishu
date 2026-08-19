@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   daily (UTC 02:00) and on demand against the newest `@deepseek-ai/*`
   release (`@next` dist-tag), surfacing upstream breaking changes before
   users hit them.
+- **Session rename/archive actually work.** The session-detail Rename and
+  Archive buttons previously never rendered in real deployments because
+  they depended on the `apiProxy` gateway service, which dsh-base does not
+  mount. The bundle now adds the durable storage domain (`storage` ×3 +
+  `workspace`) and the actions go through `ctx.sessionTitle.rename` and
+  `ctx.workspaceRegistry.archiveSession` — visible on Feishu AND in the dsh
+  web UI sharing the same DSH_HOME. The integration test now asserts the
+  buttons exist and the actions work in the real dsh process (it used to
+  degrade silently).
 
 ## [0.2.0] - 2026-08-17
 

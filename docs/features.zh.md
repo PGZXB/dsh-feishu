@@ -28,3 +28,4 @@ dsh-feishu 的功能列表与 TODO 追踪表。✅ = 已实现，📋 = 计划�
 | 模型重试行 | 模型自动重试不再静默 | 卡内状态行『重试中 (2/3) · 3s』，展开看延迟/原因 | 📋 |
 | 会话统计行 | 持久化的会话用量：轮数、步数、LLM/工具时长、TTFT、tok/s、缓存命中、token | 卡底部一行小字，随 turn 刷新；详情在 `/status` | 📋 |
 | 上下文占用 | 当前会话的上下文窗口占用 | 卡底部百分比，随 turn 刷新；详情（used/capacity、分布）在 `/status` | 📋 |
+| session-rename-archive | Session rename/archive via dsh sessionTitle + workspaceRegistry (web-visible) | — | 📋 |

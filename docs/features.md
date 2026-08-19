@@ -28,3 +28,4 @@ Feature list and TODO tracker for dsh-feishu. ✅ = shipped, 📋 = planned
 | Model retry line | Model auto-retries surface instead of staying silent | Card status line "retrying (2/3) · 3s", expand for delay/reason | 📋 |
 | Session stats line | Durable per-session usage: turns, steps, LLM/tool time, TTFT, tok/s, cache hit, tokens | One small line at the card bottom, refreshed per turn; details in `/status` | 📋 |
 | Context occupancy | Current session's context-window usage | Percent on the card bottom, refreshed per turn; details (used/capacity, breakdown) in `/status` | 📋 |
+| session-rename-archive | Session rename/archive via dsh sessionTitle + workspaceRegistry (web-visible) | — | 📋 |
