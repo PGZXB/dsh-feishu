@@ -340,3 +340,69 @@ bridge 记住每个聊天的**最近被接受的发送者**（及其聊天类型
 ### 11.2 agent 发起的回合渲染为卡片
 
 触发的提醒唤醒 agent，agent 注入一条 `user/message`，其 `source.kind` 为 `'plugin'`（`plugin: 'schedule'`）。流式卡片控制器以该标记为键：没有卡片的聊天收到 plugin 来源的用户消息，即为**agent 发起的回合** —— surface 打开一张全新的 `⏰ Reminder` 卡片，并将响应渲染到完成（绿色）。用户发起的回合不受影响（其 working 卡片状态在任何事件之前就已存在）；resume 绝不重放历史（历史用户消息携带 `source.kind: 'user'`）。`/schedule` 通过折叠会话日志列出活动提醒。
+
+## Part: inbound-attachments
+
+> 入站图片/文件消息不再被忽略：图片注入 agent 的用户消息（模型可见），文件保存到工作区、agent 按路径读取。
+
+### 预期行为
+
+**触发** —— `im.message.receive_v1` 事件的 `message_type` 为 `image` 或 `file`（当前 surface 只接受 `text`）。消息可来自 p2p 或群聊（mention gate 与文本消息完全相同）。
+
+**消息规范化** —— `normalizeMessageEvent` 新增两种类型：
+
+| message_type | content JSON | 规范化结果 |
+|---|---|---|
+| `image` | `{"image_key": "img_v2_…"}` | `text: ''`，一个 image 附件 |
+| `file` | `{"file_key": "file_v2_…"}` | `text: ''`，一个 file 附件 |
+
+`FeishuMessage` 增加可选 `attachments` 数组（`{kind:'image'|'file'; key: string; name?: string}`）。未知类型继续忽略。每条消息只有一种类型（飞书不支持混合消息）。
+
+**图片路径（agent 看到图片）** —— transport 通过**消息资源端点**下载图片字节（`im.v1.messageResource.get` —— `/messages/{message_id}/resources/{image_key}?type=image`；`im.v1.image.get` 只能下载机器人自己上传的图片，所以用户发的图片必须走 message-resource API；复用现有 `im:resource` scope），bridge 再通过宿主附件服务保存（`ctx.attachments` —— `dsh-attachment-local` 是 dsh-base bundle 的一部分，seam 真实装载，不同于 `apiProxy`），并注入 `{type:'image', attachment}` 内容块到 agent 的用户消息（参考 `packages/host/apiproxy/src/api-proxy.ts` → `durablePromptContent`：`saveImages(bytes) → refs → {type:'image'}` 块）。回合正常进行，模型可以描述/读取图片。
+
+**图片能力门禁** —— DeepSeek chat-completions 适配器**拒绝** image 内容（`UNSUPPORTED_CONTENT` → 整轮以错误结束），而 pi-ai 接受。因此 bridge **仅当**当前模型在输入模态中声明支持 `image` 时才注入 image 块（`ctx.llm.listModels` → `inputModalities`，与 `/model` 选择器读同一模型目录）。模型能力未知 → 保守处理：把图片当文件处理（回执 + 名称备注）。附件**绝不能**让回合报错。
+
+**文件路径（保存到工作区，agent 按路径读取）** —— agent 无法把任意文件字节作为内容块摄取（attachment 域仅限图片），但可以读取工作目录下的文件（其 bash/read 工具在 fs sandbox 下运行，`workspace-write` 允许写工作区根）。因此 bridge：
+1. 通过消息资源端点下载文件字节（`im.v1.messageResource.get` —— `/messages/{message_id}/resources/{file_key}?type=file`；`im.v1.file.get` 只能下载机器人自己上传的文件）；
+2. 保存到聊天工作目录 `<cwd>/.dsh_feishu/attachments/<appId>/<messageId>/<key>.<ext>` —— 隐藏子目录，按 app + message 分桶（botmux `attachment-path.ts` 布局），并发聊天/应用互不冲突。文件名 = 资源 key + magic bytes 嗅探的扩展名（pdf/zip/json/xml/png/jpg/gif/webp/txt/bin）——飞书文件事件不带原始文件名。文件永久保留，agent 随时可重读；
+3. 发布 `📎 File received` 回执卡（名称/扩展名 + 路径）；
+4. 注入带**真实路径**的文本备注：
+   `[user sent a file: <key>.<ext> — saved at <cwd>/.dsh_feishu/attachments/<appId>/<messageId>/<file>]`
+   模型可用文件工具读取（read、grep、跑脚本）。
+
+飞书 `file_key` 没有公开下载 URL —— 工作区文件本身就是交付物。下载/保存失败仍发布回执 + 响亮日志，回合以纯文本继续（附件绝不卡死聊天）。
+
+### 状态与转换
+
+本特性**没有新状态机**：喂入现有 turn 管道。唯一新分支在 `deliverTurn`（构建内容块时）：
+
+| 步骤 | 图片（模型支持） | 图片（不支持）/ 文件 |
+|---|---|---|
+| 下载 | message-resource (image) → bytes + mediaType | message-resource (file) → bytes + name |
+| 保存 | `ctx.attachments.saveImage` → ref | 写入 `cwd/.dsh_feishu/attachments/<appId>/<messageId>/<key>.<ext>`（宿主 seam） |
+| 内容 | `[text, {type:'image', attachment}]` | `[text 备注带真实路径]` |
+| 卡片 | 无（streaming 卡已开） | `📎 File received` 回执卡 |
+| 失败 | 卡片 + 文本提示，回合以纯文本继续 | 同上 |
+
+### 卡片/面板形态
+
+无新面板视图。回执卡是普通 markdown 卡（类似审批/提问通知），在 `beginTurn` 前发布，不干扰 streaming 卡。
+
+### 失败模式
+
+- message-resource 下载失败（scope 缺失、key 过期）：响亮日志 + `⚠️ Could not download` 文本提示，回合以纯文本继续——坏附件绝不卡死聊天。
+- `ctx.attachments` 缺失（attachment-local 未装载）：feature-detect 并降级——图片回退到文件路径（回执 + 文本备注）+ 响亮日志，符合 "hide the row, don't fail" seam 规则。
+- `saveImage` 拒绝字节（格式不支持、超限）：响亮日志 + 文本提示；回合继续、无 image 块。
+- 文件保存到工作区失败（cwd 不可写、路径冲突）：响亮日志，回执卡照发，回合以仅名称备注继续。
+- 群消息未 @：现有 mention gate 在下载前丢弃——被忽略的消息不做附件处理。
+- 下载时 key 过期/未知：同下载失败。
+
+### 验收清单
+
+- [ ] `image` 消息 + 支持图片的模型 → agent 用户消息带 `image` 内容块（用假 image-capable llm 单测）
+- [ ] `image` 消息 + 纯文本模型 → 降级为 `📎 File received` 回执 + 名称备注；回合完成（无 UNSUPPORTED_CONTENT 错误）（单测 + 集成测试）
+- [ ] `file` 消息 → 字节保存到 `cwd/.dsh_feishu/attachments/<appId>/<messageId>/`，回执卡发布，agent 消息带**真实保存路径**（单测 + 集成测试）
+- [ ] 保存的文件可被 agent 工具读取（集成测试断言文件落在磁盘上、路径出现在 agent 回合中）
+- [ ] 群消息仍受 mention gate 约束（被忽略的消息不做附件处理）
+- [ ] 下载失败 → 响亮提示，回合以纯文本继续（单测）
+- [ ] `attachments` 服务缺失 → 图片降级到文件路径，响亮日志（单测）
