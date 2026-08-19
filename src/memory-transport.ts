@@ -43,6 +43,12 @@ export interface MemoryTransportOptions {
   readonly botOpenId?: string;
   /** Membership counts served for every chat (mention-gate tests). */
   readonly chatStats?: ChatStats;
+  /**
+   * Seeded inbound attachment bytes, keyed by the resource key
+   * (image_key / file_key). `downloadImage`/`downloadFile` resolve from here,
+   * so integration tests can exercise the download path without Feishu.
+   */
+  readonly attachments?: ReadonlyMap<string, { data: Uint8Array; mediaType?: string }>;
 }
 
 /** One recorded send/update in the outbox. */
@@ -72,6 +78,7 @@ export class MemoryTransport implements FeishuTransport {
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly botOpenId: string | undefined;
   private readonly stats: ChatStats | undefined;
+  private readonly seededAttachments: ReadonlyMap<string, { data: Uint8Array; mediaType?: string }>;
   private seq = 0;
   private readonly inboxDir: string;
   private readonly actionsDir: string;
@@ -85,6 +92,7 @@ export class MemoryTransport implements FeishuTransport {
     this.pollIntervalMs = options.pollIntervalMs ?? 200;
     this.botOpenId = options.botOpenId;
     this.stats = options.chatStats;
+    this.seededAttachments = options.attachments ?? new Map();
   }
 
   /** The bot's own open id configured for this transport. */
@@ -177,6 +185,24 @@ export class MemoryTransport implements FeishuTransport {
   /** Record a message recall in the outbox. */
   async deleteMessage(messageId: string): Promise<void> {
     this.record({ kind: 'delete', messageId });
+  }
+
+  /** Resolve an inbound image's bytes from the seeded attachment map. */
+  async downloadImage(key: string): Promise<{ data: Uint8Array; mediaType: string }> {
+    const seeded = this.seededAttachments.get(key);
+    if (seeded === undefined) {
+      throw new Error(`memory transport: no seeded image for key ${key}`);
+    }
+    return { data: seeded.data, mediaType: seeded.mediaType ?? 'image/png' };
+  }
+
+  /** Resolve an inbound file's bytes from the seeded attachment map. */
+  async downloadFile(key: string): Promise<Uint8Array> {
+    const seeded = this.seededAttachments.get(key);
+    if (seeded === undefined) {
+      throw new Error(`memory transport: no seeded file for key ${key}`);
+    }
+    return seeded.data;
   }
 
   /** Direct same-process delivery (bypasses the file channel) for tests. */

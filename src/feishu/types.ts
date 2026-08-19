@@ -15,7 +15,8 @@ export interface FeishuMessage {
   readonly chatType: 'p2p' | 'group';
   /** The sender's app-scoped open id (not portable across apps). */
   readonly senderOpenId: string;
-  /** Plain text content, mentions stripped for group chats. */
+  /** Plain text content, mentions stripped for group chats. Empty for pure
+   *  image/file messages. */
   readonly text: string;
   /**
    * Open ids of mentioned members (the bot's own open id included when it is
@@ -23,8 +24,26 @@ export interface FeishuMessage {
    * p2p messages and for group messages without mentions.
    */
   readonly mentions: readonly string[];
+  /**
+   * Inbound media attachments carried by the message (image/file message
+   * types). Empty for text messages. Each entry names the platform resource
+   * key the transport can download (image_key / file_key).
+   */
+  readonly attachments: readonly InboundAttachment[];
   /** Unix epoch milliseconds from the Feishu `create_time` string. */
   readonly createdAt: number;
+}
+
+/** One inbound media attachment normalized from a Feishu message. */
+export interface InboundAttachment {
+  /** `image` (image_key) or `file` (file_key) — the download API to use. */
+  readonly kind: 'image' | 'file';
+  /** The platform resource key (`image_key` / `file_key`) to download. */
+  readonly key: string;
+  /** Derivable display name (files); images carry none. */
+  readonly name?: string;
+  /** The sender-declared media type (images only), when derivable. */
+  readonly mediaType?: string;
 }
 
 /** Result of sending a card message. */
@@ -235,6 +254,19 @@ export interface FeishuTransport {
   updateCard(messageId: string, card: CardJson): Promise<void>;
   /** Recall (delete) a previously sent message. Fire-and-forget-safe: never throws. */
   deleteMessage(messageId: string): Promise<void>;
+  /**
+   * Download an inbound image message's bytes (`im.v1.image.get`, keyed by
+   * the normalized `image_key`). Resolves with the raw bytes and the
+   * platform-declared media type; throws when the key is unknown/stale or
+   * the scope is missing.
+   */
+  downloadImage(key: string): Promise<{ data: Uint8Array; mediaType: string }>;
+  /**
+   * Download an inbound file message's bytes (`im.v1.file.get`, keyed by the
+   * normalized `file_key`). Resolves with the raw bytes; throws when the key
+   * is unknown/stale or the scope is missing.
+   */
+  downloadFile(key: string): Promise<Uint8Array>;
   /**
    * Membership counts for a chat, or `undefined` when unknown/unavailable.
    * Used for the 1-person-1-bot solo relaxation of the group mention gate.

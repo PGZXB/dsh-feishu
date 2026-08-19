@@ -45,6 +45,7 @@ describe('normalizeMessageEvent', () => {
       senderOpenId: 'ou_user',
       text: 'hello',
       mentions: [],
+      attachments: [],
       createdAt: 1_700_000_000_000,
     });
   });
@@ -63,9 +64,54 @@ describe('normalizeMessageEvent', () => {
     expect(message?.text).toBe('hi there');
   });
 
-  it('ignores non-text message types', () => {
-    const message = normalizeMessageEvent(rawEvent({ message: { message_type: 'image' } }));
+  it('normalizes an image message into an image attachment', () => {
+    const message = normalizeMessageEvent(
+      rawEvent({
+        message: {
+          message_type: 'image',
+          content: JSON.stringify({ image_key: 'img_v2_abc' }),
+        },
+      }),
+    );
+    expect(message).toEqual({
+      messageId: 'om_msg1',
+      chatId: 'oc_chat',
+      chatType: 'p2p',
+      senderOpenId: 'ou_user',
+      text: '',
+      mentions: [],
+      attachments: [{ kind: 'image', key: 'img_v2_abc' }],
+      createdAt: 1_700_000_000_000,
+    });
+  });
+
+  it('normalizes a file message into a file attachment with its name', () => {
+    const message = normalizeMessageEvent(
+      rawEvent({
+        message: {
+          message_type: 'file',
+          content: JSON.stringify({ file_key: 'file_v2_xyz', file_name: 'notes.txt' }),
+        },
+      }),
+    );
+    expect(message?.attachments).toEqual([{ kind: 'file', key: 'file_v2_xyz', name: 'notes.txt' }]);
+    expect(message?.text).toBe('');
+  });
+
+  it('ignores an image message without a key', () => {
+    const message = normalizeMessageEvent(
+      rawEvent({ message: { message_type: 'image', content: JSON.stringify({}) } }),
+    );
     expect(message).toBeUndefined();
+  });
+
+  it('ignores unsupported message types (audio, post, …)', () => {
+    for (const type of ['audio', 'post', 'media']) {
+      const message = normalizeMessageEvent(
+        rawEvent({ message: { message_type: type, content: '{}' } }),
+      );
+      expect(message).toBeUndefined();
+    }
   });
 
   it('extracts mention open ids', () => {

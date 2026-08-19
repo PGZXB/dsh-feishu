@@ -34,6 +34,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Inbound attachments.** `image` and `file` messages are no longer
+  ignored. An image is downloaded (`im.v1.image.get`), committed through
+  the host's attachment service, and injected as an `image` content block
+  of the agent's user message — but ONLY when the chat's current model
+  advertises image input (the DeepSeek adapter rejects image content with
+  `UNSUPPORTED_CONTENT`, which would error the whole turn; pi-ai accepts
+  it). Under a text-only model (or absent attachment service), the image
+  degrades to a `📎 File received` receipt card + a file-name note, exactly
+  like a `file` message — the message is acknowledged, the turn never
+  errors because of an attachment. Reuses the existing `im:resource`
+  scope.
 - **Canary workflow** (`.github/workflows/canary.yml`): runs the full suite
   daily (UTC 02:00) and on demand against the newest `@deepseek-ai/*`
   release (`@next` dist-tag), surfacing upstream breaking changes before

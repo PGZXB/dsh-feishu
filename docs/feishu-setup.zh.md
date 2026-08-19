@@ -101,7 +101,7 @@ endpoint、宿主机无需公网 IP（所有流量均为出站）。在 **Events
 | `im:chat` | 读取群信息 |
 | `im:chat.members:read` | 读取群成员（多机器人 / 名单感知） |
 | `im:chat.members:write_only` | 拉人进群（群流程，与 botmux 对齐） |
-| `im:resource` | 上传文件消息（`/export`） |
+| `im:resource` | 上传文件消息（`/export`）与下载入站图片/文件消息（附件） |
 
 ### 4. 发布
 

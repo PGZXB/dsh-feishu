@@ -15,13 +15,14 @@
  */
 
 import type { Agent } from '@deepseek-ai/dsh-agent';
-import { createUserMessage } from '@deepseek-ai/dsh-llm';
+import { type ContentBlock, createUserMessage } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
 import {
   InteractionCardController,
   type InteractionCardHost,
 } from './cards/InteractionCardController.js';
 import {
+  buildInboundFileCard,
   buildPanelCard,
   buildResultCard,
   type ModelOptionView,
@@ -36,7 +37,13 @@ import type { StreamingCardManager } from './cards/streaming.js';
 import { registerSurfaceCommands, type SurfaceCommandHost } from './commands/surface.js';
 import { CommandRegistry, type CommandResult, parseSlash } from './commands.js';
 import { resolveDirectory } from './directory.js';
-import type { CardAction, CardJson, FeishuMessage, FeishuTransport } from './feishu/types.js';
+import type {
+  CardAction,
+  CardJson,
+  FeishuMessage,
+  FeishuTransport,
+  InboundAttachment,
+} from './feishu/types.js';
 import { MessageDeduplicator } from './message-dedup.js';
 import { parseModelArg } from './model-args.js';
 import type { PanelActionContext } from './panel/actions/PanelAction.js';
@@ -143,6 +150,12 @@ export interface LlmModelView {
   readonly provider: string;
   readonly id: string;
   readonly name: string;
+  /**
+   * Input modalities the model accepts (`'image'` when it can see images).
+   * Used by the inbound-attachment gate: an `image` content block is only
+   * injected when the chat's current model advertises image input.
+   */
+  readonly inputModalities?: readonly string[];
 }
 
 /** Structural subset of `ctx.llm` (`@deepseek-ai/dsh-llm`, mounted by
@@ -188,6 +201,21 @@ export interface AskQuestionsAnswerLike {
     readonly selected: readonly string[];
     readonly custom?: string;
   }[];
+}
+
+/**
+ * Structural subset of the dsh `ImageAttachmentRef` (the value `saveImage`
+ * resolves with): the agent's `image` content block carries it, so the
+ * surface must pass it through verbatim. Type-only — no runtime dependency
+ * on `@deepseek-ai/dsh-attachment`.
+ */
+export interface ImageAttachmentRefLike {
+  readonly attachmentId: string;
+  readonly mediaType: string;
+  readonly bytes: number;
+  readonly width: number;
+  readonly height: number;
+  readonly name?: string;
 }
 
 /** Options for {@link Bridge}. */
@@ -274,6 +302,20 @@ export interface BridgeOptions {
         archiveSession(sessionId: string): Promise<unknown>;
         readonly archivedSessionIds: readonly string[];
       }
+    | undefined;
+  /**
+   * Inbound-image seam (`ctx.attachments`, mounted by dsh-base's
+   * `dsh-attachment-local`): validate + durably commit one image so the
+   * agent's user message can carry an `image` content block. Resolved lazily
+   * (async-init service). Absent, inbound images degrade to the file path
+   * (receipt + name note) with a loud log — never a dropped message.
+   */
+  readonly getSaveImage?: () =>
+    | ((input: {
+        data: Uint8Array;
+        mediaType: string;
+        name?: string;
+      }) => Promise<ImageAttachmentRefLike>)
     | undefined;
   /**
    * Permission-preset service (`ctx.permissionPresets`, mounted by
@@ -1078,6 +1120,31 @@ export class Bridge {
   }
 
   /**
+   * Whether the chat's current model can SEE images (advertises `image` in
+   * its input modalities). The DeepSeek adapter rejects image content
+   * (`UNSUPPORTED_CONTENT` ends the whole turn in error), so image blocks
+   * are only injected when this is true; unknown → false (conservative: the
+   * image degrades to a file receipt instead of breaking the turn).
+   * @param chatId - the chat whose model to probe.
+   * @returns true when the model advertises image input, false otherwise.
+   */
+  private async supportsImageInput(chatId: string): Promise<boolean> {
+    const selection = this.currentModelSelection(chatId);
+    const llm = this.options.llm;
+    if (selection === undefined || llm === undefined) return false;
+    const [provider, modelId] = selection.split('/');
+    if (provider === undefined || modelId === undefined) return false;
+    try {
+      const models = await llm.listModels(provider);
+      const model = models.find((m) => m.id === modelId);
+      return model?.inputModalities?.includes('image') ?? false;
+    } catch (error: unknown) {
+      this.options.logger.warn(`image-capability probe for ${selection} failed: ${String(error)}`);
+      return false;
+    }
+  }
+
+  /**
    * Load the model catalog for the /model picker: every registered provider
    * × its advisory model list (a failing provider catalog is skipped, loud
    * in the log). `undefined` when the llm service is absent.
@@ -1170,6 +1237,10 @@ export class Bridge {
     // who started this turn.
     this.requesterOpenIds.set(message.chatId, message.senderOpenId);
     this.chatTypes.set(message.chatId, message.chatType === 'group' ? 'group' : 'p2p');
+    // Inbound media (image/file messages): download and inject BEFORE the
+    // turn starts — a broken attachment notices loudly but never wedges the
+    // chat (the turn continues, text-only when the attachment failed).
+    const content = await this.inboundContent(message);
     // Two-stage ack stage 1 + the working card state + the card open (the
     // streaming controller's beginTurn; a failed reaction or card post must
     // never block the turn).
@@ -1180,10 +1251,108 @@ export class Bridge {
     this.options.logger.info(`delivering message ${message.messageId} to agent`);
     agent.followup(
       createUserMessage({
-        content: [{ type: 'text', text: message.text }],
+        content,
         source: { kind: 'user' },
       }),
     );
+  }
+
+  /**
+   * Build the agent-visible content blocks for one inbound message. Text
+   * messages pass through unchanged. Image attachments are downloaded and
+   * committed through the attachment seam, then injected as `image` content
+   * blocks; file attachments post a receipt card and contribute a
+   * file-name note. Failures notice loudly and degrade to text-only — the
+   * message is never silently dropped.
+   * @param message - the normalized inbound message.
+   * @returns the content blocks for the agent's user message.
+   */
+  private async inboundContent(message: FeishuMessage): Promise<ContentBlock[]> {
+    const blocks: ContentBlock[] = [];
+    if (message.text !== '') blocks.push({ type: 'text', text: message.text });
+    // `attachments` is always present on normalized messages; the guard
+    // covers transport-level JSON without the field (defensive only).
+    for (const attachment of message.attachments ?? []) {
+      if (attachment.kind === 'image') {
+        const block = await this.inboundImage(message.chatId, attachment, blocks);
+        if (block !== undefined) blocks.push(block);
+      } else {
+        await this.inboundFile(message.chatId, attachment, blocks);
+      }
+    }
+    if (blocks.length === 0) blocks.push({ type: 'text', text: message.text });
+    return blocks;
+  }
+
+  /** Download + commit one inbound image; returns an `image` content block,
+   *  or `undefined` (with a loud notice) when the download/save fails. The
+   *  image is only injected when the chat's model supports image input — a
+   *  model that cannot see images (e.g. DeepSeek) would otherwise end the
+   *  whole turn in error (`UNSUPPORTED_CONTENT`). On degrade (service absent
+   *  or model not image-capable) the file path appends its note to `blocks`
+   *  — the message is never left content-less. */
+  private async inboundImage(
+    chatId: string,
+    attachment: InboundAttachment,
+    blocks: ContentBlock[],
+  ): Promise<ContentBlock | undefined> {
+    const saveImage = this.options.getSaveImage?.();
+    const imageCapable = await this.supportsImageInput(chatId);
+    if (saveImage === undefined || !imageCapable) {
+      // Attachment service not mounted, or the model cannot see images:
+      // degrade to the file path (receipt + name note) instead of dropping
+      // the message or erroring the turn (seam rule).
+      this.options.logger.warn(
+        `inbound image ${attachment.key}: ${saveImage === undefined ? 'attachment service absent' : `model does not support image input (${this.currentModelSelection(chatId) ?? 'unknown'})`}, treating as a file notice`,
+      );
+      await this.inboundFile(chatId, attachment, blocks);
+      return undefined;
+    }
+    try {
+      const downloaded = await this.options.transport.downloadImage(attachment.key);
+      const saved = await saveImage({
+        data: downloaded.data,
+        mediaType: downloaded.mediaType,
+      });
+      this.options.logger.debug(
+        `inbound image ${attachment.key} -> attachment ${saved.attachmentId} (${downloaded.data.length} bytes)`,
+      );
+      // The image block's `attachment` field is branded (`AttachmentId`) in
+      // the dsh types; the surface passes the saved ref through verbatim —
+      // the agent loop consumes it structurally.
+      return { type: 'image', attachment: saved } as ContentBlock;
+    } catch (error: unknown) {
+      this.options.logger.warn(
+        `inbound image ${attachment.key} could not be processed: ${String(error)}`,
+      );
+      await this.options.transport.sendText(
+        chatId,
+        '⚠️ An image you sent could not be read — sending as text only.',
+      );
+      return undefined;
+    }
+  }
+
+  /** Post the file-receipt card and append a file-name note to `blocks`.
+   *  Failures notice loudly and still let the turn run text-only. */
+  private async inboundFile(
+    chatId: string,
+    attachment: InboundAttachment,
+    blocks: ContentBlock[],
+  ): Promise<void> {
+    const name = attachment.name ?? attachment.key;
+    try {
+      await this.options.transport.downloadFile(attachment.key);
+      this.options.logger.debug(`inbound file ${attachment.key}: ${name} downloaded (${chatId})`);
+    } catch (error: unknown) {
+      this.options.logger.warn(`inbound file ${attachment.key} download failed: ${String(error)}`);
+    }
+    try {
+      await this.options.transport.sendCard(chatId, buildInboundFileCard(name));
+    } catch (error: unknown) {
+      this.options.logger.warn(`file receipt card failed: ${String(error)}`);
+    }
+    blocks.push({ type: 'text', text: `[user sent a file: ${name}]` });
   }
 
   /**

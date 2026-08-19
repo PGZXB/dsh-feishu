@@ -19,6 +19,7 @@ function message(overrides: Partial<FeishuMessage> = {}): FeishuMessage {
     senderOpenId: 'ou_user',
     text: 'hello',
     mentions: [],
+    attachments: [],
     createdAt: 1_700_000_000_000,
     ...overrides,
   };
@@ -128,5 +129,41 @@ describe('MemoryTransport', () => {
     writeFileSync(join(SCRATCH, 'inbox', 'om_int_2.json'), JSON.stringify(message()), 'utf8');
     await vi.advanceTimersByTimeAsync(300);
     expect(delivered).toHaveLength(0);
+  });
+
+  describe('inbound attachment downloads', () => {
+    const bytes = new Uint8Array([1, 2, 3]);
+
+    it('downloadImage resolves seeded bytes with the declared media type', async () => {
+      const transport = new MemoryTransport({
+        dir: SCRATCH,
+        attachments: new Map([['img-1', { data: bytes, mediaType: 'image/jpeg' }]]),
+      });
+      const result = await transport.downloadImage('img-1');
+      expect(result.data).toEqual(bytes);
+      expect(result.mediaType).toBe('image/jpeg');
+    });
+
+    it('downloadImage defaults the media type to png when undeclared', async () => {
+      const transport = new MemoryTransport({
+        dir: SCRATCH,
+        attachments: new Map([['img-1', { data: bytes }]]),
+      });
+      expect((await transport.downloadImage('img-1')).mediaType).toBe('image/png');
+    });
+
+    it('downloadImage throws for an unknown key', async () => {
+      const transport = new MemoryTransport({ dir: SCRATCH });
+      await expect(transport.downloadImage('nope')).rejects.toThrow(/no seeded image/);
+    });
+
+    it('downloadFile resolves seeded bytes and throws for an unknown key', async () => {
+      const transport = new MemoryTransport({
+        dir: SCRATCH,
+        attachments: new Map([['file-1', { data: bytes }]]),
+      });
+      expect(await transport.downloadFile('file-1')).toEqual(bytes);
+      await expect(transport.downloadFile('nope')).rejects.toThrow(/no seeded file/);
+    });
   });
 });

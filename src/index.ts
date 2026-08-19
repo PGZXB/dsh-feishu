@@ -15,6 +15,7 @@
  * approvals, and questions land in later iterations.
  */
 
+import { readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Context } from '@deepseek-ai/cordis';
@@ -299,9 +300,43 @@ function defaultTransportFactory(
           : {}),
         // Solo-group relaxation tests inject member counts ('2u,1b').
         ...(mockStats !== undefined ? { chatStats: mockStats } : {}),
+        // Inbound-attachment integration tests seed download bytes from
+        // FEISHU_MEMORY_ATTACHMENTS: `<key>.bin` holds the bytes, and an
+        // optional `<key>.mediaType` file declares the media type.
+        ...(process.env.FEISHU_MEMORY_ATTACHMENTS !== undefined
+          ? { attachments: loadMemoryAttachments(process.env.FEISHU_MEMORY_ATTACHMENTS) }
+          : {}),
       });
   }
   return createLarkTransport;
+}
+
+/** Load seeded inbound-attachment bytes from a directory (`<key>.bin` +
+ *  optional `<key>.mediaType`). The test-only seam that lets the memory
+ *  transport serve `downloadImage`/`downloadFile` without Feishu. */
+function loadMemoryAttachments(
+  dir: string,
+): ReadonlyMap<string, { data: Uint8Array; mediaType?: string }> {
+  const map = new Map<string, { data: Uint8Array; mediaType?: string }>();
+  let files: string[];
+  try {
+    files = readdirSync(dir);
+  } catch {
+    return map;
+  }
+  for (const file of files) {
+    if (!file.endsWith('.bin')) continue;
+    const key = file.slice(0, -'.bin'.length);
+    const data = new Uint8Array(readFileSync(join(dir, file)));
+    let mediaType: string | undefined;
+    try {
+      mediaType = readFileSync(join(dir, `${key}.mediaType`), 'utf8').trim();
+    } catch {
+      // No media type file: leave undefined (defaults to image/png).
+    }
+    map.set(key, mediaType === undefined ? { data } : { data, mediaType });
+  }
+  return map;
 }
 
 /** Parse `FEISHU_MOCK_CHAT_STATS` ('<users>u,<bots>b' — a test-only seam) into
@@ -478,6 +513,26 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
       const registry = ctx.get('workspaceRegistry');
       return registry === undefined ? undefined : (registry as WorkspaceRegistryLike);
     },
+    // Inbound-image seam: ctx.attachments (dsh-attachment-local, mounted by
+    // dsh-base) validates + durably commits one image. Resolved lazily —
+    // the service initializes asynchronously. Absent, images degrade to the
+    // file path (loud log) instead of dropping the message.
+    getSaveImage: () => {
+      const attachments = ctx.get('attachments') as
+        | {
+            saveImage(input: { data: Uint8Array; mediaType: string; name?: string }): Promise<{
+              attachmentId: string;
+              mediaType: string;
+              bytes: number;
+              width: number;
+              height: number;
+              name?: string;
+            }>;
+          }
+        | undefined;
+      if (attachments === undefined) return undefined;
+      return (input) => attachments.saveImage(input);
+    },
     // Feature-detect the two stateful web-command services (both mounted by
     // dsh-base); absent, the /permission and /plan wrappers degrade.
     ...(ctx.get('permissionPresets') !== undefined
@@ -497,7 +552,7 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
       `permissionPresets=${ctx.get('permissionPresets') !== undefined} ` +
       `planMode=${ctx.get('planMode') !== undefined} ` +
       `agentDefaultModel=${ctx.get('agentDefaultModel') !== undefined} ` +
-      `llm=${ctx.get('llm') !== undefined}`,
+      `llm=${ctx.get('llm') !== undefined} attachments=${ctx.get('attachments') !== undefined}`,
   );
   // Interactive approvals: answer every `approval/request` with a Feishu
   // approval card. Fail-closed semantics are the service's own (throwing or
