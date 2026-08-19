@@ -141,6 +141,17 @@ The `FEISHU_TRANSPORT=memory` seam is also handy for manual debugging:
 inject a fake message by writing a JSON file into
 `$FEISHU_MEMORY_DIR/inbox/` while the surface runs.
 
+### Real-client E2E (feishu.cn web)
+
+The E2E suite drives the **actual feishu.cn web client** in a headless
+browser and exercises the bot like a user: open a chat, send a slash
+command, click card buttons, assert what renders. It runs the real dsh
+process (dedicated bot app, mock LLM) plus a real browser — the only layer
+where the Feishu wire and the client are both real. It is on-demand
+(`pnpm run e2e:ui`) and is **not** part of CI: it needs a real bot app and a
+one-time QR login. Design, constraints, runbook, and the captured web
+selectors live in `docs/e2e-testing.md`.
+
 #### Scenario suite (two real-process suites, two dsh homes)
 
 `tests/integration/scenarios.spec.ts` is a second real-process suite for
@@ -290,6 +301,7 @@ they land.
 | `docs/ux-specification.md` (+ `.zh.md`) | interactive behavior: cards, panels, actions, approvals, questions |
 | `docs/feishu-setup.md` (+ `.zh.md`) | Feishu setup, permissions, events, callbacks (kept in sync with `src/setup/feishu-manifest.json`) |
 | `docs/development.md` (+ `.zh.md`) | dev workflow, commands, gates, toolchain, PR/CI process |
+| `docs/e2e-testing.md` (+ `.zh.md`) | E2E UI suite: scenarios, runbook, constraints, captured web selectors |
 | `docs/features.md` (+ `.zh.md`) | feature list / TODO tracker — every shipped or planned feature updates its row |
 | `docs/pitfalls.md` (+ `.zh.md`) | field-proven failure modes; every entry ships with its regression test |
 | `AGENTS.md` | agent guidance, conventions, workflow (this file) |

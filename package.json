@@ -28,10 +28,10 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc --noEmit",
-    "lint": "biome check src tests",
-    "lint:fix": "biome check --write src tests",
-    "format": "biome format --write src tests",
+    "typecheck": "tsc --noEmit && tsc -p e2e/tsconfig.json --noEmit",
+    "lint": "biome check src tests e2e",
+    "lint:fix": "biome check --write src tests e2e",
+    "format": "biome format --write src tests e2e",
     "test": "vitest run",
     "test:watch": "vitest",
     "setup:feishu": "node scripts/setup-feishu.mjs",
@@ -39,7 +39,10 @@
     "check": "node scripts/check-conventions.mjs",
     "gates": "node scripts/run-gates.mjs",
     "verify": "node scripts/check-conventions.mjs && node scripts/run-gates.mjs",
-    "check:mergeable": "node scripts/check-mergeable.mjs"
+    "check:mergeable": "node scripts/check-mergeable.mjs",
+    "e2e:ui": "node scripts/e2e-ui.mjs",
+    "e2e:ui:headed": "E2E_HEADED=1 node scripts/e2e-ui.mjs",
+    "e2e:login": "node scripts/e2e-login.mjs"
   },
   "dependencies": {
     "@deepseek-ai/dsh-llm": "^0.1.0-rc.8",
@@ -81,7 +84,9 @@
     "@types/qrcode-terminal": "^0.12.2",
     "typescript": "^5.9.3",
     "vitest": "^3.2.7",
-    "@deepseek-ai/dsh-schedule": "^0.1.0-rc.8"
+    "@deepseek-ai/dsh-schedule": "^0.1.0-rc.8",
+    "@playwright/test": "1.62.1"
+
   },
   "dsh": {
     "bundle": {

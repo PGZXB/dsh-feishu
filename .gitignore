@@ -1,9 +1,9 @@
 # Dependencies
 node_modules/
 
-# Build output
-lib/
-dist/
+# Build output (root-level only — `e2e/lib/` is tracked source)
+/lib/
+/dist/
 
 # Test output
 coverage/
@@ -33,3 +33,9 @@ pnpm-debug.log*
 
 # Machine-local pnpm store/cache paths
 .npmrc
+
+# Container-created pnpm store (the e2e container may drop one in cwd)
+.pnpm-store/
+
+# Compiled e2e suite (container-local build output)
+e2e/.build/
