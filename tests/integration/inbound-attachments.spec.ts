@@ -117,16 +117,28 @@ function seedAttachment(key: string, bytes: Uint8Array, mediaType?: string): voi
 /** Pin the chat's working directory via /cd (the gate refuses turns until
  *  an explicit directory is chosen). */
 async function pinWorkingDir(chatId: string): Promise<void> {
-  sendMessage(chatId, `/cd ${INT_CWD}`);
-  await waitFor(
-    'the /cd confirmation',
-    () =>
-      readOutbox().some(
-        (r) =>
-          r.kind === 'text' && r.chatId === chatId && r.text?.includes('Working directory set to'),
-      ),
-    30_000,
-  );
+  // /cd is idempotent (setCwd + remint), so retry it if the confirmation
+  // does not arrive — the first /cd can be delayed by dsh cold-start on a
+  // slow CI runner (the bridge reports ready before every service settles).
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    sendMessage(chatId, `/cd ${INT_CWD}`);
+    try {
+      await waitFor(
+        'the /cd confirmation',
+        () =>
+          readOutbox().some(
+            (r) =>
+              r.kind === 'text' &&
+              r.chatId === chatId &&
+              r.text?.includes('Working directory set to'),
+          ),
+        20_000,
+      );
+      return;
+    } catch (error) {
+      if (attempt === 3) throw error;
+    }
+  }
 }
 
 describe.skipIf(!integrationReady)('integration > inbound-attachments', () => {
@@ -236,11 +248,17 @@ describe.skipIf(!integrationReady)('integration > inbound-attachments', () => {
     const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82]);
     seedAttachment('img-1', png, 'image/png');
     sendMessage(chatId, '', [{ kind: 'image', key: 'img-1' }]);
-    await waitFor(
-      'the degraded file receipt card',
-      () => cardMarkdowns('📎 File received').length > 0,
-      30_000,
-    );
+    try {
+      await waitFor(
+        'the degraded file receipt card',
+        () => cardMarkdowns('📎 File received').length > 0,
+        30_000,
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stdout ---\n${stdout}\n--- dsh stderr ---\n${stderr}`,
+      );
+    }
     // The turn completes normally (green card) — no UNSUPPORTED_CONTENT error.
     await waitFor(
       'the green final card patch',
@@ -257,11 +275,17 @@ describe.skipIf(!integrationReady)('integration > inbound-attachments', () => {
     seedAttachment('file-1', new TextEncoder().encode(content));
     const { chatId } = await boot();
     sendMessage(chatId, '', [{ kind: 'file', key: 'file-1' }], 'om-saved-file-1');
-    await waitFor(
-      'the file receipt card',
-      () => cardMarkdowns('📎 File received').length > 0,
-      30_000,
-    );
+    try {
+      await waitFor(
+        'the file receipt card',
+        () => cardMarkdowns('📎 File received').length > 0,
+        30_000,
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stdout ---\n${stdout}\n--- dsh stderr ---\n${stderr}`,
+      );
+    }
     // The bytes are on disk at <cwd>/.dsh_feishu/attachments/<appId>/<messageId>/file-1.txt.
     const savedFile = join(
       INT_CWD,
@@ -294,11 +318,17 @@ describe.skipIf(!integrationReady)('integration > inbound-attachments', () => {
     const { chatId } = await boot();
     sendMessage(chatId, '', [{ kind: 'image', key: 'missing' }]);
     // Receipt card appears (degrade path)…
-    await waitFor(
-      'the degraded file receipt card',
-      () => cardMarkdowns('📎 File received').length > 0,
-      30_000,
-    );
+    try {
+      await waitFor(
+        'the degraded file receipt card',
+        () => cardMarkdowns('📎 File received').length > 0,
+        30_000,
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stdout ---\n${stdout}\n--- dsh stderr ---\n${stderr}`,
+      );
+    }
     // …and the turn completes normally.
     await waitFor(
       'the green final card patch',

@@ -96,20 +96,32 @@ function writeAction(action: unknown): void {
 /** Pin the chat's working directory via /cd (the gate refuses turns until
  *  an explicit directory is chosen). */
 async function pinWorkingDir(chatId: string, mention: readonly string[] = []): Promise<void> {
-  if (mention.length > 0) {
-    sendGroupMessage(chatId, `/cd ${INT_CWD}`, mention);
-  } else {
-    sendMessage(chatId, `/cd ${INT_CWD}`);
+  // /cd is idempotent (setCwd + remint), so retry it if the confirmation
+  // does not arrive — the first /cd can be delayed by dsh cold-start on a
+  // slow CI runner (the bridge reports ready before every service settles).
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    if (mention.length > 0) {
+      sendGroupMessage(chatId, `/cd ${INT_CWD}`, mention);
+    } else {
+      sendMessage(chatId, `/cd ${INT_CWD}`);
+    }
+    try {
+      await waitFor(
+        'the /cd confirmation',
+        () =>
+          readOutbox().some(
+            (r) =>
+              r.kind === 'text' &&
+              r.chatId === chatId &&
+              r.text?.includes('Working directory set to'),
+          ),
+        20_000,
+      );
+      return;
+    } catch (error) {
+      if (attempt === 3) throw error;
+    }
   }
-  await waitFor(
-    'the /cd confirmation',
-    () =>
-      readOutbox().some(
-        (r) =>
-          r.kind === 'text' && r.chatId === chatId && r.text?.includes('Working directory set to'),
-      ),
-    30_000,
-  );
 }
 
 function sendMessage(chatId: string, text: string): void {
