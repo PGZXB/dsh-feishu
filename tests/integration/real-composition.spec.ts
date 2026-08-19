@@ -3492,6 +3492,26 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
             ),
           30_000,
         );
+        // Read the submit button's value FROM the rendered card — a real
+        // click submits exactly that value. The session id must be carried
+        // through the input-card render (regression: it used to be dropped,
+        // so a real submit silently did nothing; tests previously
+        // constructed the action directly and bypassed the render).
+        const renameInputCard = [...readOutbox()]
+          .reverse()
+          .find(
+            (r) =>
+              (r.kind === 'card' || r.kind === 'patch') &&
+              r.card?.header?.title.content === '✏️ Rename session',
+          );
+        const renameSubmitButton = renameInputCard?.card?.elements
+          .flatMap((el) => (el.tag === 'form' ? el.elements : []))
+          .find((a) => 'name' in a && a.name === 'panel-input-submit');
+        const renameSubmitValue =
+          renameSubmitButton && 'value' in renameSubmitButton
+            ? renameSubmitButton.value
+            : undefined;
+        expect(renameSubmitValue?.sessionId).toBeTruthy();
         writeAction({
           messageId: 'mem-detail-rename-submit',
           chatId,
@@ -3499,7 +3519,7 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
           value: {
             kind: 'panel-input-submit',
             command: 'rename-session',
-            sessionId: firstOption ?? '',
+            sessionId: renameSubmitValue?.sessionId ?? '',
           },
           formValue: { title: 'Renamed by integration test' },
         });

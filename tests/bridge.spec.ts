@@ -1850,6 +1850,12 @@ describe('session commands (/sessions /resume /clear /new)', () => {
     });
     const inputCard = h.transport.updatedCards.at(-1);
     expect(inputCard?.header?.title.content).toBe('✏️ Rename session');
+    // Regression (user-reported): the input card's submit button must carry
+    // the session id in its value, or a real click submits with an empty id
+    // and the rename silently does nothing. The integration suite used to
+    // bypass this by constructing the submit action directly with the id.
+    const inputJson = JSON.stringify(inputCard?.elements ?? []);
+    expect(inputJson).toContain('"sessionId":"feishu-session-9"');
     await h.bridge.handleCardAction({
       messageId: lastCardId(h),
       chatId: 'oc_chat',

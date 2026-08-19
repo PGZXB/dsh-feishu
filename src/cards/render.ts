@@ -784,6 +784,8 @@ export interface PanelInputCardOptions {
   readonly placeholder: string;
   readonly submitLabel: string;
   readonly command: string;
+  /** Carried through to the submit button value (e.g. the session id for rename). */
+  readonly sessionId?: string;
 }
 
 /**
@@ -817,7 +819,11 @@ export function buildInputCard(options: PanelInputCardOptions): CardJson {
             // 200530, user-tested).
             name: 'panel-input-submit',
             action_type: 'form_submit',
-            value: actionValue({ kind: 'panel-input-submit', command: options.command }),
+            value: actionValue({
+              kind: 'panel-input-submit',
+              command: options.command,
+              ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
+            }),
           },
         ],
       },

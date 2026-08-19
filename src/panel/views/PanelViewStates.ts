@@ -50,6 +50,9 @@ export class InputViewState implements PanelViewState {
         placeholder: spec.placeholder,
         submitLabel: spec.submitLabel,
         command: view.command,
+        ...(view.kind === 'input' && view.sessionId !== undefined
+          ? { sessionId: view.sessionId }
+          : {}),
       }),
     );
   }
