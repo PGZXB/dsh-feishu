@@ -37,6 +37,8 @@ export interface PanelServices {
     info(message: string): void;
     warn(message: string): void;
     error(message: string): void;
+    /** Debug tracing (printed only when FEISHU_DEBUG=1). */
+    debug(message: string): void;
   };
   readonly defaultCwd: string;
   readonly requireWorkingDir: boolean | undefined;

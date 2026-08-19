@@ -140,7 +140,7 @@ source _dev/bot-env.sh        # 设置 DSH_HOME=_dev/dsh-home 并 source _dev/se
 
 `_dev/secrets.env` 存放测试应用的 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` / `DEEPSEEK_API_KEY`；`bot-env.sh` 同时会 unset 代理环境变量（飞书长连接**不能**走沙箱代理）。
 
-- **调试追踪**：设置 `FEISHU_DEBUG=1` 打印面板/消息调试行（`panel action <kind> on card <id>`、`panel update card <id>`、`inbound message … -> slash/turn`）。面板日志会精确显示每个动作更新的是哪张卡——排查"哪张卡响应了"的问题就靠它。
+- **调试追踪**：设置 `FEISHU_DEBUG=1` 打印整个 surface 的调试行（完整行图见下文 "Debug logging" 一节）。面板日志会精确显示每个动作更新的是哪张卡——排查"哪张卡响应了"的问题就靠它。
 - **只能有 ONE 个 bot 进程**：每次启动/重启前后都确认只有一个进程连着测试应用（见 `docs/pitfalls.md` → "环境与代理坑"——残留的第二个 bot 会让卡片更新乱套，因为每个进程各自维护自己的面板状态）。
 - **脱离 bash 作业启动**，防止作业结束时回收进程：
 
@@ -151,6 +151,23 @@ source _dev/bot-env.sh        # 设置 DSH_HOME=_dev/dsh-home 并 source _dev/se
   ```
 
   停止用 `pkill -f "bin.js --profile feishu-d[e]v"`，并确认进程数为零。
+
+## Debug logging（调试日志）
+
+`FEISHU_DEBUG=1` 会打开整个 surface 的 `logger.debug(...)` 追踪（由 console exporter 门控；不设置环境变量时生产环境保持安静——见 `docs/pitfalls.md` → "调试追踪需要 FEISHU_DEBUG=1 且 exporter 的 levels"）。每行日志遵循 `<module> <action> <entities>` 格式并带真实 id，可以沿着一条消息、一张卡、一个 session 或聊天在管道里走一遍：
+
+| 模块 | 你会看到的行 | 回答的问题 |
+|---|---|---|
+| `index` | `[feishu] starting surface`、`routing: …`、`host services: …` | 生效的配置是什么；哪些宿主服务已装载（rename/archive/permission/plan/llm） |
+| `session-map` | `session map: minted/remint/chat X now Y/cwd …` | 聊天为什么换了新 session；cwd 变更 |
+| `bridge` | `message <id> -> slash/turn`、`command /x -> <kind>`、`agent resolve … live/resume/create/rebind`、`session event <type>`、`card action <kind> on card <id>` | 消息路由；命令结果；agent 阶梯；每个入站事件 |
+| `transport` | `transport ws state -> …`、`sendText/sendCard/updateCard/…` | 长连接健康；每个出站消息/卡片及其 id |
+| `streaming` | `streaming open/patch/finalize`、`streaming event <type> -> chat`、`tool/call`/`tool/result` | 回合生命周期；哪张卡在何时被 patch；工具活动 |
+| `panel` | `panel action <kind> on card <id>`、`panel OPEN/PUSH/POP/…`、`panel update card <id>` | 每次点击更新的是哪张卡（每卡状态机） |
+| `interactions` | `approval request <id>`、`approval <id> settled`、`question <id> settled` | 审批/提问生命周期 |
+| `actions` | `panel action <kind>: transition/refused/operation` | 面板 gate 与生命周期决策 |
+
+一次完整回合自顶向下读像这样：`inbound message m1 -> turn` → `streaming beginTurn` → `streaming event assistant/chunk` → `streaming tool/call` → `transport updateCard <card-id>` → `streaming event turn/end` → `streaming finalize <status>`。行为异常时，grep 消息/卡片/session id，链条断裂处就是 surface 丢失它的位置。
 
 ## 添加功能模块
 

@@ -75,9 +75,14 @@ harness 沙箱（以及本 checkout 的环境）有一些特定规则：
   console exporter 只有在 `process.env.FEISHU_DEBUG` 为 `1` 时才输出
   debug 记录，而 cordis 还会跳过高于 exporter `levels` 阈值的记录 ——
   在 exporter 上设置 `levels: { default: 3 }`，debug（level 3）才会到达
-  它。之后面板/消息调试行会精确显示每个动作的目标卡片
-  （`panel action <kind> on card <messageId>` → `panel update card
-  <messageId>`），这是排查"哪张卡被更新了"问题的工具。
+  它。之后调试行可以沿着消息/卡片/session 走完整个管道（见
+  `docs/development.md` → "Debug logging"）：面板行精确显示每个动作的
+  目标卡片（`panel action <kind> on card <messageId>` → `panel update
+  card <messageId>`），这是排查"哪张卡被更新了"问题的工具。每个模块
+  收到的 logger 接口（`StreamingLogger`、`InteractionLogger`、
+  `TransportLogger`、面板 context logger）都暴露 `debug`；**新模块**如果
+  要记日志，必须接收带 `debug` 的 logger 并用它做追踪——不设环境变量
+  时生产环境保持安静。
 
 ## Feishu SDK（lark-oapi）与开放平台 API
 

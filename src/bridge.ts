@@ -607,6 +607,9 @@ export class Bridge {
         this.refuseWhileWorking(message.chatId) &&
         !Bridge.ALLOWED_WHILE_WORKING.has(slash.name)
       ) {
+        this.options.logger.debug(
+          `command /${slash.name} refused: a turn is running (chat ${message.chatId})`,
+        );
         await this.replyCommandResult(message.chatId, {
           kind: 'error',
           text: 'a turn is running — stop it first.',
@@ -618,6 +621,9 @@ export class Bridge {
         senderOpenId: message.senderOpenId,
         rawInput: slash.rawInput,
       });
+      this.options.logger.debug(
+        `command /${slash.name} (chat ${message.chatId}) -> ${result.kind}`,
+      );
       await this.replyCommandResult(message.chatId, result);
       return;
     }
@@ -627,14 +633,19 @@ export class Bridge {
     if (this.options.executeCommand !== undefined && agent !== undefined) {
       const result = await this.options.executeCommand(agent, line);
       if (result !== undefined) {
+        this.options.logger.debug(
+          `command ${line} -> dsh passthrough (chat ${message.chatId}) -> ${result.kind}`,
+        );
         await this.replyCommandResult(message.chatId, result);
         return;
       }
     }
     if (this.options.unknownCommand === 'passthrough') {
+      this.options.logger.debug(`unknown command ${line}: passthrough as a turn`);
       await this.deliverTurn(message);
       return;
     }
+    this.options.logger.debug(`unknown command ${line}: replying with help hint`);
     await this.options.transport.sendText(
       message.chatId,
       `Unknown command ${line} — send /help to list commands.`,
@@ -1129,7 +1140,12 @@ export class Bridge {
   private async deliverTurn(message: FeishuMessage): Promise<void> {
     // A free-text question answer is captured here — the reply is the
     // answer, not a turn (bypasses the working-directory gate).
-    if (this.interactions.answerFreeText(message.chatId, message.text)) return;
+    if (this.interactions.answerFreeText(message.chatId, message.text)) {
+      this.options.logger.debug(
+        `message ${message.messageId}: captured as free-text question answer`,
+      );
+      return;
+    }
     // The working-directory gate: without an explicit /repo pick or /cd the
     // chat is "unavailable" — DSH refuses to work there (user requirement:
     // a new group must choose a repo before any turn runs). The refused
@@ -1138,6 +1154,9 @@ export class Bridge {
       this.options.requireWorkingDir !== false &&
       this.options.sessionMap.cwdFor(message.chatId) === undefined
     ) {
+      this.options.logger.debug(
+        `message ${message.messageId}: refused by working-directory gate (no cwd)`,
+      );
       await this.options.transport.sendText(
         message.chatId,
         '⚠️ No working directory chosen yet — DSH won’t start work here until you pick one. ' +
@@ -1187,12 +1206,18 @@ export class Bridge {
       );
       return false;
     }
-    if (message.chatType === 'p2p') return true;
+    if (message.chatType === 'p2p') {
+      this.options.logger.debug(
+        `message ${message.messageId}: p2p chat -> respond (no mention gate)`,
+      );
+      return true;
+    }
     const mode = this.options.groupMentionMode ?? 'always';
     const botOpenId = this.options.transport.getBotOpenId();
     const mentioned = botOpenId !== undefined && message.mentions.includes(botOpenId);
     switch (mode) {
       case 'never':
+        this.options.logger.debug(`message ${message.messageId}: group mode 'never' -> respond`);
         return true;
       case 'ambient': {
         // Answer un-@ messages, but yield when the message redirects to
@@ -1203,6 +1228,9 @@ export class Bridge {
           this.options.logger.info('ignoring group message: redirect to another member (ambient)');
           return false;
         }
+        this.options.logger.debug(
+          `message ${message.messageId}: group mode 'ambient' -> respond (mentioned=${mentioned})`,
+        );
         return true;
       }
       case 'topic':
@@ -1210,7 +1238,12 @@ export class Bridge {
       // always (a non-@ reply inside an owned thread will need the thread
       // concept to relax the gate).
       case 'always': {
-        if (mentioned) return true;
+        if (mentioned) {
+          this.options.logger.debug(
+            `message ${message.messageId}: group mode 'always', bot mentioned -> respond`,
+          );
+          return true;
+        }
         const stats = await this.options.transport.chatStats(message.chatId);
         if (stats !== undefined && isSoloGroup(stats)) {
           this.options.logger.info(
@@ -1237,12 +1270,21 @@ export class Bridge {
    */
   private async resolveAgent(chatId: string, sessionId: string, cwd: string): Promise<Agent> {
     const live = this.options.agentStore.get(sessionId);
-    if (live !== undefined) return live;
+    if (live !== undefined) {
+      this.options.logger.debug(`agent resolve ${chatId}: live agent for session ${sessionId}`);
+      return live;
+    }
+    this.options.logger.debug(
+      `agent resolve ${chatId}: session ${sessionId} not live, trying resume`,
+    );
     try {
       return await this.options.agentStore.resume(sessionId);
     } catch (resumeError: unknown) {
       this.options.logger.warn(`resume of session ${sessionId} failed: ${String(resumeError)}`);
     }
+    this.options.logger.debug(
+      `agent resolve ${chatId}: resume failed, creating session ${sessionId}`,
+    );
     try {
       return await this.options.agentStore.create(sessionId, cwd);
     } catch (createError: unknown) {
@@ -1250,6 +1292,7 @@ export class Bridge {
         `session ${sessionId} unusable (${String(createError)}); rebinding a fresh session`,
       );
       const freshId = this.options.sessionMap.remint(chatId);
+      this.options.logger.debug(`agent resolve ${chatId}: rebinding fresh session ${freshId}`);
       return this.options.agentStore.create(freshId, cwd);
     }
   }
@@ -1260,6 +1303,7 @@ export class Bridge {
    * @param event - the session event.
    */
   async handleEvent(sessionId: string, event: SessionEvent): Promise<void> {
+    this.options.logger.debug(`session event ${event.type} from ${sessionId}`);
     await this.streaming.handleEvent(sessionId, event);
   }
 
@@ -1282,6 +1326,9 @@ export class Bridge {
     const kind = action.value.kind;
     this.options.logger.info(
       `card action ${kind ?? '?'} from ${action.operatorOpenId} in ${action.chatId}`,
+    );
+    this.options.logger.debug(
+      `card action ${kind ?? '?'} on card ${action.messageId} (chat ${action.chatId})`,
     );
     switch (kind) {
       case 'stop':

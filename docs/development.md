@@ -211,10 +211,10 @@ source _dev/bot-env.sh        # sets DSH_HOME=_dev/dsh-home + sources _dev/secre
 `DEEPSEEK_API_KEY` for the test app; `bot-env.sh` also unsets the proxy vars
 (the Feishu long connection must NOT go through the sandbox proxy).
 
-- **Debug tracing**: set `FEISHU_DEBUG=1` to print the panel/message debug
-  lines (`panel action <kind> on card <id>`, `panel update card <id>`,
-  `inbound message … -> slash/turn`). The panel logs show exactly which
-  card each action updates — the tool for "which card reacted" questions.
+- **Debug tracing**: set `FEISHU_DEBUG=1` to print debug lines across the
+  whole surface (see "Debug logging" below for the full line map). The
+  panel logs show exactly which card each action updates — the tool for
+  "which card reacted" questions.
 - **Exactly ONE bot process**: before/after every start or restart, verify
   only one process is attached to the test app (see `docs/pitfalls.md` →
   "Environment and proxy quirks" — a stray second bot makes cards update
@@ -229,6 +229,33 @@ source _dev/bot-env.sh        # sets DSH_HOME=_dev/dsh-home + sources _dev/secre
 
   Stop with `pkill -f "bin.js --profile feishu-d[e]v"` and verify zero
   processes remain.
+
+## Debug logging
+
+`FEISHU_DEBUG=1` enables `logger.debug(...)` tracing across the whole
+surface (the console exporter gates it; without the env var production
+stays quiet — see `docs/pitfalls.md` → "Debug tracing needs
+`FEISHU_DEBUG=1` AND the exporter's `levels`"). Every log line follows
+`<module> <action> <entities>` with the real ids, so you can trace one
+message, card, session, or chat through the pipeline:
+
+| Module | Lines you will see | Answers |
+|---|---|---|
+| `index` | `[feishu] starting surface`, `routing: …`, `host services: …` | What config won; which host services mounted (rename/archive/permission/plan/llm) |
+| `session-map` | `session map: minted/remint/chat X now Y/cwd …` | Why a chat got a new session; cwd pin changes |
+| `bridge` | `message <id> -> slash/turn`, `command /x -> <kind>`, `agent resolve … live/resume/create/rebind`, `session event <type>`, `card action <kind> on card <id>` | Message routing; command outcomes; the agent ladder; every inbound event |
+| `transport` | `transport ws state -> …`, `sendText/sendCard/updateCard/…` | Long-connection health; every outbound message/card with ids |
+| `streaming` | `streaming open/patch/finalize`, `streaming event <type> -> chat`, `tool/call`/`tool/result` | Turn lifecycle; which card was patched and when; tool activity |
+| `panel` | `panel action <kind> on card <id>`, `panel OPEN/PUSH/POP/…`, `panel update card <id>` | Which card each tap updates (per-card state machine) |
+| `interactions` | `approval request <id>`, `approval <id> settled`, `question <id> settled` | Approval/question lifecycle |
+| `actions` | `panel action <kind>: transition/refused/operation` | Panel gate and lifecycle decisions |
+
+A full turn reads top to bottom like: `inbound message m1 -> turn` →
+`streaming beginTurn` → `streaming event assistant/chunk` →
+`streaming tool/call` → `transport updateCard <card-id>` →
+`streaming event turn/end` → `streaming finalize <status>`. When
+something misbehaves, grep for the message/card/session id and the
+discontinuity in the chain marks where the surface lost it.
 
 ## Adding a feature module
 

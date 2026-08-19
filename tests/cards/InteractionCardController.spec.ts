@@ -72,7 +72,7 @@ function makeController(): {
   const agent = makeAgent();
   const host: InteractionCardHost = {
     transport,
-    logger: { info: () => {}, warn: () => {}, error: () => {} },
+    logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
     sessionMap,
     cardMentionFor: () => '',
     syncCard: () => {},

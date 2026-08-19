@@ -86,13 +86,22 @@ export abstract class PanelAction {
    */
   async run(ctx: PanelActionContext, action: CardAction): Promise<void> {
     if (this.isTransition(ctx, action)) {
+      ctx.services.logger.debug(
+        `panel action ${this.kind}: transition on card ${action.messageId} (chat ${action.chatId})`,
+      );
       await this.transition?.(ctx, action);
       return;
     }
     if (ctx.isWorking(action.chatId) && !this.isAllowedWhileWorking(ctx, action)) {
+      ctx.services.logger.debug(
+        `panel action ${this.kind}: refused while working (chat ${action.chatId})`,
+      );
       await ctx.replyText(action.chatId, '⚠️ a turn is running — stop it first.');
       return;
     }
+    ctx.services.logger.debug(
+      `panel action ${this.kind}: operation on card ${action.messageId} (chat ${action.chatId})`,
+    );
     await ctx.runPanelOperation(
       action.chatId,
       this.busyTitle(ctx, action),

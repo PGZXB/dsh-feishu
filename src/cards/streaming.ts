@@ -23,7 +23,7 @@ export interface StreamingCardOptions {
   /** Injectable clock for tests. */
   readonly now?: () => number;
   /** Logger for patch failures (defaults to a silent no-op). */
-  readonly logger?: { warn(message: string): void };
+  readonly logger?: { warn(message: string): void; debug(message: string): void };
 }
 
 /** One chat's active card state (bridge owns the turn content). */
@@ -46,7 +46,7 @@ export class StreamingCardManager {
    *  collapse toggle on a finished card). */
   private readonly lastMessageIds = new Map<string, string>();
   private readonly throttleMs: number;
-  private readonly logger: { warn(message: string): void };
+  private readonly logger: { warn(message: string): void; debug(message: string): void };
 
   /**
    * @param transport - the Feishu transport used to send and patch cards.
@@ -57,7 +57,7 @@ export class StreamingCardManager {
     options: StreamingCardOptions = {},
   ) {
     this.throttleMs = options.throttleMs ?? 400;
-    this.logger = options.logger ?? { warn: () => {} };
+    this.logger = options.logger ?? { warn: () => {}, debug: () => {} };
   }
 
   /**
@@ -77,10 +77,12 @@ export class StreamingCardManager {
   async open(chatId: string, title: string): Promise<void> {
     const stale = this.active.get(chatId);
     if (stale !== undefined) {
+      this.logger.debug(`streaming open ${chatId}: finalizing stale card ${stale.messageId} first`);
       await this.finalize(chatId, 'done');
     }
     const card = buildCard({ title, content: '', rows: [], status: 'working' });
     const { messageId } = await this.transport.sendCard(chatId, card);
+    this.logger.debug(`streaming open ${chatId}: card ${messageId} '${title}'`);
     this.lastMessageIds.set(chatId, messageId);
     this.active.set(chatId, {
       chatId,
@@ -101,7 +103,12 @@ export class StreamingCardManager {
    */
   patch(chatId: string, snapshot: CardSnapshot): void {
     const card = this.active.get(chatId);
-    if (card === undefined || card.closed) return;
+    if (card === undefined || card.closed) {
+      this.logger.debug(
+        `streaming patch ${chatId}: ignored (${card === undefined ? 'no active card' : 'card closed'})`,
+      );
+      return;
+    }
     card.pending = snapshot;
     if (card.timer === null && !card.flushing) {
       card.timer = setTimeout(() => {
@@ -125,6 +132,7 @@ export class StreamingCardManager {
       clearTimeout(card.timer);
       card.timer = null;
     }
+    this.logger.debug(`streaming finalize ${chatId}: card ${card.messageId} -> ${status}`);
     if (card.pending !== null) {
       card.pending = { ...card.pending, status };
       await this.flush(card);
@@ -158,6 +166,9 @@ export class StreamingCardManager {
         const snapshot = card.pending;
         card.pending = null;
         try {
+          this.logger.debug(
+            `streaming patch ${card.chatId}: card ${card.messageId} -> ${snapshot.status} (${snapshot.content.length} chars, ${snapshot.rows.length} rows)`,
+          );
           await this.transport.updateCard(card.messageId, buildCard(snapshot) as CardJson);
         } catch (error: unknown) {
           this.logger.warn(`streaming card patch failed (continuing): ${String(error)}`);

@@ -71,6 +71,8 @@ export interface TransportLogger {
   info(message: string): void;
   warn(message: string): void;
   error(message: string): void;
+  /** Debug tracing (printed only when FEISHU_DEBUG=1). */
+  debug(message: string): void;
 }
 
 /** Credentials for the Feishu app. */
@@ -205,18 +207,22 @@ export class LarkTransport implements FeishuTransport {
       onReady: () => {
         this.connectionStateValue = 'ready';
         this.logger?.info('feishu long connection ready');
+        this.logger?.debug('transport ws state -> ready');
       },
       onError: (error) => {
         this.connectionStateValue = 'error';
         this.logger?.error(`feishu long connection failed: ${error.message}`);
+        this.logger?.debug(`transport ws state -> error: ${error.message}`);
       },
       onReconnecting: () => {
         this.connectionStateValue = 'reconnecting';
         this.logger?.warn('feishu long connection reconnecting');
+        this.logger?.debug('transport ws state -> reconnecting');
       },
       onReconnected: () => {
         this.connectionStateValue = 'ready';
         this.logger?.info('feishu long connection reconnected');
+        this.logger?.debug('transport ws state -> ready (reconnected)');
       },
     });
   }
@@ -338,11 +344,13 @@ export class LarkTransport implements FeishuTransport {
 
   /** Send a plain text message to a chat. */
   async sendText(chatId: string, text: string): Promise<void> {
+    this.logger?.debug(`transport sendText -> ${chatId}: ${text.slice(0, 80)}`);
     await this.createMessage(chatId, 'text', JSON.stringify({ text }));
   }
 
   /** Upload a file and deliver it as a file message (`/export`). */
   async sendFile(chatId: string, fileName: string, content: string): Promise<void> {
+    this.logger?.debug(`transport sendFile -> ${chatId}: ${fileName} (${content.length} chars)`);
     const uploaded = await this.client.im.v1.file.create({
       data: { file_type: 'stream', file_name: fileName, file: Buffer.from(content, 'utf8') },
     });
@@ -356,6 +364,7 @@ export class LarkTransport implements FeishuTransport {
 
   /** Add an emoji reaction to a message (two-stage ack). */
   async addReaction(messageId: string, emojiType: string): Promise<string | undefined> {
+    this.logger?.debug(`transport addReaction ${messageId}: ${emojiType}`);
     const response = await this.client.im.v1.messageReaction.create({
       data: { reaction_type: { emoji_type: emojiType } },
       path: { message_id: messageId },
@@ -366,6 +375,7 @@ export class LarkTransport implements FeishuTransport {
 
   /** Remove a reaction previously added by this bot. */
   async removeReaction(messageId: string, reactionId: string): Promise<void> {
+    this.logger?.debug(`transport removeReaction ${messageId}: ${reactionId}`);
     const response = await this.client.im.v1.messageReaction.delete({
       path: { message_id: messageId, reaction_id: reactionId },
     });
@@ -379,11 +389,17 @@ export class LarkTransport implements FeishuTransport {
     if (messageId === undefined) {
       throw new FeishuApiError('im.v1.message.create', -1, 'response carried no message_id');
     }
+    this.logger?.debug(
+      `transport sendCard -> ${chatId}: ${messageId} (${card.header?.title?.content ?? '(no title)'})`,
+    );
     return { messageId };
   }
 
   /** Update an already-sent card in place (silent: no unread notification). */
   async updateCard(messageId: string, card: CardJson): Promise<void> {
+    this.logger?.debug(
+      `transport updateCard ${messageId}: ${card.header?.title?.content ?? '(no title)'}`,
+    );
     const response = await this.client.im.v1.message.patch({
       data: { content: JSON.stringify(card) },
       path: { message_id: messageId },
@@ -393,6 +409,7 @@ export class LarkTransport implements FeishuTransport {
 
   /** Recall (delete) a previously sent message; never throws (fire-and-forget). */
   async deleteMessage(messageId: string): Promise<void> {
+    this.logger?.debug(`transport deleteMessage ${messageId}`);
     try {
       await this.client.im.v1.message.delete({ path: { message_id: messageId } });
     } catch (error: unknown) {

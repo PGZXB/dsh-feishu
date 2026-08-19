@@ -117,6 +117,8 @@ export interface StreamingLogger {
   info(message: string): void;
   warn(message: string): void;
   error(message: string): void;
+  /** Debug tracing (printed only when FEISHU_DEBUG=1). */
+  debug(message: string): void;
 }
 
 /**
@@ -213,6 +215,9 @@ export class StreamingCardController {
    * @param title - the streaming-card title.
    */
   async beginTurn(chatId: string, messageId: string, title: string): Promise<void> {
+    this.host.logger.debug(
+      `streaming beginTurn ${chatId}: message ${messageId} '${title}' (two-stage ack stage 1)`,
+    );
     const reactionId = await this.host.transport
       .addReaction(messageId, this.reactionEmojis().received)
       .catch((error: unknown) => {
@@ -324,7 +329,15 @@ export class StreamingCardController {
    */
   async handleEvent(sessionId: string, event: SessionEvent): Promise<void> {
     const chatId = this.host.sessionMap.chatFor(sessionId);
-    if (chatId === undefined) return;
+    if (chatId === undefined) {
+      this.host.logger.debug(
+        `streaming event ${event.type} from session ${sessionId}: no chat mapped, ignored`,
+      );
+      return;
+    }
+    this.host.logger.debug(
+      `streaming event ${event.type} from session ${sessionId} -> chat ${chatId}`,
+    );
     // Compaction lifecycle (a /compact transaction, not a turn) is handled
     // BEFORE the working-state gate because it owns its card lifecycle: the
     // card opens at compaction/start (immediate feedback for the button tap)
@@ -351,6 +364,9 @@ export class StreamingCardController {
         typeof event.data.source.plugin === 'string'
       ) {
         const plugin = event.data.source.plugin;
+        this.host.logger.debug(
+          `streaming agent-initiated card for chat ${chatId}: plugin '${plugin}'`,
+        );
         const title =
           plugin === 'schedule'
             ? '⏰ Reminder'
@@ -373,7 +389,12 @@ export class StreamingCardController {
         }
         state = this.cardStates.get(chatId);
       }
-      if (state === undefined || state.status !== 'working') return;
+      if (state === undefined || state.status !== 'working') {
+        this.host.logger.debug(
+          `streaming event ${event.type} for chat ${chatId}: ${state === undefined ? 'no card state' : `state is '${state.status}'`}`,
+        );
+        return;
+      }
     }
     switch (event.type) {
       case 'assistant/chunk': {
@@ -399,6 +420,9 @@ export class StreamingCardController {
       }
       case 'tool/call': {
         settleOpenThink(state);
+        this.host.logger.debug(
+          `streaming tool/call ${chatId}: ${event.data.name} (${event.data.callId})`,
+        );
         const cwd = this.host.sessionMap.cwdFor(chatId) ?? this.host.defaultCwd;
         upsertRow(state, {
           kind: 'tool',
@@ -417,6 +441,9 @@ export class StreamingCardController {
       case 'tool/result': {
         const resultText = assistantText(event.data.message.content[0]?.content ?? []);
         const status = event.data.error !== undefined ? 'error' : 'done';
+        this.host.logger.debug(
+          `streaming tool/result ${chatId}: call ${event.data.message.content[0]?.toolCallId ?? '(unknown)'} -> ${status}`,
+        );
         const index = state.rows.findIndex(
           (row): row is ToolRow =>
             row.kind === 'tool' && row.id === event.data.message.content[0]?.toolCallId,
@@ -518,6 +545,7 @@ export class StreamingCardController {
     chatId: string,
     event: CompactionLifecycleEvent,
   ): Promise<void> {
+    this.host.logger.debug(`streaming compaction ${event.type} for chat ${chatId}`);
     switch (event.type) {
       case 'compaction/start': {
         let state = this.cardStates.get(chatId);
@@ -594,6 +622,9 @@ export class StreamingCardController {
    * @param action - the normalized card callback.
    */
   async handleStreamingAction(action: CardAction): Promise<void> {
+    this.host.logger.debug(
+      `streaming action ${action.value.kind} on card ${action.messageId} (chat ${action.chatId})`,
+    );
     switch (action.value.kind) {
       case 'stop': {
         const sessionId = this.host.sessionMap.get(action.chatId);

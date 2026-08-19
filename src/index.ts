@@ -383,12 +383,18 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
   ctx.logger.info(`[feishu] starting surface for app ${credentials.appId}`);
 
   const dataDir = config.dataDir ?? defaultDataDir();
-  const sessionMap = new SessionMap(join(dataDir, 'session-map.json'));
+  const sessionMap = new SessionMap(join(dataDir, 'session-map.json'), undefined, logger);
   sessionMap.load();
+  logger.debug(`[feishu] dataDir=${dataDir}`);
   const allowedUsers = resolveAllowedUsers(config);
   const allowedChats = resolveAllowedChats(config);
   const groupMentionMode = resolveGroupMentionMode(config);
   const unknownCommand = resolveUnknownCommand(config);
+  logger.debug(
+    `[feishu] routing: allowedChats=${allowedChats !== undefined && allowedChats.length > 0 ? allowedChats.join(',') : '(all)'} ` +
+      `allowedUsers=${allowedUsers !== undefined && allowedUsers.length > 0 ? allowedUsers.length : '(all)'} ` +
+      `groupMentionMode=${groupMentionMode ?? 'always'} unknownCommand=${unknownCommand ?? 'reply'}`,
+  );
   const transportFactory = deps.createTransport ?? defaultTransportFactory(dataDir);
   const transport = transportFactory(credentials, logger);
   const cards = new StreamingCardManager(transport, {
@@ -485,6 +491,14 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
       : {}),
     ...(ctx.get('llm') !== undefined ? { llm: ctx.get('llm') as LlmService } : {}),
   });
+  logger.debug(
+    `[feishu] host services: sessionTitle=${ctx.get('sessionTitle') !== undefined} ` +
+      `workspaceRegistry=${ctx.get('workspaceRegistry') !== undefined} ` +
+      `permissionPresets=${ctx.get('permissionPresets') !== undefined} ` +
+      `planMode=${ctx.get('planMode') !== undefined} ` +
+      `agentDefaultModel=${ctx.get('agentDefaultModel') !== undefined} ` +
+      `llm=${ctx.get('llm') !== undefined}`,
+  );
   // Interactive approvals: answer every `approval/request` with a Feishu
   // approval card. Fail-closed semantics are the service's own (throwing or
   // no answerer yields `unavailable`), so an absent service is logged, not

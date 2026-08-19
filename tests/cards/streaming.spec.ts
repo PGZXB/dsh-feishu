@@ -130,7 +130,7 @@ describe('StreamingCardManager', () => {
     const warnings: string[] = [];
     const manager = new StreamingCardManager(transport, {
       throttleMs: 100,
-      logger: { warn: (message) => warnings.push(message) },
+      logger: { warn: (message) => warnings.push(message), debug: () => {} },
     });
     await manager.open('oc_chat', 'hello');
     manager.patch('oc_chat', snapshot({ content: 'first (fails)' }));

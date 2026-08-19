@@ -87,6 +87,7 @@ function makeFakeContext(
     info: (msg: string) => void logs.push(`info: ${msg}`),
     warn: (msg: string) => void logs.push(`warn: ${msg}`),
     error: (msg: string) => void logs.push(`error: ${msg}`),
+    debug: (msg: string) => void logs.push(`debug: ${msg}`),
     exporter: vi.fn(() => () => {}),
   };
   const commands = {

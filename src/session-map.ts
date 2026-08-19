@@ -25,17 +25,25 @@ export type SessionIdMinter = () => string;
 /**
  * @param file - path of the durable JSON mapping file.
  * @param mint - session-id minter; defaults to `feishu-<epoch-ms>`.
+ * @param logger - optional logger for binding changes (debug tracing; printed
+ *   only when FEISHU_DEBUG=1).
  */
 export class SessionMap {
   private readonly byChat = new Map<string, string>();
   private readonly bySession = new Map<string, string>();
   private readonly cwds = new Map<string, string>();
   private loaded = false;
+  private readonly logger:
+    | { debug(message: string): void; warn(message: string): void }
+    | undefined;
 
   constructor(
     private readonly file: string,
     private readonly mint: SessionIdMinter = () => `feishu-${Date.now()}`,
-  ) {}
+    logger?: { debug(message: string): void; warn(message: string): void },
+  ) {
+    this.logger = logger;
+  }
 
   /**
    * Load persisted mappings. A missing or unreadable file is a no-op; a
@@ -62,6 +70,7 @@ export class SessionMap {
     } catch {
       // Missing file (first run) or unreadable content: start empty.
     }
+    this.logger?.debug(`session map: loaded ${this.byChat.size} chat binding(s) from ${this.file}`);
   }
 
   /**
@@ -74,6 +83,7 @@ export class SessionMap {
     const existing = this.byChat.get(chatId);
     if (existing !== undefined) return existing;
     const sessionId = this.mint();
+    this.logger?.debug(`session map: minted ${sessionId} for chat ${chatId}`);
     this.set(chatId, sessionId);
     this.persist();
     return sessionId;
@@ -104,6 +114,10 @@ export class SessionMap {
    * @param cwd - the absolute working directory.
    */
   setCwd(chatId: string, cwd: string): void {
+    const previous = this.cwds.get(chatId);
+    if (previous !== cwd) {
+      this.logger?.debug(`session map: chat ${chatId} cwd ${previous ?? '(none)'} -> ${cwd}`);
+    }
     this.cwds.set(chatId, cwd);
     this.persist();
   }
@@ -128,6 +142,11 @@ export class SessionMap {
     if (previous !== undefined && previous !== sessionId) this.bySession.delete(previous);
     const priorChat = this.bySession.get(sessionId);
     if (priorChat !== undefined && priorChat !== chatId) this.byChat.delete(priorChat);
+    if (previous !== sessionId) {
+      this.logger?.debug(
+        `session map: chat ${chatId} ${previous === undefined ? '' : `was ${previous}, `}now ${sessionId}`,
+      );
+    }
     this.byChat.set(chatId, sessionId);
     this.bySession.set(sessionId, chatId);
   }
@@ -141,6 +160,7 @@ export class SessionMap {
    */
   remint(chatId: string): string {
     const sessionId = this.mint();
+    this.logger?.debug(`session map: remint chat ${chatId} -> fresh session ${sessionId}`);
     this.set(chatId, sessionId);
     this.persist();
     return sessionId;

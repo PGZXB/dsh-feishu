@@ -125,7 +125,7 @@ function makeController(): {
   const host: StreamingCardHost = {
     transport,
     cards: manager,
-    logger: { info: () => {}, warn: () => {}, error: () => {} },
+    logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
     sessionMap,
     agentStore: {
       get: (sessionId) => (sessionId === 'feishu-session-1' ? agent : undefined),

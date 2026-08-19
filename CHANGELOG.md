@@ -21,6 +21,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   card; unknown cards (left on screen before a daemon restart) start at the
   menu root. `FEISHU_DEBUG=1` now traces panel transitions (`panel action
   <kind> on card <id>` → `panel update card <id>`).
+- **Full-surface debug tracing under `FEISHU_DEBUG=1`.** The console
+  exporter gates `logger.debug` on the env var (production stays quiet),
+  and every module now traces its pipeline with real ids: message routing
+  and the agent ladder (`bridge`), session-map bindings/remints/cwd
+  changes, transport sends/updates and WS state, streaming card
+  open/patch/finalize and tool activity, panel actions, approval/question
+  lifecycle, and startup config + host-service availability. All logger
+  seams (`StreamingLogger`, `InteractionLogger`, `TransportLogger`, panel
+  context) expose `debug`; see `docs/development.md` → "Debug logging"
+  for the line map.
 
 ### Added
 

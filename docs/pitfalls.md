@@ -82,10 +82,16 @@ The harness sandbox (and this checkout's environment) has specific rules:
   console exporter filters debug records unless `process.env.FEISHU_DEBUG`
   is `1`, and cordis further skips records above the exporter's `levels`
   threshold — set `levels: { default: 3 }` on the exporter so debug
-  (level 3) reaches it. Panel/message debug lines then show exactly which
-  card each action targets (`panel action <kind> on card <messageId>` →
-  `panel update card <messageId>`), the tool for diagnosing "which card
-  updated" questions.
+  (level 3) reaches it. Debug lines then trace a message/card/session
+  through the whole pipeline (see `docs/development.md` → "Debug
+  logging"): panel lines show exactly which card each action targets
+  (`panel action <kind> on card <messageId>` → `panel update card
+  <messageId>`), the tool for diagnosing "which card updated" questions.
+  The logger interfaces every module receives (`StreamingLogger`,
+  `InteractionLogger`, `TransportLogger`, the panel context logger) all
+  expose `debug`; a NEW module that logs must accept a logger with
+  `debug` and use it for tracing — production stays quiet without the env
+  var.
 
 ## Feishu SDK (lark-oapi) and Open Platform API
 

@@ -35,6 +35,8 @@ export interface InteractionLogger {
   info(message: string): void;
   warn(message: string): void;
   error(message: string): void;
+  /** Debug tracing (printed only when FEISHU_DEBUG=1). */
+  debug(message: string): void;
 }
 
 /**
@@ -100,6 +102,9 @@ export class InteractionCardController {
     }
     this.approvalSeq += 1;
     const requestId = `approval-${this.approvalSeq}`;
+    this.host.logger.debug(
+      `approval request ${requestId} for session ${String(request.agent.session.id)} -> chat ${chatId} (tool ${request.toolName})`,
+    );
     let messageId: string;
     try {
       const sent = await this.host.transport.sendCard(
@@ -118,6 +123,7 @@ export class InteractionCardController {
     }
     return new Promise<ApprovalOutcomeLike>((resolve) => {
       this.interactions.register(requestId, chatId, messageId, (outcome) => {
+        this.host.logger.debug(`approval ${requestId} settled: ${String(outcome)}`);
         // Turn the card into its static decided state, deferred out of the
         // card-callback ACK (botmux rule), then re-assert the streaming card.
         const settled: ApprovalOutcomeLike = outcome as ApprovalOutcomeLike;
@@ -156,6 +162,9 @@ export class InteractionCardController {
         answers: request.questions.map((question) => ({ id: question.id, selected: [] })),
       };
     }
+    this.host.logger.debug(
+      `question request: ${request.questions.length} item(s) -> chat ${chatId}`,
+    );
     const answers = new Map<string, { readonly id: string; selected: string[]; custom?: string }>();
     let resolveAllPromise!: () => void;
     const allDone = new Promise<void>((resolve) => {
@@ -174,6 +183,9 @@ export class InteractionCardController {
       custom?: string;
     }): void => {
       if (answers.has(answer.id)) return;
+      this.host.logger.debug(
+        `question ${answer.id} settled: ${answer.selected.join(', ') || answer.custom || '(empty)'}`,
+      );
       answers.set(answer.id, answer);
       pendingCount -= 1;
       if (pendingCount <= 0) resolveAll();
