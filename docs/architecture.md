@@ -88,8 +88,10 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
   button rebind the chat (`SessionMap.set` — 1:1 model) and `agents.resume`
   when no live agent exists; a running target is refused; resume resets the
   card state (no history replay). Rename/Archive go through the host
-  `apiProxy` seam (`sessions.rename`, `workspace.archiveSession` —
-  reversible). `/clear`/`/new` remint a fresh session non-destructively (the
+  `sessionTitle` / `workspaceRegistry` seams (`ctx.sessionTitle.rename`,
+  `ctx.workspaceRegistry.archiveSession` — durable and reversible; the
+  storage×3 + workspace bundle rows mount the registry). `/clear`/`/new`
+  remint a fresh session non-destructively (the
   old session stays saved and resumable).
 - **Panel state machine.** The control panel is one authoritative view stack
   per chat (`PanelView[]`, menu root at the bottom) with a single render

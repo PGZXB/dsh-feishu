@@ -403,9 +403,10 @@ session rebind/remint can never corrupt the live card.
 - Session detail sub-view (`🗂️ Session`): the session's info (title, id,
   cwd, created age, message count, last answer) plus **Resume** (hidden for
   the current session), **Rename**, **Archive** (or **Restore** when
-  archived — the host `workspace.archiveSession` is reversible), **Export**,
+  archived — `ctx.workspaceRegistry.archiveSession` is reversible), **Export**,
   and **Back** (stack pop). Rename/Archive exist only when the host
-  `apiProxy` seam is mounted (they degrade silently otherwise).
+  `sessionTitle` / `workspaceRegistry` seams are mounted (the bundle's
+  storage×3 + workspace rows; they degrade loudly if absent).
 - Resume flow (shared by `/resume <id>` and the detail's Resume button):
   the chat must be idle; the target session must not be running in another
   chat ("has an active turn — stop it in its chat first"); resuming the
@@ -614,3 +615,60 @@ and renders the response to completion (green). User-initiated turns are
 untouched (their working card state exists before any event); a resume
 never replays history (historical user messages carry `source.kind:
 'user'`). `/schedule` lists active reminders by folding the session log.
+
+## Part: session-rename-archive
+
+> Session rename/archive via dsh `sessionTitle` + `workspaceRegistry` — the
+> host services the dsh web surface uses, so a rename/archive on Feishu is
+> visible in the web UI and vice versa (shared durable state, same DSH_HOME).
+
+### Intended behavior
+
+**Trigger** — the session-detail card's ✏️ Rename and 🗂️ Archive buttons,
+reachable via `/sessions` → pick a session. Previously these buttons were
+hidden in real deployments because the `apiProxy` gateway service is not
+mounted by dsh-base; this part replaces that seam with two base/plugin
+services that ARE present after this change.
+
+**States & transitions** — the panel view stack is unchanged
+(menu → sessions → session-detail → input/confirm → back). What changes is
+the mutation seam behind the two actions:
+
+| Action | Old seam (absent in practice) | New seam (present) |
+|---|---|---|
+| Rename | `apiProxy.sessions.rename` | `ctx.sessionTitle.rename(session, title)` (dsh-base) |
+| Archive | `apiProxy.workspace.archiveSession` | `ctx.workspaceRegistry.archiveSession(sessionId)` (new row) |
+| Archived list | `apiProxy.workspace.list()` | `ctx.workspaceRegistry.archivedSessionIds` |
+| Restore | archive toggle | workspace registry has no unarchive verb → restore = remove from the archived set via the same durable domain |
+
+**Card/panel shape** — unchanged cards; the buttons now render in real
+deployments. `canMutateSessions` flips from `apiProxy !== undefined` to
+`sessionTitle !== undefined || workspaceRegistry !== undefined`.
+
+**Failure modes**:
+- `sessionTitle` absent → rename action reports unavailable (degrade loudly)
+- `workspaceRegistry` absent → archive action reports unavailable
+- session not live (daemon restarted, no agent) → rename needs a live
+  Session; degrade with a clear message (resume first)
+- archive of an unknown session → workspace throws
+  `WorkspaceUnknownSessionError` → surface the message
+- callback deadline / invalid ACK → existing panel rules apply
+  (`runPanelOperation`, patch-first)
+
+**Acceptance**:
+- With the new bundle rows, the detail card shows Rename + Archive
+- Rename persists (`session/title` event) and shows in the sessions list
+- Archive moves the session to the archived list; restore brings it back
+- Integration test asserts the buttons exist AND the actions work against
+  the real dsh process (the old test degraded silently — this must not)
+- Feishu and web observe each other's rename/archive (same storage domain)
+
+### Reference
+
+- `@deepseek-ai/dsh-session-title` — `rename(session, title)` appends
+  `session/title` (harness `packages/session/session-title`).
+- `@deepseek-ai/dsh-workspace` — `archiveSession` + `archivedSessionIds`,
+  persisted through `storageDomain` (harness `packages/workspace/workspace`).
+- `@deepseek-ai/dsh-storage-domain` — durable KV domain backing the
+  workspace registry; web-app bundle mounts storage ×3 + workspace
+  (`packages/bundle/web-app/cordis.patch.yml`).**

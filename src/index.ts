@@ -187,18 +187,18 @@ export function defaultDataDir(): string {
  */
 
 /**
- * Structural subset of the host `ctx.apiProxy` service (dsh web parity for
- * session rename/archive). The full ApiProxy lives on the host plane; the
- * plugin only needs the two session actions.
+ * Structural subsets of the `ctx.sessionTitle` and `ctx.workspaceRegistry`
+ * services (dsh web parity for session rename/archive). `sessionTitle` is
+ * mounted by dsh-base; `workspaceRegistry` comes from the storage×3 +
+ * workspace bundle rows this plugin adds. The plugin only needs the two
+ * session actions.
  */
-type ApiProxyLike = {
-  readonly sessions: {
-    rename(request: { readonly sessionId: string; readonly title: string }): Promise<unknown>;
-  };
-  readonly workspace: {
-    list(): Promise<{ readonly archivedSessionIds?: readonly string[] }>;
-    archiveSession(request: { readonly sessionId: string }): Promise<unknown>;
-  };
+type SessionTitleLike = {
+  rename(session: unknown, title: string): unknown;
+};
+type WorkspaceRegistryLike = {
+  archiveSession(sessionId: string): Promise<unknown>;
+  readonly archivedSessionIds: readonly string[];
 };
 
 /**
@@ -459,9 +459,19 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
       }>;
     },
     // Host session-management seam (dsh web parity for rename/archive). The
-    // apiProxy service lives on the host plane of the dsh process; absent,
-    // the session detail view hides those actions.
-    ...(ctx.get('apiProxy') !== undefined ? { apiProxy: ctx.get('apiProxy') as ApiProxyLike } : {}),
+    // Session rename/archive seams: `sessionTitle` is mounted by dsh-base;
+    // `workspaceRegistry` comes from this bundle's storage×3 + workspace
+    // rows. Absent, the session detail view hides those actions.
+    ...(ctx.get('sessionTitle') !== undefined
+      ? { sessionTitle: ctx.get('sessionTitle') as SessionTitleLike }
+      : {}),
+    // workspaceRegistry initializes asynchronously after apply, so it is
+    // resolved lazily at use time — a startup snapshot would be permanently
+    // undefined. Absent, the session detail view hides archive actions.
+    getWorkspaceRegistry: () => {
+      const registry = ctx.get('workspaceRegistry');
+      return registry === undefined ? undefined : (registry as WorkspaceRegistryLike);
+    },
     // Feature-detect the two stateful web-command services (both mounted by
     // dsh-base); absent, the /permission and /plan wrappers degrade.
     ...(ctx.get('permissionPresets') !== undefined

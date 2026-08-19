@@ -26,3 +26,21 @@
     # (agent-initiated turn path in the bridge). dsh-base does not mount it.
     - id: schedule
       name: '@deepseek-ai/dsh-schedule'
+
+    # Durable workspace registry (session archive/restore, web-visible).
+    # The workspace registry persists through the storage domain, so a
+    # rename/archive on Feishu is observed by the dsh web UI sharing the
+    # same DSH_HOME, and vice versa. dsh-base does not mount these; the
+    # web-app bundle does (storage ×3 + workspace).
+    - id: storage
+      name: '@deepseek-ai/dsh-storage'
+    - id: storage-json
+      name: '@deepseek-ai/dsh-storage-json'
+      config:
+        root: !!js dshHomePath('storages')
+    - id: storage-domain
+      name: '@deepseek-ai/dsh-storage-domain'
+      config:
+        backend: json
+    - id: workspace
+      name: '@deepseek-ai/dsh-workspace'

@@ -212,7 +212,8 @@ function makeHarness(
     transportMode?: 'lark' | 'memory';
     reactions?: NonNullable<BridgeOptions['reactions']>;
     readSession?: NonNullable<BridgeOptions['readSession']>;
-    apiProxy?: NonNullable<BridgeOptions['apiProxy']>;
+    sessionTitle?: NonNullable<BridgeOptions['sessionTitle']>;
+    getWorkspaceRegistry?: NonNullable<BridgeOptions['getWorkspaceRegistry']>;
   } = {},
 ): Harness {
   const transport = new RecordingTransport();
@@ -259,7 +260,10 @@ function makeHarness(
     ...(options.llm !== undefined ? { llm: options.llm } : {}),
     ...(options.reactions !== undefined ? { reactions: options.reactions } : {}),
     ...(options.readSession !== undefined ? { readSession: options.readSession } : {}),
-    ...(options.apiProxy !== undefined ? { apiProxy: options.apiProxy } : {}),
+    ...(options.sessionTitle !== undefined ? { sessionTitle: options.sessionTitle } : {}),
+    ...(options.getWorkspaceRegistry !== undefined
+      ? { getWorkspaceRegistry: options.getWorkspaceRegistry }
+      : {}),
     // Tests default the working-directory gate OFF (production defaults it
     // ON); the gate's own tests enable it explicitly.
     requireWorkingDir: options.requireWorkingDir ?? false,
@@ -1809,23 +1813,21 @@ describe('session commands (/sessions /resume /clear /new)', () => {
   });
 
   it('session detail renames and archives through the host seam', async () => {
-    const renamed: Array<{ sessionId: string; title: string }> = [];
+    const renamed: string[] = [];
     const archived: string[] = [];
     const h = makeHarness({
       listSessions: async () => sessionRows(),
-      apiProxy: {
-        sessions: {
-          rename: async (request) => {
-            renamed.push(request);
-          },
-        },
-        workspace: {
-          list: async () => ({ archivedSessionIds: [] }),
-          archiveSession: async (request) => {
-            archived.push(request.sessionId);
-          },
+      sessionTitle: {
+        rename: (session, title) => {
+          renamed.push(`${(session as { id: string }).id}:${title}`);
         },
       },
+      getWorkspaceRegistry: () => ({
+        archivedSessionIds: [],
+        archiveSession: async (sessionId) => {
+          archived.push(sessionId);
+        },
+      }),
     });
     // Detail → Rename → input form → submit the new title.
     await h.bridge.handleCardAction({
@@ -1859,7 +1861,7 @@ describe('session commands (/sessions /resume /clear /new)', () => {
       },
       formValue: { title: 'New Title' },
     });
-    expect(renamed).toEqual([{ sessionId: 'feishu-session-9', title: 'New Title' }]);
+    expect(renamed).toEqual(['feishu-session-9:New Title']);
     expect(resultCardTexts(h).some((t) => t.includes('Renamed session'))).toBe(true);
     // Detail again → Archive.
     await h.bridge.handleCardAction({
@@ -2214,15 +2216,12 @@ describe('panel command palette', () => {
   it('archive failure notifies and returns to the active list', async () => {
     const h = makeHarness({
       listSessions: async () => sessionRows(),
-      apiProxy: {
-        sessions: { rename: async () => {} },
-        workspace: {
-          list: async () => ({ archivedSessionIds: [] }),
-          archiveSession: async () => {
-            throw new Error('archive backend down');
-          },
+      getWorkspaceRegistry: () => ({
+        archivedSessionIds: [],
+        archiveSession: async () => {
+          throw new Error('archive backend down');
         },
-      },
+      }),
     });
     await h.bridge.handleCardAction({
       messageId: 'mem-1',
@@ -2249,13 +2248,10 @@ describe('panel command palette', () => {
   it('the archived toggle filters the list by the host archive set', async () => {
     const h = makeHarness({
       listSessions: async () => sessionRows(),
-      apiProxy: {
-        sessions: { rename: async () => {} },
-        workspace: {
-          list: async () => ({ archivedSessionIds: ['feishu-session-9'] }),
-          archiveSession: async () => {},
-        },
-      },
+      getWorkspaceRegistry: () => ({
+        archivedSessionIds: ['feishu-session-9'],
+        archiveSession: async () => {},
+      }),
     });
     await h.bridge.handleCardAction({
       messageId: 'mem-1',
@@ -2595,15 +2591,12 @@ describe('panel command palette', () => {
     });
     const h = makeHarness({
       listSessions: async () => sessionRows(),
-      apiProxy: {
-        sessions: { rename: async () => {} },
-        workspace: {
-          list: async () => ({ archivedSessionIds: [] }),
-          archiveSession: async () => {
-            await gate;
-          },
+      getWorkspaceRegistry: () => ({
+        archivedSessionIds: [],
+        archiveSession: async () => {
+          await gate;
         },
-      },
+      }),
     });
     // Open the sessions list, then a detail view.
     await h.bridge.handleCardAction({
