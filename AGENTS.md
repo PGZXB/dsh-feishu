@@ -49,6 +49,14 @@ functionality with unit tests and docs, and lands on `main`.
 - **Every feature module ships unit tests.** A new module in `src/` must come
   with a co-located test in `tests/` covering its behavior. Fixing a bug
   first adds a failing test. No untested feature lands.
+- **Every feature module ships debug tracing.** A new module (or a behavior
+  change to an existing one) traces its pipeline with real ids via
+  `logger.debug(...)` — `<module> <action> <entities>` — so a message,
+  card, session, or chat can be followed end-to-end through the surface
+  (map: `docs/development.md` → "Debug logging"). Debug records are gated
+  behind `FEISHU_DEBUG=1` (the console exporter filters them; production
+  stays quiet), so the logger seam a module receives MUST expose `debug`.
+  No feature lands without its debug lines.
 - **Write docs promptly after a feature.** Completing a feature updates the
   relevant `docs/` page(s) and the CHANGELOG in the same change. No feature
   lands without its documentation.
