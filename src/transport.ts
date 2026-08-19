@@ -453,32 +453,59 @@ export class LarkTransport implements FeishuTransport {
    * media type is derived from the message event. Throws on unknown/stale
    * keys or a missing `im:resource` scope.
    */
-  async downloadImage(key: string): Promise<{ data: Uint8Array; mediaType: string }> {
-    this.logger?.debug(`transport downloadImage ${key}`);
-    // im.v1.image.get streams the resource; the SDK resolves the response
-    // body as a Buffer for binary resources.
-    const response = (await this.client.im.v1.image.get({
-      path: { image_key: key },
-    })) as unknown as { file?: Buffer; data?: { image?: Buffer } };
-    const bytes = response.file ?? response.data?.image;
-    if (bytes === undefined) {
-      throw new FeishuApiError('im.v1.image.get', -1, 'response carried no image bytes');
-    }
-    // The image resource API does not echo the media type; the message
-    // content declares it, so callers pass it through. Default to png when
-    // unknown — saveImage re-detects the real format from bytes.
-    return { data: new Uint8Array(bytes), mediaType: 'image/png' };
+  /**
+   * Download an inbound image message's bytes via the message-resource
+   * endpoint (`/messages/{message_id}/resources/{image_key}?type=image`).
+   * User-sent images are only reachable here — `im.v1.image.get` can only
+   * fetch bot-uploaded images. Routed through the raw client request (not
+   * the generated `messageResource.get`, which sends `{}` as a GET body and
+   * trips gateway 411s — botmux lesson).
+   * @param messageId - the owning message's id.
+   * @param key - the normalized `image_key`.
+   */
+  async downloadImage(
+    messageId: string,
+    key: string,
+  ): Promise<{ data: Uint8Array; mediaType: string }> {
+    this.logger?.debug(`transport downloadImage ${key} (message ${messageId})`);
+    const bytes = await this.downloadMessageResource(messageId, key, 'image');
+    // The resource endpoint does not echo the media type; default to png —
+    // saveImage re-detects the real format from the bytes.
+    return { data: bytes, mediaType: 'image/png' };
   }
 
-  /** Download an inbound file message's bytes (`im.v1.file.get`). */
-  async downloadFile(key: string): Promise<Uint8Array> {
-    this.logger?.debug(`transport downloadFile ${key}`);
-    const response = (await this.client.im.v1.file.get({
-      path: { file_key: key },
-    })) as unknown as { file?: Buffer; data?: { file?: Buffer } };
-    const bytes = response.file ?? response.data?.file;
+  /**
+   * Download an inbound file message's bytes via the message-resource
+   * endpoint (`/messages/{message_id}/resources/{file_key}?type=file`).
+   * User-sent files are only reachable here — `im.v1.file.get` can only
+   * fetch bot-uploaded files.
+   * @param messageId - the owning message's id.
+   * @param key - the normalized `file_key`.
+   */
+  async downloadFile(messageId: string, key: string): Promise<Uint8Array> {
+    this.logger?.debug(`transport downloadFile ${key} (message ${messageId})`);
+    return this.downloadMessageResource(messageId, key, 'file');
+  }
+
+  /** GET one message resource (`im.v1.messageResource.get`) as bytes. */
+  private async downloadMessageResource(
+    messageId: string,
+    key: string,
+    type: 'image' | 'file',
+  ): Promise<Uint8Array> {
+    const response = await this.client.request<{ file?: Buffer }>({
+      method: 'GET',
+      url: `/open-apis/im/v1/messages/${encodeURIComponent(messageId)}/resources/${encodeURIComponent(key)}`,
+      params: { type },
+      responseType: 'arraybuffer',
+    });
+    const bytes = response?.file;
     if (bytes === undefined) {
-      throw new FeishuApiError('im.v1.file.get', -1, 'response carried no file bytes');
+      throw new FeishuApiError(
+        `im.v1.messageResource.get (${type})`,
+        -1,
+        'response carried no resource bytes',
+      );
     }
     return new Uint8Array(bytes);
   }

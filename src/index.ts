@@ -15,7 +15,7 @@
  * approvals, and questions land in later iterations.
  */
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Context } from '@deepseek-ai/cordis';
@@ -532,6 +532,23 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
         | undefined;
       if (attachments === undefined) return undefined;
       return (input) => attachments.saveImage(input);
+    },
+    // Inbound-file seam: persist one downloaded file under the chat's
+    // working directory at `.dsh_feishu/attachments/<appId>/<messageId>/<key>.<ext>`
+    // (hidden subdirectory; bucketed per app + message, botmux layout, so
+    // concurrent chats and apps never collide). The name derives from the
+    // resource key + sniffed extension — Feishu file events carry no
+    // original name. Files are kept permanently.
+    saveInboundFile: async ({ chatId, appId, messageId, attachment, data, extension }) => {
+      const cwd = sessionMap.cwdFor(chatId) ?? config.defaultCwd ?? process.cwd();
+      const safeAppId = appId.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const safeMessageId = messageId.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const safeKey = attachment.key.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const dir = join(cwd, '.dsh_feishu', 'attachments', safeAppId, safeMessageId);
+      mkdirSync(dir, { recursive: true });
+      const path = join(dir, `${safeKey}.${extension}`);
+      writeFileSync(path, data);
+      return { path };
     },
     // Feature-detect the two stateful web-command services (both mounted by
     // dsh-base); absent, the /permission and /plan wrappers degrade.

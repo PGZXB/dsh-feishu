@@ -17,7 +17,7 @@ Feature list and TODO tracker for dsh-feishu. ✅ = shipped, 📋 = planned
 | Allowlists | `allowedChats` / `allowedUsers` gate who can talk to the bot | Env/config-driven, applied to messages and card actions | ✅ |
 | Session-log export | `/export` sends the chat's session log as a downloadable file message | File message with markdown transcript | ✅ |
 | Diagnostics | `/feishu-status` shows a diagnostic card (connection state, sessions, last inbound) | Read-only status card, usable mid-turn | ✅ |
-| Inbound attachments | Images/files the user sends are no longer ignored: images are injected into the agent (image-capable models) or receipt-noted, files become receipt cards | Image → agent processes it (model supports images) / 📎 receipt; file → receipt card | ✅ |
+| Inbound attachments | Images/files the user sends are no longer ignored: images are injected into the agent (image-capable models) or receipt-noted, files become receipt cards | Image → agent processes it (model supports images) / 📎 receipt; file → saved to workspace, agent reads by path | ✅ |
 | Outbound files/images | Agent-produced images/files send as native Feishu image/file messages | Tap to view original / download | 📋 |
 | Session hard delete | Remove a session from the active list (archive + hide, restorable from the archived list) | Session-detail card Delete + confirm view | 📋 |
 | Agent preset selection | Pick an agent preset (e.g. PTC mode) when choosing a working directory | Mode dropdown on the `/repo` / `/cd` picker card; preset binds to the new session | 📋 |

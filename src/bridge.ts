@@ -65,6 +65,29 @@ import { turnTitle } from './cards/StreamingCardController.js';
 
 export { turnTitle } from './cards/StreamingCardController.js';
 
+/** Sniff a file extension (no dot) from leading bytes, for inbound files —
+ *  Feishu file events carry no original name, so the surface derives a
+ *  usable extension from the content. Unknown content → `bin`. */
+export function sniffExtension(data: Uint8Array): string {
+  const head = data.slice(0, 8);
+  const startsWith = (bytes: readonly number[]): boolean => bytes.every((b, i) => head[i] === b);
+  const text = new TextDecoder().decode(head);
+  if (startsWith([0x25, 0x50, 0x44, 0x46])) return 'pdf'; // %PDF
+  if (startsWith([0x50, 0x4b, 0x03, 0x04]) || startsWith([0x50, 0x4b, 0x05, 0x06])) return 'zip';
+  if (startsWith([0x89, 0x50, 0x4e, 0x47])) return 'png';
+  if (startsWith([0xff, 0xd8, 0xff])) return 'jpg';
+  if (text.startsWith('GIF8')) return 'gif';
+  if (startsWith([0x52, 0x49, 0x46, 0x46]) && text.slice(8, 12) === 'WEBP') return 'webp';
+  if (text.startsWith('{"') || text.startsWith('[{')) return 'json';
+  if (text.startsWith('<?xml')) return 'xml';
+  // Plain text (no control bytes in the head) → txt.
+  const printable = [...head].every(
+    (b) => b === 0x09 || b === 0x0a || b === 0x0d || (b >= 0x20 && b <= 0x7e),
+  );
+  if (printable) return 'txt';
+  return 'bin';
+}
+
 /** Minimal logger surface the bridge needs. */
 export interface BridgeLogger {
   info(message: string): void;
@@ -317,6 +340,29 @@ export interface BridgeOptions {
         name?: string;
       }) => Promise<ImageAttachmentRefLike>)
     | undefined;
+  /**
+   * Inbound-file seam: persist one downloaded file under the chat's working
+   * directory at `<cwd>/.dsh_feishu/attachments/<appId>/<messageId>/<key>.<ext>`
+   * so the agent can read it with its workspace tools. Bucketed per app +
+   * message (botmux layout) so concurrent chats never collide. Implemented
+   * by the host (index.ts) where fs access lives; the bridge only names the
+   * file. Absent, files degrade to a name-only note (the receipt card still
+   * posts).
+   */
+  readonly saveInboundFile?: (input: {
+    /** The chat whose working directory holds the file. */
+    chatId: string;
+    /** The Feishu app id the surface runs as (bucket segment). */
+    appId: string;
+    /** The owning message id (bucket segment). */
+    messageId: string;
+    /** The normalized attachment (key + optional name). */
+    attachment: InboundAttachment;
+    /** The downloaded bytes. */
+    data: Uint8Array;
+    /** A sniffed extension (pdf/zip/txt/json/bin…), no leading dot. */
+    extension: string;
+  }) => Promise<{ path: string }>;
   /**
    * Permission-preset service (`ctx.permissionPresets`, mounted by
    * dsh-base): `/permission` renders a preset picker from it and applies
@@ -1274,10 +1320,10 @@ export class Bridge {
     // covers transport-level JSON without the field (defensive only).
     for (const attachment of message.attachments ?? []) {
       if (attachment.kind === 'image') {
-        const block = await this.inboundImage(message.chatId, attachment, blocks);
+        const block = await this.inboundImage(message, attachment, blocks);
         if (block !== undefined) blocks.push(block);
       } else {
-        await this.inboundFile(message.chatId, attachment, blocks);
+        await this.inboundFile(message, attachment, blocks);
       }
     }
     if (blocks.length === 0) blocks.push({ type: 'text', text: message.text });
@@ -1292,24 +1338,27 @@ export class Bridge {
    *  or model not image-capable) the file path appends its note to `blocks`
    *  — the message is never left content-less. */
   private async inboundImage(
-    chatId: string,
+    message: FeishuMessage,
     attachment: InboundAttachment,
     blocks: ContentBlock[],
   ): Promise<ContentBlock | undefined> {
     const saveImage = this.options.getSaveImage?.();
-    const imageCapable = await this.supportsImageInput(chatId);
+    const imageCapable = await this.supportsImageInput(message.chatId);
     if (saveImage === undefined || !imageCapable) {
       // Attachment service not mounted, or the model cannot see images:
       // degrade to the file path (receipt + name note) instead of dropping
       // the message or erroring the turn (seam rule).
       this.options.logger.warn(
-        `inbound image ${attachment.key}: ${saveImage === undefined ? 'attachment service absent' : `model does not support image input (${this.currentModelSelection(chatId) ?? 'unknown'})`}, treating as a file notice`,
+        `inbound image ${attachment.key}: ${saveImage === undefined ? 'attachment service absent' : `model does not support image input (${this.currentModelSelection(message.chatId) ?? 'unknown'})`}, treating as a file notice`,
       );
-      await this.inboundFile(chatId, attachment, blocks);
+      await this.inboundFile(message, attachment, blocks);
       return undefined;
     }
     try {
-      const downloaded = await this.options.transport.downloadImage(attachment.key);
+      const downloaded = await this.options.transport.downloadImage(
+        message.messageId,
+        attachment.key,
+      );
       const saved = await saveImage({
         data: downloaded.data,
         mediaType: downloaded.mediaType,
@@ -1326,33 +1375,64 @@ export class Bridge {
         `inbound image ${attachment.key} could not be processed: ${String(error)}`,
       );
       await this.options.transport.sendText(
-        chatId,
+        message.chatId,
         '⚠️ An image you sent could not be read — sending as text only.',
       );
       return undefined;
     }
   }
 
-  /** Post the file-receipt card and append a file-name note to `blocks`.
-   *  Failures notice loudly and still let the turn run text-only. */
+  /** Download + persist one inbound file under the chat's working directory,
+   *  post the receipt card, and append a note with the REAL saved path to
+   *  `blocks` (the agent reads the file with its workspace tools). Failures
+   *  notice loudly and still let the turn run text-only. */
   private async inboundFile(
-    chatId: string,
+    message: FeishuMessage,
     attachment: InboundAttachment,
     blocks: ContentBlock[],
   ): Promise<void> {
     const name = attachment.name ?? attachment.key;
+    let savedPath: string | undefined;
     try {
-      await this.options.transport.downloadFile(attachment.key);
-      this.options.logger.debug(`inbound file ${attachment.key}: ${name} downloaded (${chatId})`);
+      const data = await this.options.transport.downloadFile(message.messageId, attachment.key);
+      this.options.logger.debug(
+        `inbound file ${attachment.key}: ${data.length} bytes downloaded (${message.chatId})`,
+      );
+      const save = this.options.saveInboundFile;
+      if (save !== undefined) {
+        const extension = sniffExtension(data);
+        const saved = await save({
+          chatId: message.chatId,
+          appId: this.options.appId ?? 'unknown',
+          messageId: message.messageId,
+          attachment,
+          data,
+          extension,
+        });
+        savedPath = saved.path;
+        this.options.logger.debug(
+          `inbound file ${attachment.key}: saved to ${saved.path} (${message.chatId})`,
+        );
+      } else {
+        this.options.logger.warn(
+          `inbound file ${attachment.key}: save seam absent, name-only note (${message.chatId})`,
+        );
+      }
     } catch (error: unknown) {
       this.options.logger.warn(`inbound file ${attachment.key} download failed: ${String(error)}`);
     }
     try {
-      await this.options.transport.sendCard(chatId, buildInboundFileCard(name));
+      await this.options.transport.sendCard(message.chatId, buildInboundFileCard(name, savedPath));
     } catch (error: unknown) {
       this.options.logger.warn(`file receipt card failed: ${String(error)}`);
     }
-    blocks.push({ type: 'text', text: `[user sent a file: ${name}]` });
+    blocks.push({
+      type: 'text',
+      text:
+        savedPath === undefined
+          ? `[user sent a file: ${name}]`
+          : `[user sent a file: ${name} — saved at ${savedPath}. You can read it with your file tools.]`,
+    });
   }
 
   /**

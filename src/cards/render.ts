@@ -906,15 +906,24 @@ export function buildPanelNoticeCard(options: {
 
 /**
  * The inbound-file receipt card: posted when a user sends a file message.
- * The agent cannot read arbitrary file bytes, so the surface acknowledges
- * the file (name) as a standalone card and tells the agent the file exists
- * by name — there is no downloadable URL for a Feishu `file_key`.
+ * The file bytes are saved under the chat's working directory
+ * (`<cwd>/.dsh_feishu/attachments/…`) and the card shows the path so the
+ * user knows where it landed; the agent receives the path too and reads the
+ * file with its workspace tools.
  */
-export function buildInboundFileCard(name: string): CardJson {
+export function buildInboundFileCard(name: string, savedPath?: string): CardJson {
   return {
     config: { wide_screen_mode: true },
     header: { title: { tag: 'plain_text', content: '📎 File received' }, template: 'blue' },
-    elements: [{ tag: 'markdown', content: `**${name}**\n\nTell me what to do with it.` }],
+    elements: [
+      {
+        tag: 'markdown',
+        content:
+          savedPath === undefined
+            ? `**${name}**\n\nTell me what to do with it.`
+            : `**${name}**\n\nSaved to \`${savedPath}\` — tell me what to do with it.`,
+      },
+    ],
   };
 }
 

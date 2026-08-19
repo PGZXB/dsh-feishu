@@ -139,7 +139,7 @@ describe('MemoryTransport', () => {
         dir: SCRATCH,
         attachments: new Map([['img-1', { data: bytes, mediaType: 'image/jpeg' }]]),
       });
-      const result = await transport.downloadImage('img-1');
+      const result = await transport.downloadImage('om_x', 'img-1');
       expect(result.data).toEqual(bytes);
       expect(result.mediaType).toBe('image/jpeg');
     });
@@ -149,12 +149,12 @@ describe('MemoryTransport', () => {
         dir: SCRATCH,
         attachments: new Map([['img-1', { data: bytes }]]),
       });
-      expect((await transport.downloadImage('img-1')).mediaType).toBe('image/png');
+      expect((await transport.downloadImage('om_x', 'img-1')).mediaType).toBe('image/png');
     });
 
     it('downloadImage throws for an unknown key', async () => {
       const transport = new MemoryTransport({ dir: SCRATCH });
-      await expect(transport.downloadImage('nope')).rejects.toThrow(/no seeded image/);
+      await expect(transport.downloadImage('om_x', 'nope')).rejects.toThrow(/no seeded image/);
     });
 
     it('downloadFile resolves seeded bytes and throws for an unknown key', async () => {
@@ -162,8 +162,8 @@ describe('MemoryTransport', () => {
         dir: SCRATCH,
         attachments: new Map([['file-1', { data: bytes }]]),
       });
-      expect(await transport.downloadFile('file-1')).toEqual(bytes);
-      await expect(transport.downloadFile('nope')).rejects.toThrow(/no seeded file/);
+      expect(await transport.downloadFile('om_x', 'file-1')).toEqual(bytes);
+      await expect(transport.downloadFile('om_x', 'nope')).rejects.toThrow(/no seeded file/);
     });
   });
 });
