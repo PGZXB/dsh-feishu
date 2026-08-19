@@ -253,19 +253,26 @@ export interface BridgeOptions {
     readonly events: readonly SessionExportEvent[];
   }>;
   /**
-   * Host session-management seam (`ctx.apiProxy`, structural subset): lets
-   * the session detail view rename and archive sessions (dsh web parity).
-   * Absent, the detail view hides those buttons.
+   * Session-title seam (`ctx.sessionTitle`, mounted by dsh-base): renames a
+   * live session durably (`session/title` event, web-visible). Absent, the
+   * detail view hides the Rename button.
    */
-  readonly apiProxy?: {
-    readonly sessions: {
-      rename(request: { readonly sessionId: string; readonly title: string }): Promise<unknown>;
-    };
-    readonly workspace: {
-      list(): Promise<{ readonly archivedSessionIds?: readonly string[] }>;
-      archiveSession(request: { readonly sessionId: string }): Promise<unknown>;
-    };
+  readonly sessionTitle?: {
+    rename(session: unknown, title: string): unknown;
   };
+  /**
+   * Workspace-registry seam (`ctx.workspaceRegistry`, mounted by the
+   * storage×3 + workspace bundle rows): archives/restores sessions through
+   * the durable storage domain (web-visible). Resolved lazily because the
+   * service initializes asynchronously after apply; a startup-time snapshot
+   * would be permanently undefined. Absent, the Archive button is hidden.
+   */
+  readonly getWorkspaceRegistry?: () =>
+    | {
+        archiveSession(sessionId: string): Promise<unknown>;
+        readonly archivedSessionIds: readonly string[];
+      }
+    | undefined;
   /**
    * Permission-preset service (`ctx.permissionPresets`, mounted by
    * dsh-base): `/permission` renders a preset picker from it and applies
@@ -492,7 +499,8 @@ export class Bridge {
       currentModelSelection: (chatId) => this.currentModelSelection(chatId),
       ensureAgent: (chatId) => this.ensureAgent(chatId),
       permissionPresets: () => this.options.permissionPresets,
-      canMutateSessions: this.options.apiProxy !== undefined,
+      canMutateSessions:
+        this.options.sessionTitle !== undefined || this.options.getWorkspaceRegistry !== undefined,
     };
   }
 
@@ -510,7 +518,8 @@ export class Bridge {
         defaultCwd: this.options.defaultCwd,
         requireWorkingDir: this.options.requireWorkingDir,
         repoRoots: this.options.repoRoots,
-        apiProxy: this.options.apiProxy,
+        sessionTitle: this.options.sessionTitle,
+        getWorkspaceRegistry: this.options.getWorkspaceRegistry,
         permissionPresets: this.options.permissionPresets,
         planMode: this.options.planMode,
         agentDefaultModel: this.options.agentDefaultModel,
@@ -816,10 +825,9 @@ export class Bridge {
   /** The host's archived session id set, or empty when the seam is absent. */
   private async loadArchivedSessionIds(): Promise<Set<string>> {
     try {
-      const workspace = this.options.apiProxy?.workspace;
+      const workspace = this.options.getWorkspaceRegistry?.();
       if (workspace === undefined) return new Set();
-      const view = await workspace.list();
-      return new Set(view.archivedSessionIds ?? []);
+      return new Set(workspace.archivedSessionIds);
     } catch (error: unknown) {
       this.options.logger.warn(`archived session list failed: ${String(error)}`);
       return new Set();

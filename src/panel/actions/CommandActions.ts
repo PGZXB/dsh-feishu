@@ -138,11 +138,11 @@ export class PanelInputSubmitAction extends PanelAction {
     if (!isPanelInputCommand(commandName)) return;
     const rawInput = this.inputValue(action);
     if (commandName === 'rename-session') {
-      // Rename goes through the host session seam (dsh web parity).
+      // Rename through the dsh session-title service (web-visible).
       const sessionId = action.value.sessionId;
       if (sessionId === undefined || sessionId === '') return;
-      const sessions = ctx.services.apiProxy?.sessions;
-      if (sessions === undefined) {
+      const sessionTitle = ctx.services.sessionTitle;
+      if (sessionTitle === undefined) {
         return {
           kind: 'error',
           text: 'Renaming sessions is unavailable on this deployment.',
@@ -150,7 +150,21 @@ export class PanelInputSubmitAction extends PanelAction {
       }
       return (async () => {
         try {
-          await sessions.rename({ sessionId, title: rawInput });
+          // The title service needs the live Session object; a session with
+          // no live agent (e.g. after a daemon restart) is resumed first —
+          // resume loads the persisted agent without replaying history.
+          let agent = ctx.services.agentStore.get(sessionId);
+          if (agent === undefined) {
+            agent = await ctx.services.agentStore.resume(sessionId);
+          }
+          const session = agent?.session;
+          if (session === undefined) {
+            return {
+              kind: 'error',
+              text: 'This session could not be loaded — resume it before renaming.',
+            };
+          }
+          sessionTitle.rename(session, rawInput);
           return { kind: 'success', text: `Renamed session ${sessionId}.` };
         } catch (error: unknown) {
           ctx.services.logger.warn(`session rename failed: ${String(error)}`);

@@ -54,7 +54,7 @@ export class SessionArchiveAction extends PanelAction {
   ): Promise<CommandResult | undefined> {
     const sessionId = action.value.sessionId;
     if (sessionId === undefined || sessionId === '') return;
-    const workspace = ctx.services.apiProxy?.workspace;
+    const workspace = ctx.services.getWorkspaceRegistry?.();
     if (workspace === undefined) {
       return {
         kind: 'error',
@@ -62,7 +62,7 @@ export class SessionArchiveAction extends PanelAction {
       };
     }
     try {
-      await workspace.archiveSession({ sessionId });
+      await workspace.archiveSession(sessionId);
       return { kind: 'success', text: `Archived session ${sessionId}.` };
     } catch (error: unknown) {
       ctx.services.logger.warn(`session archive failed: ${String(error)}`);

@@ -3444,23 +3444,32 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         option: firstOption ?? '',
       });
       await waitFor(
-        'the session detail card',
+        'the session detail card with actions',
         () =>
           readOutbox().some(
             (r) =>
               (r.kind === 'card' || r.kind === 'patch') &&
-              r.card?.header?.title.content === '🗂️ Session',
+              r.card?.header?.title.content === '🗂️ Session' &&
+              JSON.stringify(r.card?.elements ?? []).includes('✏️ Rename'),
           ),
         30_000,
       );
       const detailCard = [...readOutbox()]
         .reverse()
-        .find((r) => r.card?.header?.title.content === '🗂️ Session');
+        .find(
+          (r) =>
+            (r.kind === 'card' || r.kind === 'patch') &&
+            r.card?.header?.title.content === '🗂️ Session' &&
+            JSON.stringify(r.card?.elements ?? []).includes('✏️ Rename'),
+        );
       const detailJson = JSON.stringify(detailCard?.card?.elements ?? []);
-      // The host seam decides whether rename/archive buttons exist: with the
-      // seam present they do (this asserts B's premise); without it the test
-      // degrades gracefully instead of failing.
-      if (detailJson.includes('✏️ Rename')) {
+      // The bundle mounts the storage×3 + workspace rows, so the session
+      // detail MUST show Rename + Archive in the real dsh process — this is
+      // the regression this feature fixes (previously the apiProxy seam was
+      // absent in practice and these buttons never rendered).
+      expect(detailJson).toContain('✏️ Rename');
+      expect(detailJson).toContain('🗄️ Archive');
+      {
         // Rename via the input form.
         const renameButton = detailCard?.card?.elements
           .flatMap((el) => (el.tag === 'action' ? el.actions : []))
@@ -3506,13 +3515,19 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
             readOutbox().some(
               (r) =>
                 (r.kind === 'card' || r.kind === 'patch') &&
-                r.card?.header?.title.content === '🗂️ Session',
+                r.card?.header?.title.content === '🗂️ Session' &&
+                JSON.stringify(r.card?.elements ?? []).includes('🗄️ Archive'),
             ),
           30_000,
         );
         const detailAfter = [...readOutbox()]
           .reverse()
-          .find((r) => r.card?.header?.title.content === '🗂️ Session');
+          .find(
+            (r) =>
+              (r.kind === 'card' || r.kind === 'patch') &&
+              r.card?.header?.title.content === '🗂️ Session' &&
+              JSON.stringify(r.card?.elements ?? []).includes('🗄️ Archive'),
+          );
         const archiveButton = detailAfter?.card?.elements
           .flatMap((el) => (el.tag === 'action' ? el.actions : []))
           .find((a) => 'text' in a && a.text.content.includes('Archive'));
@@ -3529,9 +3544,6 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
           () => resultCardTexts().some((t) => t.includes('Archived session')),
           30_000,
         );
-      } else {
-        // Seam absent: the detail view degrades (rename/archive hidden).
-        expect(detailJson).not.toContain('🗄️ Archive');
       }
     } catch (error) {
       throw new Error(

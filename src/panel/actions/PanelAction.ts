@@ -41,16 +41,18 @@ export interface PanelServices {
   readonly defaultCwd: string;
   readonly requireWorkingDir: boolean | undefined;
   readonly repoRoots: readonly string[] | undefined;
-  readonly apiProxy:
+  readonly sessionTitle:
     | {
-        readonly sessions: {
-          rename(request: { readonly sessionId: string; readonly title: string }): Promise<unknown>;
-        };
-        readonly workspace: {
-          list(): Promise<{ readonly archivedSessionIds?: readonly string[] }>;
-          archiveSession(request: { readonly sessionId: string }): Promise<unknown>;
-        };
+        rename(session: unknown, title: string): unknown;
       }
+    | undefined;
+  readonly getWorkspaceRegistry:
+    | (() =>
+        | {
+            archiveSession(sessionId: string): Promise<unknown>;
+            readonly archivedSessionIds: readonly string[];
+          }
+        | undefined)
     | undefined;
   readonly permissionPresets: PermissionPresetService | undefined;
   readonly planMode: PlanModeService | undefined;
