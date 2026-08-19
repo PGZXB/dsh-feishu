@@ -188,7 +188,10 @@ export class MemoryTransport implements FeishuTransport {
   }
 
   /** Resolve an inbound image's bytes from the seeded attachment map. */
-  async downloadImage(key: string): Promise<{ data: Uint8Array; mediaType: string }> {
+  async downloadImage(
+    _messageId: string,
+    key: string,
+  ): Promise<{ data: Uint8Array; mediaType: string }> {
     const seeded = this.seededAttachments.get(key);
     if (seeded === undefined) {
       throw new Error(`memory transport: no seeded image for key ${key}`);
@@ -197,7 +200,7 @@ export class MemoryTransport implements FeishuTransport {
   }
 
   /** Resolve an inbound file's bytes from the seeded attachment map. */
-  async downloadFile(key: string): Promise<Uint8Array> {
+  async downloadFile(_messageId: string, key: string): Promise<Uint8Array> {
     const seeded = this.seededAttachments.get(key);
     if (seeded === undefined) {
       throw new Error(`memory transport: no seeded file for key ${key}`);

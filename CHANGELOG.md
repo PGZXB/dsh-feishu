@@ -35,15 +35,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Inbound attachments.** `image` and `file` messages are no longer
-  ignored. An image is downloaded (`im.v1.image.get`), committed through
-  the host's attachment service, and injected as an `image` content block
-  of the agent's user message — but ONLY when the chat's current model
-  advertises image input (the DeepSeek adapter rejects image content with
-  `UNSUPPORTED_CONTENT`, which would error the whole turn; pi-ai accepts
-  it). Under a text-only model (or absent attachment service), the image
-  degrades to a `📎 File received` receipt card + a file-name note, exactly
-  like a `file` message — the message is acknowledged, the turn never
-  errors because of an attachment. Reuses the existing `im:resource`
+  ignored. An image is downloaded through the message-resource endpoint
+  (`im.v1.messageResource.get` — `im.v1.image.get` can only fetch
+  bot-uploaded images), committed through the host's attachment service,
+  and injected as an `image` content block of the agent's user message —
+  but ONLY when the chat's current model advertises image input (the
+  DeepSeek adapter rejects image content with `UNSUPPORTED_CONTENT`, which
+  would error the whole turn; pi-ai accepts it). A file (and an image
+  under a text-only model or absent attachment service) is saved under the
+  chat's working directory at
+  `<cwd>/.dsh_feishu/attachments/<appId>/<messageId>/<key>.<ext>` (a
+  hidden, per-app+message-bucketed subdirectory; name derived from the
+  resource key + a content-sniffed extension, since Feishu file events
+  carry no original name) — the agent receives the REAL path and reads the
+  file with its workspace tools. A `📎 File received` receipt card posts;
+  download/save failures notice loudly and the turn continues text-only —
+  an attachment never wedges the chat. Reuses the existing `im:resource`
   scope.
 - **Canary workflow** (`.github/workflows/canary.yml`): runs the full suite
   daily (UTC 02:00) and on demand against the newest `@deepseek-ai/*`

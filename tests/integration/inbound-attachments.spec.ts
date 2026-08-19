@@ -86,8 +86,9 @@ function sendMessage(
   chatId: string,
   text: string,
   attachments?: readonly { kind: 'image' | 'file'; key: string; name?: string }[],
+  fixedMessageId?: string,
 ): void {
-  const messageId = `om-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const messageId = fixedMessageId ?? `om-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   writeFileSync(
     join(INBOX_DIR, `${messageId}.json`),
     JSON.stringify({
@@ -132,6 +133,7 @@ describe.skipIf(!integrationReady)('integration > inbound-attachments', () => {
   let mock: MockLlmServer | undefined;
   let child: ReturnType<typeof spawn> | undefined;
   let stdout = '';
+  let stderr = '';
   let bridgeReady = false;
 
   async function stopChild(): Promise<void> {
@@ -196,7 +198,9 @@ describe.skipIf(!integrationReady)('integration > inbound-attachments', () => {
       stdout += chunk.toString();
       if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
     });
-    child.stderr?.on('data', (_chunk: Buffer) => {});
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
     await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
     const chatId = `oc_att_${Date.now()}`;
     await pinWorkingDir(chatId);
@@ -245,21 +249,40 @@ describe.skipIf(!integrationReady)('integration > inbound-attachments', () => {
     );
   }, 150_000);
 
-  it('an inbound file message posts a receipt card and names the file to the agent', async () => {
+  it('an inbound file message saves the file to the workspace and names its path to the agent', async () => {
+    // A tiny text file: sniffed as .txt, saved under the chat's cwd in the
+    // appId/messageId bucket (botmux layout). Seeded BEFORE boot — the
+    // memory transport reads the attachment dir once at process start.
+    const content = 'hello from the inbound file\n';
+    seedAttachment('file-1', new TextEncoder().encode(content));
     const { chatId } = await boot();
-    seedAttachment('file-1', new Uint8Array([1, 2, 3]));
-    sendMessage(chatId, '', [{ kind: 'file', key: 'file-1', name: 'notes.txt' }]);
+    sendMessage(chatId, '', [{ kind: 'file', key: 'file-1' }], 'om-saved-file-1');
     await waitFor(
       'the file receipt card',
       () => cardMarkdowns('📎 File received').length > 0,
       30_000,
     );
-    // The agent's user message names the file.
+    // The bytes are on disk at <cwd>/.dsh_feishu/attachments/<appId>/<messageId>/file-1.txt.
+    const savedFile = join(
+      INT_CWD,
+      '.dsh_feishu',
+      'attachments',
+      'cli_mock_app',
+      'om-saved-file-1',
+      'file-1.txt',
+    );
+    try {
+      await waitFor('the saved attachment file on disk', () => existsSync(savedFile), 10_000);
+    } catch (error) {
+      throw new Error(`${String(error)}\n--- dsh stderr ---\n${stderr}`);
+    }
+    expect(readFileSync(savedFile, 'utf8')).toBe(content);
+    // The agent's user message carries the REAL saved path.
     await waitFor(
-      'the file name in the agent turn',
+      'the saved path in the agent turn',
       () => {
         const b = agentLastBody() as { messages?: unknown[] } | undefined;
-        return JSON.stringify(b?.messages ?? []).includes('notes.txt');
+        return JSON.stringify(b?.messages ?? []).includes(savedFile);
       },
       90_000,
     );

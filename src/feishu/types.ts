@@ -255,18 +255,26 @@ export interface FeishuTransport {
   /** Recall (delete) a previously sent message. Fire-and-forget-safe: never throws. */
   deleteMessage(messageId: string): Promise<void>;
   /**
-   * Download an inbound image message's bytes (`im.v1.image.get`, keyed by
-   * the normalized `image_key`). Resolves with the raw bytes and the
-   * platform-declared media type; throws when the key is unknown/stale or
-   * the scope is missing.
+   * Download an inbound image message's bytes. User-sent images are only
+   * reachable through the message-resource endpoint
+   * (`im.v1.messageResource.get` — `/messages/{message_id}/resources/{image_key}?type=image`);
+   * `im.v1.image.get` can only fetch bot-uploaded images. Resolves with the
+   * raw bytes and a media type; throws when the key is unknown/stale or the
+   * scope is missing.
+   * @param messageId - the owning message's id (the resource endpoint needs it).
+   * @param key - the normalized `image_key`.
    */
-  downloadImage(key: string): Promise<{ data: Uint8Array; mediaType: string }>;
+  downloadImage(messageId: string, key: string): Promise<{ data: Uint8Array; mediaType: string }>;
   /**
-   * Download an inbound file message's bytes (`im.v1.file.get`, keyed by the
-   * normalized `file_key`). Resolves with the raw bytes; throws when the key
-   * is unknown/stale or the scope is missing.
+   * Download an inbound file message's bytes. User-sent files are only
+   * reachable through the message-resource endpoint
+   * (`im.v1.messageResource.get` — `/messages/{message_id}/resources/{file_key}?type=file`);
+   * `im.v1.file.get` can only fetch bot-uploaded files. Resolves with the
+   * raw bytes; throws when the key is unknown/stale or the scope is missing.
+   * @param messageId - the owning message's id (the resource endpoint needs it).
+   * @param key - the normalized `file_key`.
    */
-  downloadFile(key: string): Promise<Uint8Array>;
+  downloadFile(messageId: string, key: string): Promise<Uint8Array>;
   /**
    * Membership counts for a chat, or `undefined` when unknown/unavailable.
    * Used for the 1-person-1-bot solo relaxation of the group mention gate.

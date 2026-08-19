@@ -22,6 +22,7 @@ import {
   type PermissionPresetService,
   type PlanModeService,
   type SessionListRow,
+  sniffExtension,
   turnTitle,
 } from '../src/bridge.js';
 import { SESSION_SELECT_MAX } from '../src/cards/session-list.js';
@@ -109,11 +110,14 @@ class RecordingTransport implements FeishuTransport {
    *  success/failure per scenario). */
   downloadImageImpl?: (key: string) => Promise<{ data: Uint8Array; mediaType: string }>;
   downloadFileImpl?: (key: string) => Promise<Uint8Array>;
-  async downloadImage(key: string): Promise<{ data: Uint8Array; mediaType: string }> {
+  async downloadImage(
+    _messageId: string,
+    key: string,
+  ): Promise<{ data: Uint8Array; mediaType: string }> {
     if (this.downloadImageImpl === undefined) throw new Error(`no downloadImage for ${key}`);
     return this.downloadImageImpl(key);
   }
-  async downloadFile(key: string): Promise<Uint8Array> {
+  async downloadFile(_messageId: string, key: string): Promise<Uint8Array> {
     if (this.downloadFileImpl === undefined) throw new Error(`no downloadFile for ${key}`);
     return this.downloadFileImpl(key);
   }
@@ -234,6 +238,7 @@ function makeHarness(
     sessionTitle?: NonNullable<BridgeOptions['sessionTitle']>;
     getWorkspaceRegistry?: NonNullable<BridgeOptions['getWorkspaceRegistry']>;
     getSaveImage?: NonNullable<BridgeOptions['getSaveImage']>;
+    saveInboundFile?: NonNullable<BridgeOptions['saveInboundFile']>;
   } = {},
 ): Harness {
   const transport = new RecordingTransport();
@@ -285,6 +290,7 @@ function makeHarness(
       ? { getWorkspaceRegistry: options.getWorkspaceRegistry }
       : {}),
     ...(options.getSaveImage !== undefined ? { getSaveImage: options.getSaveImage } : {}),
+    ...(options.saveInboundFile !== undefined ? { saveInboundFile: options.saveInboundFile } : {}),
     // Tests default the working-directory gate OFF (production defaults it
     // ON); the gate's own tests enable it explicitly.
     requireWorkingDir: options.requireWorkingDir ?? false,
@@ -377,6 +383,25 @@ describe('Bridge', () => {
     expect(h.transport.sentCards).toHaveLength(1);
   });
 
+  describe('sniffExtension', () => {
+    const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
+
+    it('detects common binary formats from magic bytes', () => {
+      expect(sniffExtension(enc('%PDF-1.7'))).toBe('pdf');
+      expect(sniffExtension(new Uint8Array([0x50, 0x4b, 0x03, 0x04]))).toBe('zip');
+      expect(sniffExtension(enc('{"a":1}'))).toBe('json');
+      expect(sniffExtension(enc('<?xml version="1.0"?>'))).toBe('xml');
+      expect(sniffExtension(new Uint8Array([0x89, 0x50, 0x4e, 0x47]))).toBe('png');
+      expect(sniffExtension(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]))).toBe('jpg');
+      expect(sniffExtension(enc('GIF89a'))).toBe('gif');
+    });
+
+    it('classifies printable text as txt and unknown binary as bin', () => {
+      expect(sniffExtension(enc('hello world\n'))).toBe('txt');
+      expect(sniffExtension(new Uint8Array([0x00, 0x01, 0xff, 0xfe]))).toBe('bin');
+    });
+  });
+
   describe('inbound attachments', () => {
     const pngBytes = new Uint8Array([137, 80, 78, 71]);
 
@@ -426,8 +451,13 @@ describe('Bridge', () => {
       expect(h.transport.sentCards).toHaveLength(1);
     });
 
-    it('posts a file receipt card and names the file to the agent', async () => {
-      const h = makeHarness();
+    it('posts a file receipt card and names the saved path to the agent', async () => {
+      const h = makeHarness({
+        saveInboundFile: async ({ data }) => {
+          expect(data).toEqual(new Uint8Array([1, 2, 3]));
+          return { path: '/work/.dsh_feishu/attachments/file-1.bin' };
+        },
+      });
       h.transport.downloadFileImpl = async () => new Uint8Array([1, 2, 3]);
       await h.bridge.handleMessage(
         message({
@@ -435,9 +465,27 @@ describe('Bridge', () => {
           attachments: [{ kind: 'file', key: 'file-1', name: 'notes.txt' }],
         }),
       );
-      // Receipt card + streaming card.
+      // Receipt card + streaming card; receipt shows the saved path.
       expect(h.transport.sentCards).toHaveLength(2);
       expect(h.transport.sentCards[0]?.header?.title.content).toBe('📎 File received');
+      expect(JSON.stringify(h.transport.sentCards[0]?.elements)).toContain('.dsh_feishu');
+      const followups = h.agentStore.followups.get('feishu-session-1');
+      const blocks = followups?.[0]?.content as unknown[];
+      expect(blocks?.[0]).toEqual({
+        type: 'text',
+        text: '[user sent a file: notes.txt — saved at /work/.dsh_feishu/attachments/file-1.bin. You can read it with your file tools.]',
+      });
+    });
+
+    it('falls back to a name-only note when the save seam is absent', async () => {
+      const h = makeHarness(); // no saveInboundFile
+      h.transport.downloadFileImpl = async () => new Uint8Array([1, 2, 3]);
+      await h.bridge.handleMessage(
+        message({
+          text: '',
+          attachments: [{ kind: 'file', key: 'file-1', name: 'notes.txt' }],
+        }),
+      );
       const followups = h.agentStore.followups.get('feishu-session-1');
       const blocks = followups?.[0]?.content as unknown[];
       expect(blocks?.[0]).toEqual({ type: 'text', text: '[user sent a file: notes.txt]' });

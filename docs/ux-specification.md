@@ -708,7 +708,10 @@ arrive in a p2p chat or a group (mention gate applies exactly as for text).
 ignored. A mixed message is not a Feishu concept — each message is one type.
 
 **Image path (agent sees the image)** — the transport downloads the image
-bytes (`im.v1.image.get`, needs the existing `im:resource` scope), then the
+bytes through the message-resource endpoint (`im.v1.messageResource.get` —
+`/messages/{message_id}/resources/{image_key}?type=image`; `im.v1.image.get`
+can only fetch bot-uploaded images, so user-sent images MUST use the
+message-resource API; needs the existing `im:resource` scope), then the
 bridge saves them through the host's attachment store (`ctx.attachments`
 — `dsh-attachment-local` is part of the dsh-base bundle, so the seam is
 REALLY mounted, unlike `apiProxy`) and injects
@@ -726,14 +729,34 @@ the chat's current model advertises `image` in its input modalities
 image as a file (receipt + name note). A turn must never error because of
 an attachment.
 
-**File path (receipt card)** — the agent cannot read arbitrary file bytes,
-so the file becomes a receipt: the bridge posts a small
-`📎 File received` card (file name when derivable, else the key) and the
-agent's user message carries a text note `[user sent a file: <name>]` so
-the model knows a file exists and can ask for its content. There is no
-downloadable URL for a Feishu `file_key` — the receipt is the surface's
-acknowledgement (user requirement "files become downloadable links" is not
-achievable on the platform; the receipt replaces it).
+**File path (save to the workspace, agent reads by path)** — the agent
+cannot ingest arbitrary file bytes as a content block (the attachment
+domain is image-only), but it CAN read files under its working directory
+(its bash/read tools run under the fs sandbox, which permits
+`workspace-write` inside the workspace root). The bridge therefore:
+1. downloads the file bytes through the message-resource endpoint
+   (`im.v1.messageResource.get` — `/messages/{message_id}/resources/{file_key}?type=file`;
+   `im.v1.file.get` can only fetch bot-uploaded files, so user-sent files
+   MUST use the message-resource API);
+2. saves them under the chat's working directory at
+   `<cwd>/.dsh_feishu/attachments/<appId>/<messageId>/<key>.<ext>` — a
+   hidden subdirectory so uploads never pollute the workspace root,
+   bucketed per app + message (botmux's `attachment-path.ts` layout) so
+   concurrent chats and apps never collide. The name is derived from the
+   resource key + a content sniff for the extension (Feishu file events do
+   NOT carry the original file name, so the surface cannot preserve it).
+   Files are kept permanently — the agent can re-read them any time, and
+   they are visible to the same tools that see the rest of the workspace;
+3. posts a small `📎 File received` receipt card (name/extension + path);
+4. injects a text note with the REAL path:
+   `[user sent a file: <key>.<ext> — saved at <cwd>/.dsh_feishu/attachments/<appId>/<messageId>/<file>]`
+   so the model can read it (e.g. `read` the file, grep it, run a script
+   over it).
+
+There is no downloadable URL for a Feishu `file_key` — the workspace file IS
+the deliverable. A file whose download/save fails still posts the receipt
+with a loud log and runs the turn text-only (an attachment never wedges the
+chat).
 
 **States & transitions** — this feature has NO new state machine: it feeds
 the existing turn pipeline. The only new branch is inside
@@ -741,9 +764,9 @@ the existing turn pipeline. The only new branch is inside
 
 | Step | Image (model supports) | Image (not) / File |
 |---|---|---|
-| Download | `image.get` → bytes + mediaType | `file.get` / `image.get` → bytes + name |
-| Save | `ctx.attachments.saveImage` → ref | — (not injected) |
-| Content | `[text, {type:'image', attachment}]` | `[text note]` |
+| Download | message-resource (image) → bytes + mediaType | message-resource (file) → bytes + name |
+| Save | `ctx.attachments.saveImage` → ref | write `cwd/.dsh_feishu/attachments/<appId>/<messageId>/<key>.<ext>` (host seam) |
+| Content | `[text, {type:'image', attachment}]` | `[text note with the saved path]` |
 | Card | none (streaming card already opens) | `📎 File received` receipt card |
 | Failure | card + text notice, turn still runs text-only | same |
 
@@ -752,7 +775,7 @@ markdown card (like the approval/question notices), posted before
 `beginTurn` so it never interferes with the streaming card.
 
 **Failure modes**:
-- `image.get` / `file.get` download fails (scope missing, key expired):
+- message-resource download fails (scope missing, key expired):
   log loudly, post a `⚠️ Could not download` text notice, and run the turn
   text-only — a broken attachment must never wedge the chat.
 - `ctx.attachments` absent (attachment-local not mounted): feature-detect
@@ -760,6 +783,8 @@ markdown card (like the approval/question notices), posted before
   with a loud log, matching the "hide the row, don't fail" seam rule.
 - `saveImage` rejects bytes (unsupported format, over limits): loud log +
   text notice; turn continues without the image block.
+- File save to the workspace fails (cwd unwritable, path collision): loud
+  log, receipt card still posted, turn continues with the name-only note.
 - Group message without mention: the existing mention gate drops it before
   any download — no attachment handling for ignored messages.
 - Stale/unknown `image_key` at download time: same as download failure.
@@ -770,8 +795,11 @@ markdown card (like the approval/question notices), posted before
 - [ ] `image` message + text-only model → degrades to a `📎 File received`
       receipt + name note; turn completes (no UNSUPPORTED_CONTENT error)
       (unit + integration tested)
-- [ ] `file` message → receipt card posted, agent's message carries the
-      file-name note (unit + integration tested)
+- [ ] `file` message → bytes saved under `cwd/.dsh_feishu/attachments/<appId>/<messageId>/`, receipt card
+      posted, agent's message carries the REAL saved path (unit + integration
+      tested)
+- [ ] The saved file is readable by the agent's tools (integration test
+      asserts the file exists on disk at the noted path)
 - [ ] Group messages still gated by the mention gate (no attachment handling
       for ignored messages)
 - [ ] Download failure → loud notice, turn continues text-only (unit-tested)
