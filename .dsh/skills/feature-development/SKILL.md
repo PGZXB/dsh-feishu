@@ -142,7 +142,14 @@ row. All further work happens inside that worktree.
 1. Update the mapped doc (see `docs/development.md` → "Documentation map"):
    the feature's `docs/` page, `docs/features.md` row → ✅, and the CHANGELOG
    `[Unreleased]` entry — all in this change.
-2. `README.md` / `README.zh.md` are maintainer-gated: any README edit requires
+2. **Bilingual pairs move together.** Every tracked doc has a `*.zh.md`
+   sibling; when you touch the English page (features, setup, pitfalls,
+   development, ux-specification, architecture), update the Chinese
+   counterpart IN THE SAME change — the convention check only verifies the
+   files exist as pairs, NOT that their content is in sync, so a missed zh
+   edit sails through the gates. `git diff --stat` on the docs should show
+   both members of every pair you touched.
+3. `README.md` / `README.zh.md` are maintainer-gated: any README edit requires
    maintainer review before commit. Put README edits in their own commit;
    hold the PR for review.
 
@@ -217,5 +224,6 @@ never as a subagent deliverable.
 - [ ] `scripts/check-acceptance.mjs` passes (mechanical items: tests, features.md, CHANGELOG, spec, manifest sync, README gate, clean tree)
 - [ ] `pnpm run check:mergeable` passes (CI assumed green locally; `--ci=github` checks the live PR)
 - [ ] `docs/features.md` row updated; CHANGELOG `[Unreleased]` entry added; manifest/feishu-setup synced if scopes changed
+- [ ] Every touched doc's `*.zh.md` sibling updated in the same change (bilingual pairs stay in sync — the convention check does NOT verify content parity)
 - [ ] README edits (if any) in their own commit, held for maintainer review
 - [ ] Squash-merged through a PR with green CI (or held for review when README is touched)
