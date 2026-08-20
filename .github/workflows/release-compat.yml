@@ -1,15 +1,17 @@
 name: Release compat (npm latest vs dsh@latest)
 
-# Daily check that the release line stays compatible with the dsh @latest
-# dist-tag — the exact combination an `npm i @dsh-feishu/dsh-feishu` user
-# gets. dsh-feishu's npm @latest release tracks dsh @latest, while main
-# tracks dsh @next (see docs/development.md → "Publishing"); the two can
-# diverge. A red run means the next release cut from main needs to pin
-# dsh @latest (or the shipped release needs a patch).
+# Daily check that the PUBLISHED npm package (@dsh-feishu/dsh-feishu@latest)
+# stays installable and bootable against the dsh @latest dist-tag — the
+# exact combination an `npm i @dsh-feishu/dsh-feishu` user gets. dsh-feishu's
+# npm @latest release tracks dsh @latest (rc.7), while main tracks dsh @next
+# (rc.8; see docs/development.md → "Publishing" → "Version tracks"); the two
+# tracks are verified separately by this workflow and the Canary workflow.
 #
-# This checks the REPO (which becomes the next release) against dsh
-# @latest — the same gates as ci.yml but with the dsh family lifted to
-# @latest instead of main's pinned version.
+# NOTE: this installs the PUBLISHED package, not the repo — main's code
+# targets dsh @next and is not expected to compile against @latest. The dsh
+# CLI bundles its own sub-packages, so only the top-level dsh package is
+# installed by @latest (the npm `latest` tags of the @deepseek-ai/* sub-
+# packages are stale 0.0.1-rc.x lines whose peers were never published).
 #
 # Triggered on a schedule (UTC 04:00, i.e. 12:00 Beijing) and manually via
 # workflow_dispatch.
@@ -21,54 +23,32 @@ on:
 
 jobs:
   release-compat:
-    name: repo against dsh@latest
+    name: published npm package against dsh@latest
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
 
-      # Lift the dsh family to the @latest dist-tag (not main's pinned
-      # version, which tracks @next) — the release line's target.
-      - name: Install with dsh@latest (not frozen)
+      - name: Install published package + dsh@latest (the real user combo)
         run: |
-          pnpm add -D @deepseek-ai/dsh@latest \
-            @deepseek-ai/dsh-agent@latest @deepseek-ai/dsh-llm@latest \
-            @deepseek-ai/dsh-session@latest \
-            @deepseek-ai/dsh-user-approval@latest \
-            @deepseek-ai/dsh-user-questions@latest \
-            @deepseek-ai/dsh-credentials@latest \
-            @deepseek-ai/dsh-commands@latest @deepseek-ai/dsh-schedule@latest
-          pnpm install --no-frozen-lockfile
+          mkdir -p /tmp/compat && cd /tmp/compat
+          npm init -y
+          npm install @dsh-feishu/dsh-feishu@latest @deepseek-ai/dsh@latest
 
-      - name: Lint
-        run: pnpm run lint
+      - name: Verify the package resolves
+        run: |
+          cd /tmp/compat
+          node -e "const p=require('@dsh-feishu/dsh-feishu/package.json'); console.log('@dsh-feishu/dsh-feishu', p.version)"
+          node -e "const p=require('@deepseek-ai/dsh/package.json'); console.log('@deepseek-ai/dsh', p.version)"
 
-      - name: Typecheck
-        run: pnpm run typecheck
-
-      - name: Build
-        run: pnpm run build
-
-      - name: Prepare integration-test profile
-        env:
-          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home
-        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
-
-      - name: Prepare scenario integration-test profile
-        env:
-          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-scenarios
-        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
-
-      - name: Test (unit + integration, FEISHU_INT_REQUIRED)
-        env:
-          DSH_BIN: ${{ github.workspace }}/node_modules/.bin/dsh
-          FEISHU_INT_REQUIRED: '1'
-        run: pnpm run test
+      - name: Boot the published bundle against dsh@latest
+        # Mount the published package into a scratch profile, then dump the
+        # composed config and confirm the feishu bundle row is present — the
+        # bundle loads and composes without throwing.
+        run: |
+          cd /tmp/compat
+          export DSH_HOME=/tmp/compat/dsh-home
+          ./node_modules/.bin/dsh plugin --profile compat add "link:/tmp/compat/node_modules/@dsh-feishu/dsh-feishu"
+          timeout 60 ./node_modules/.bin/dsh --profile compat --dump-config 2>&1 | grep -q "name: '@dsh-feishu/dsh-feishu'" \
+            || { echo 'feishu bundle missing from composed config'; exit 1; }
