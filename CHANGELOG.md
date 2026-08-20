@@ -30,14 +30,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   would error the whole turn; pi-ai accepts it). A file (and an image
   under a text-only model or absent attachment service) is saved under the
   chat's working directory at
-  `<cwd>/.dsh_feishu/attachments/<appId>/<messageId>/<key>.<ext>` (a
-  hidden, per-app+message-bucketed subdirectory; name derived from the
-  resource key + a content-sniffed extension, since Feishu file events
-  carry no original name) — the agent receives the REAL path and reads the
-  file with its workspace tools. A `📎 File received` receipt card posts;
-  download/save failures notice loudly and the turn continues text-only —
-  an attachment never wedges the chat. Reuses the existing `im:resource`
-  scope.
+  `<cwd>/.dsh_feishu/attachments/<appId>/<chatId>/<name>.<ext>` (a
+  hidden, per-app+chat-bucketed subdirectory) — the agent receives the
+  REAL path and reads the file with its workspace tools. A `📎 File
+  received` receipt card posts; download/save failures notice loudly and
+  the turn continues text-only — an attachment never wedges the chat.
+  Reuses the existing `im:resource` scope.
+- **Inbound files stream to disk and keep their original name.** The
+  message-resource download previously read `response.file`, but the SDK
+  interceptor already unwraps `resp.data`, so every inbound file failed to
+  persist (`code -1`). The file download now uses the botmux pattern —
+  `responseType: 'stream'` + `$return_headers`, JSON error-envelope
+  detection, and `pipeline()` streaming to disk (no buffering; the
+  resource API serves files up to ~100 MB). The on-disk name is the
+  user's original `file_name` (sanitized for path safety; Unicode kept;
+  200-byte cap) with WeChat-style dedupe — a same-named file re-sent in
+  the same chat lands as `name(1).ext`, `name(2).ext`, … never an
+  overwrite (bucket per chat, not per message, so the dedupe fires);
+  without a usable `file_name` the sanitized resource key is used.
 - **Canary workflow** (`.github/workflows/canary.yml`): runs the full suite
   daily (UTC 02:00) and on demand against the newest `@deepseek-ai/*`
   release (`@next` dist-tag), surfacing upstream breaking changes before
