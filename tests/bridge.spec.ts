@@ -4204,7 +4204,7 @@ describe('two-stage reaction ack', () => {
     ]);
   });
 
-  it('swaps to WARN on error and stopped', async () => {
+  it('swaps to ERROR on error and stopped (WARN is not a valid Feishu emoji_type)', async () => {
     for (const reason of ['error', 'aborted']) {
       const h = makeHarness({ throttleMs: 0 });
       await h.bridge.handleMessage(message());
@@ -4216,7 +4216,7 @@ describe('two-stage reaction ack', () => {
       );
       await new Promise((resolve) => setTimeout(resolve, 0));
       const adds = h.transport.reactions.filter((r) => r.action === 'add').map((r) => r.emojiType);
-      expect(adds).toEqual(['GoGoGo', 'WARN']);
+      expect(adds).toEqual(['GoGoGo', 'ERROR']);
       expect(h.transport.reactions.some((r) => r.action === 'remove')).toBe(true);
     }
   });

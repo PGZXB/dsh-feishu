@@ -1153,14 +1153,14 @@ describe.skipIf(!integrationReady)('scenario integration (real process)', () => 
         value: { kind: 'stop' },
       });
       // The aborted turn settles the card orange; the pending reaction is
-      // swapped (remove + add WARN). The aborted loop may race, so wait for
+      // swapped (remove + add ERROR). The aborted loop may race, so wait for
       // the swap rather than asserting timing.
       await waitFor(
         'the stopped reaction swap',
         () => {
           const records = readOutbox().filter((r) => r.kind === 'reaction');
           return (
-            records.some((r) => r.action === 'add' && r.emojiType === 'WARN') &&
+            records.some((r) => r.action === 'add' && r.emojiType === 'ERROR') &&
             records.some((r) => r.action === 'remove')
           );
         },

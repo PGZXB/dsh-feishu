@@ -396,8 +396,9 @@ export interface BridgeOptions {
   /**
    * Two-stage reaction ack emojis: `received` is added to an accepted turn
    * message, then swapped for `done` / `error` / `stopped` when the turn
-   * settles. Defaults GoGoGo / DONE / WARN / WARN (botmux codes). Reaction
-   * failures only log — they never block the turn.
+   * settles. Defaults GoGoGo / DONE / ERROR / ERROR — valid Feishu
+   * `emoji_type` values (WARN is not in the platform's reaction table).
+   * Reaction failures only log — they never block the turn.
    */
   readonly reactions?: {
     readonly received?: string;

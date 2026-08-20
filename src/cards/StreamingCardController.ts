@@ -252,8 +252,8 @@ export class StreamingCardController {
     return {
       received: reactions?.received ?? 'GoGoGo',
       done: reactions?.done ?? 'DONE',
-      error: reactions?.error ?? 'WARN',
-      stopped: reactions?.stopped ?? 'WARN',
+      error: reactions?.error ?? 'ERROR',
+      stopped: reactions?.stopped ?? 'ERROR',
     };
   }
 
