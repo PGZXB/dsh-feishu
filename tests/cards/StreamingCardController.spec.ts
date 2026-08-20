@@ -75,7 +75,10 @@ class RecordingTransport implements FeishuTransport {
   ): Promise<{ data: Uint8Array; mediaType: string }> {
     throw new Error('downloadImage not implemented in this fake');
   }
-  async downloadFile(_messageId: string, _key: string): Promise<Uint8Array> {
+  async downloadFile(
+    _messageId: string,
+    _key: string,
+  ): Promise<{ stream: NodeJS.ReadableStream; head: Uint8Array }> {
     throw new Error('downloadFile not implemented in this fake');
   }
 }

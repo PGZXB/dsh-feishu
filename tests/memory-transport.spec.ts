@@ -157,12 +157,24 @@ describe('MemoryTransport', () => {
       await expect(transport.downloadImage('om_x', 'nope')).rejects.toThrow(/no seeded image/);
     });
 
-    it('downloadFile resolves seeded bytes and throws for an unknown key', async () => {
+    it('downloadFile streams seeded bytes with the head re-pushed, and throws for an unknown key', async () => {
       const transport = new MemoryTransport({
         dir: SCRATCH,
         attachments: new Map([['file-1', { data: bytes }]]),
       });
-      expect(await transport.downloadFile('om_x', 'file-1')).toEqual(bytes);
+      const { stream, head } = await transport.downloadFile('om_x', 'file-1');
+      expect(head).toEqual(bytes); // smaller than 16 bytes → whole body
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of stream as unknown as AsyncIterable<Uint8Array>) {
+        chunks.push(chunk);
+      }
+      const collected = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+      let offset = 0;
+      for (const chunk of chunks) {
+        collected.set(chunk, offset);
+        offset += chunk.length;
+      }
+      expect(collected).toEqual(bytes);
       await expect(transport.downloadFile('om_x', 'nope')).rejects.toThrow(/no seeded file/);
     });
   });

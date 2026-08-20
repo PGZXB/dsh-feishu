@@ -358,8 +358,10 @@ export interface BridgeOptions {
     messageId: string;
     /** The normalized attachment (key + optional name). */
     attachment: InboundAttachment;
-    /** The downloaded bytes. */
-    data: Uint8Array;
+    /** The downloaded body, streamed (not buffered) so large files pipe to
+     *  disk without a memory spike (botmux lesson). The leading bytes have
+     *  been read for sniffing and pushed back, so the full body is here. */
+    stream: NodeJS.ReadableStream;
     /** A sniffed extension (pdf/zip/txt/json/bin…), no leading dot. */
     extension: string;
   }) => Promise<{ path: string }>;
@@ -1394,19 +1396,20 @@ export class Bridge {
     const name = attachment.name ?? attachment.key;
     let savedPath: string | undefined;
     try {
-      const data = await this.options.transport.downloadFile(message.messageId, attachment.key);
-      this.options.logger.debug(
-        `inbound file ${attachment.key}: ${data.length} bytes downloaded (${message.chatId})`,
+      const { stream, head } = await this.options.transport.downloadFile(
+        message.messageId,
+        attachment.key,
       );
+      this.options.logger.debug(`inbound file ${attachment.key}: downloaded (${message.chatId})`);
       const save = this.options.saveInboundFile;
       if (save !== undefined) {
-        const extension = sniffExtension(data);
+        const extension = sniffExtension(head);
         const saved = await save({
           chatId: message.chatId,
           appId: this.options.appId ?? 'unknown',
           messageId: message.messageId,
           attachment,
-          data,
+          stream,
           extension,
         });
         savedPath = saved.path;

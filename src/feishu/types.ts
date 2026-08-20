@@ -266,15 +266,22 @@ export interface FeishuTransport {
    */
   downloadImage(messageId: string, key: string): Promise<{ data: Uint8Array; mediaType: string }>;
   /**
-   * Download an inbound file message's bytes. User-sent files are only
+   * Stream an inbound file message's body. User-sent files are only
    * reachable through the message-resource endpoint
    * (`im.v1.messageResource.get` — `/messages/{message_id}/resources/{file_key}?type=file`);
-   * `im.v1.file.get` can only fetch bot-uploaded files. Resolves with the
-   * raw bytes; throws when the key is unknown/stale or the scope is missing.
+   * `im.v1.file.get` can only fetch bot-uploaded files. Streamed (not
+   * buffered) because the resource API serves files up to ~100 MB — the
+   * caller pipes the body straight to disk (botmux lesson). The leading
+   * bytes are returned separately for type sniffing and already pushed back
+   * into the stream, so the caller can both sniff and then consume the full
+   * body.
    * @param messageId - the owning message's id (the resource endpoint needs it).
    * @param key - the normalized `file_key`.
    */
-  downloadFile(messageId: string, key: string): Promise<Uint8Array>;
+  downloadFile(
+    messageId: string,
+    key: string,
+  ): Promise<{ stream: NodeJS.ReadableStream; head: Uint8Array }>;
   /**
    * Membership counts for a chat, or `undefined` when unknown/unavailable.
    * Used for the 1-person-1-bot solo relaxation of the group mention gate.

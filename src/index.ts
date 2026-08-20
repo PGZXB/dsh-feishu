@@ -15,9 +15,10 @@
  * approvals, and questions land in later iterations.
  */
 
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createWriteStream, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import type { Context } from '@deepseek-ai/cordis';
 // Empty type imports carry the Context merges (`ctx.commands`, `ctx.agents`,
 // `ctx.credentials`, and the `session/event` event) into this compilation.
@@ -539,7 +540,7 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
     // concurrent chats and apps never collide). The name derives from the
     // resource key + sniffed extension — Feishu file events carry no
     // original name. Files are kept permanently.
-    saveInboundFile: async ({ chatId, appId, messageId, attachment, data, extension }) => {
+    saveInboundFile: async ({ chatId, appId, messageId, attachment, stream, extension }) => {
       const cwd = sessionMap.cwdFor(chatId) ?? config.defaultCwd ?? process.cwd();
       const safeAppId = appId.replace(/[^a-zA-Z0-9_-]/g, '_');
       const safeMessageId = messageId.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -547,7 +548,10 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
       const dir = join(cwd, '.dsh_feishu', 'attachments', safeAppId, safeMessageId);
       mkdirSync(dir, { recursive: true });
       const path = join(dir, `${safeKey}.${extension}`);
-      writeFileSync(path, data);
+      // Stream the body to disk (pipeline handles backpressure + cleanup);
+      // the resource API serves files up to ~100 MB — buffering would spike
+      // memory (botmux lesson).
+      await pipeline(stream, createWriteStream(path));
       return { path };
     },
     // Feature-detect the two stateful web-command services (both mounted by

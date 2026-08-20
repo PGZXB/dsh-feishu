@@ -15,6 +15,7 @@
  * @module @dsh-feishu/dsh-feishu/transport
  */
 
+import { PassThrough } from 'node:stream';
 import {
   Client,
   EventDispatcher,
@@ -75,6 +76,12 @@ export interface TransportLogger {
   /** Debug tracing (printed only when FEISHU_DEBUG=1). */
   debug(message: string): void;
 }
+
+/**
+ * The SDK's `Client.request` payload type, plus the `$return_headers` flag
+ * the SDK's own generated download code passes (its public types omit it).
+ */
+type SdkRequestPayload = Parameters<Client['request']>[0] & { $return_headers?: boolean };
 
 /** Credentials for the Feishu app. */
 export interface LarkCredentials {
@@ -468,46 +475,116 @@ export class LarkTransport implements FeishuTransport {
     key: string,
   ): Promise<{ data: Uint8Array; mediaType: string }> {
     this.logger?.debug(`transport downloadImage ${key} (message ${messageId})`);
-    const bytes = await this.downloadMessageResource(messageId, key, 'image');
+    const bytes = await this.downloadMessageResource(messageId, key);
     // The resource endpoint does not echo the media type; default to png —
     // saveImage re-detects the real format from the bytes.
     return { data: bytes, mediaType: 'image/png' };
   }
 
   /**
-   * Download an inbound file message's bytes via the message-resource
-   * endpoint (`/messages/{message_id}/resources/{file_key}?type=file`).
+   * Stream an inbound file message's body via the message-resource endpoint
+   * (`/messages/{message_id}/resources/{file_key}?type=file`).
    * User-sent files are only reachable here — `im.v1.file.get` can only
-   * fetch bot-uploaded files.
+   * fetch bot-uploaded files. Streamed (not buffered) because the resource
+   * API serves files up to ~100 MB — the caller pipes the body straight to
+   * disk (botmux lesson). The leading bytes are returned separately for type
+   * sniffing and pushed back into the stream, so the caller can sniff the
+   * extension and still consume the full body.
    * @param messageId - the owning message's id.
    * @param key - the normalized `file_key`.
    */
-  async downloadFile(messageId: string, key: string): Promise<Uint8Array> {
-    this.logger?.debug(`transport downloadFile ${key} (message ${messageId})`);
-    return this.downloadMessageResource(messageId, key, 'file');
-  }
-
-  /** GET one message resource (`im.v1.messageResource.get`) as bytes. */
-  private async downloadMessageResource(
+  async downloadFile(
     messageId: string,
     key: string,
-    type: 'image' | 'file',
-  ): Promise<Uint8Array> {
-    const response = await this.client.request<{ file?: Buffer }>({
+  ): Promise<{ stream: NodeJS.ReadableStream; head: Uint8Array }> {
+    this.logger?.debug(`transport downloadFile ${key} (message ${messageId})`);
+    const response = await this.client.request<{
+      data?: NodeJS.ReadableStream;
+      headers?: Record<string, string>;
+    }>({
       method: 'GET',
       url: `/open-apis/im/v1/messages/${encodeURIComponent(messageId)}/resources/${encodeURIComponent(key)}`,
-      params: { type },
-      responseType: 'arraybuffer',
-    });
-    const bytes = response?.file;
-    if (bytes === undefined) {
+      params: { type: 'file' },
+      responseType: 'stream',
+      $return_headers: true,
+    } as SdkRequestPayload);
+    const stream = response?.data;
+    if (stream === undefined) {
       throw new FeishuApiError(
-        `im.v1.messageResource.get (${type})`,
+        'im.v1.messageResource.get (file)',
         -1,
         'response carried no resource bytes',
       );
     }
-    return new Uint8Array(bytes);
+    const contentType = response?.headers?.['content-type'] ?? '';
+    if (contentType.includes('application/json')) {
+      // A JSON error envelope (e.g. 403 on a withdrawn message) — collect
+      // the small body and surface the code instead of persisting it.
+      const text = await collectStream(stream);
+      const envelope = JSON.parse(text) as { code?: number; msg?: string };
+      const code = envelope?.code ?? -1;
+      if (code !== 0) {
+        throw new FeishuApiError(
+          'im.v1.messageResource.get (file)',
+          code,
+          envelope?.msg ?? 'unknown error',
+        );
+      }
+    }
+    // Peek the leading bytes for extension sniffing and relay the full body
+    // through a PassThrough (readHead relays; unshift cannot re-arm an ended
+    // source stream, and `read(size)` does not truncate Readable.from
+    // chunks). The caller's downstream pipe reads the complete body.
+    const { stream: relay, head } = await relayHead(stream, 16);
+    return { stream: relay, head };
+  }
+
+  /**
+   * GET one image message resource (`im.v1.messageResource.get`) as bytes.
+   *
+   * `$return_headers` makes the SDK surface the raw body plus its headers
+   * (the SDK's own generated download code does the same). The response
+   * interceptor unwraps `resp.data`, so with `responseType: 'arraybuffer'`
+   * the body IS the bytes — there is no `{file: ...}` envelope to read.
+   * A JSON error envelope (e.g. 403 on a withdrawn message) is detected
+   * via the content type and surfaced as a {@link FeishuApiError}, never
+   * injected as image bytes.
+   */
+  private async downloadMessageResource(messageId: string, key: string): Promise<Uint8Array> {
+    const response = await this.client.request<{
+      data?: Uint8Array | ArrayBuffer;
+      headers?: Record<string, string>;
+    }>({
+      method: 'GET',
+      url: `/open-apis/im/v1/messages/${encodeURIComponent(messageId)}/resources/${encodeURIComponent(key)}`,
+      params: { type: 'image' },
+      responseType: 'arraybuffer',
+      $return_headers: true,
+    } as SdkRequestPayload);
+    const bytes = response?.data;
+    if (bytes === undefined || bytes.byteLength === 0) {
+      throw new FeishuApiError(
+        'im.v1.messageResource.get (image)',
+        -1,
+        'response carried no resource bytes',
+      );
+    }
+    const contentType = response?.headers?.['content-type'] ?? '';
+    if (contentType.includes('application/json')) {
+      const envelope = JSON.parse(new TextDecoder().decode(bytes)) as {
+        code?: number;
+        msg?: string;
+      };
+      const code = envelope?.code ?? -1;
+      if (code !== 0) {
+        throw new FeishuApiError(
+          'im.v1.messageResource.get (image)',
+          code,
+          envelope?.msg ?? 'unknown error',
+        );
+      }
+    }
+    return bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   }
 
   /** Create a message in a chat; assert the API succeeded. */
@@ -541,4 +618,66 @@ export function createLarkTransport(
   logger?: TransportLogger,
 ): FeishuTransport {
   return new LarkTransport({ credentials, ...(logger === undefined ? {} : { logger }) });
+}
+
+/**
+ * Peek the first `size` bytes of a stream and relay the FULL body through a
+ * `PassThrough`, so the caller can sniff the head and still consume every
+ * byte downstream.
+ *
+ * Why not unshift? A source that ends right after one chunk (`Readable.from`
+ * with a single element, as tests seed) becomes `readableEnded` once drained,
+ * and `unshift` on an ended stream silently drops the data. A relay keeps the
+ * head as a copy while the pass-through delivers the body independently of
+ * the source's lifecycle.
+ *
+ * Resolves with fewer than `size` head bytes if the source ends first.
+ */
+async function relayHead(
+  stream: NodeJS.ReadableStream,
+  size: number,
+): Promise<{ stream: PassThrough; head: Uint8Array }> {
+  const relay = new PassThrough();
+  const headChunks: Buffer[] = [];
+  let headTotal = 0;
+  // Forward every chunk into the relay while stashing the leading bytes.
+  stream.on('data', (chunk: Buffer) => {
+    if (headTotal < size) {
+      const want = size - headTotal;
+      headChunks.push(chunk.length > want ? chunk.subarray(0, want) : chunk);
+      headTotal += Math.min(chunk.length, want);
+    }
+    relay.write(chunk);
+  });
+  stream.on('end', () => relay.end());
+  stream.on('error', (error: Error) => relay.destroy(error));
+  // Wait until the head is filled or the source is done.
+  await new Promise<void>((resolve) => {
+    if (headTotal >= size) return resolve();
+    stream.once('end', resolve);
+    stream.once('error', () => resolve());
+  });
+  return { stream: relay, head: new Uint8Array(Buffer.concat(headChunks)) };
+}
+
+/** Concatenate byte chunks into one Uint8Array. */
+function concatBytes(chunks: readonly Uint8Array[]): Uint8Array {
+  let length = 0;
+  for (const chunk of chunks) length += chunk.length;
+  const out = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
+/** Collect an entire stream's bytes as a UTF-8 string (error envelopes only). */
+async function collectStream(stream: NodeJS.ReadableStream): Promise<string> {
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of stream as unknown as AsyncIterable<Uint8Array>) {
+    chunks.push(chunk);
+  }
+  return new TextDecoder().decode(concatBytes(chunks));
 }
