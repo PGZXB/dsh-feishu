@@ -214,6 +214,13 @@ harness 沙箱（以及本 checkout 的环境）有一些特定规则：
   否则后续运行和真实 bot 都会继承该更改。
 - 每个新会话都会触发一个 **标题生成完成**（"Create a concise title for an
   AI coding…"）。绝不要断言精确的 LLM 完成次数；断言卡片内容。
+- **`holdNextResponse()` 之后、驱动 stop/panel 动作之前，先 `await
+  waitForHold()`。** working 卡在 turn 一开始就出现，但 agent 的 LLM 请求
+  是异步建立的（buildRequest → resolveApiKey → fetch）。在请求到达 mock
+  （且其 abort signal 绑定到在途 body）之前发出的 stop 什么也取消不了，
+  turn 会正常完成——没有 stopped 卡 / ERROR 表情，在慢或高负载的 CI
+  上超时。`waitForHold()` 在 hold 请求真正在途时 resolve，使 abort 确定性
+  落地。
 - 由 `Date.now()` 构建的消息 id 在同一毫秒内写入两条消息时会冲突（并且
   表面的去重会静默丢弃第二条）。追加一个随机后缀。匹配 ANY 聊天回复的
   waitFor 谓词会提前通过先前聊天的文本 —— 用 `r.chatId` 过滤。

@@ -680,6 +680,9 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         () => readOutbox().some((r) => r.kind === 'card'),
         30_000,
       );
+      // Ensure the agent's request is actually in flight (held) before
+      // driving the panel/stop actions — see the copy-after-stop test.
+      await server.waitForHold();
 
       // Panel while running carries ⏹ Stop current.
       writeAction({
@@ -1231,6 +1234,10 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         () => readOutbox().some((r) => r.kind === 'card' && r.chatId === chatId),
         30_000,
       );
+      // The turn must actually be running (request in flight, held) before
+      // the mutating-command refusal is tested — see the copy-after-stop
+      // test for the race this guards against.
+      await server.waitForHold();
 
       // Compact button (palette command) while running → the confirm view
       // opens, and CONFIRMING is refused.
@@ -3243,6 +3250,12 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         () => readOutbox().some((r) => r.kind === 'card' && r.chatId === chatId),
         30_000,
       );
+      // The working card appears as soon as the turn starts, but the agent's
+      // LLM request is established asynchronously — a stop issued before it
+      // reaches the server cancels nothing and the turn completes normally
+      // (no stopped card → timeout on slow CI runners). Await the hold so
+      // the abort deterministically lands.
+      await server.waitForHold();
       writeAction({
         messageId: 'mem-sc-1',
         chatId,

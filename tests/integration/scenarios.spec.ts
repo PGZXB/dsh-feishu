@@ -423,6 +423,9 @@ describe.skipIf(!integrationReady)('scenario integration (real process)', () => 
         () => readOutbox().some((r) => r.kind === 'card'),
         30_000,
       );
+      // Ensure the held request is actually in flight before sending /status
+      // (the working card precedes the LLM request being established).
+      await mock?.waitForHold();
       sendMessage(chatId, '/status');
       await waitFor(
         'the status text while working',
@@ -1146,6 +1149,10 @@ describe.skipIf(!integrationReady)('scenario integration (real process)', () => 
         () => readOutbox().some((r) => r.kind === 'card'),
         30_000,
       );
+      // Ensure the held request is in flight before stopping — otherwise a
+      // stop issued during request establishment cancels nothing and the
+      // turn completes normally (DONE reaction, never ERROR → timeout).
+      await mock?.waitForHold();
       writeAction({
         messageId: 'mem-1',
         chatId,

@@ -295,6 +295,14 @@ stable-rc.7 line; newer dsh releases (`@next`) are tracked on `main`.
   the resource key — landed as `<key>.bin`. The sniffer now maps those magic
   bytes to `mp4` / `webm` / `avi` (and this also fixed the WebP branch, whose
   `RIFF`+`WEBP` check read an 8-byte head and never matched).
+- **Flaky stop/panel integration tests (CI-only timeouts).** Tests that
+  `holdNextResponse()` then drove a stop/panel action waited only for the
+  working card — which appears as soon as the turn starts, BEFORE the agent's
+  LLM request is established (buildRequest → resolveApiKey → fetch). A stop
+  issued in that window cancelled nothing and the turn completed normally
+  (no stopped card / ERROR reaction), timing out on slow or loaded CI
+  runners. The mock server now exposes `waitForHold()`, and every
+  hold-based test awaits it before acting — the abort is deterministic.
 - **Turn-termination reaction ack 400s.** The terminal emoji for an error or
   stopped turn defaulted to `WARN`, which is NOT a valid Feishu `emoji_type`
   (the platform's reaction table has no WARN) — the swap always failed with
