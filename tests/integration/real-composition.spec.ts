@@ -25,10 +25,13 @@ import type { MemoryOutboxRecord } from '../../src/memory-transport.js';
 import { type MockLlmServer, startMockLlmServer } from './mock-llm-server.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
-// Repo-local dsh home; override with FEISHU_INT_DSH_HOME. Deliberately NOT
-// `DSH_HOME` — the ambient harness environment exports its own DSH_HOME and
-// the test must never touch it.
-const DSH_HOME = process.env.FEISHU_INT_DSH_HOME ?? join(REPO_ROOT, '_dev', 'dsh-home');
+// Repo-local dsh home; override with FEISHU_INT_REAL_DSH_HOME. Deliberately
+// NOT `DSH_HOME` — the ambient harness environment exports its own DSH_HOME
+// and the test must never touch it. Each integration suite uses its OWN dsh
+// home (the suites run in parallel and spawn real dsh processes that share
+// `_dev/dsh-home/feishu/session-map.json` — concurrent writes raced and
+// silently dropped another suite's chat→session binding, CI-only flakes).
+const DSH_HOME = process.env.FEISHU_INT_REAL_DSH_HOME ?? join(REPO_ROOT, '_dev', 'dsh-home-real');
 const PROFILE_DIR = join(DSH_HOME, 'profiles', 'feishu-dev');
 const MEMORY_DIR = join(REPO_ROOT, '_dev', 'int-memory');
 const INBOX_DIR = join(MEMORY_DIR, 'inbox');
