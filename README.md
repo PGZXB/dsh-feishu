@@ -6,13 +6,16 @@ English | [中文](README.zh.md)
 [![Node](https://img.shields.io/badge/node-%3E%3D22.13-339933.svg)](package.json)
 [![npm](https://img.shields.io/npm/v/@dsh-feishu/dsh-feishu)](https://www.npmjs.com/package/@dsh-feishu/dsh-feishu)
 [![CI](https://img.shields.io/github/actions/workflow/status/PGZXB/dsh-feishu/ci.yml?branch=main)](.github/workflows/ci.yml)
-[![dsh](https://img.shields.io/badge/dsh-0.1.0--rc.7-4D6BFE)](https://github.com/deepseek-ai/deepseek-harness)
 
 The Feishu UI for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) — a dsh-native plugin with a **panel-driven control console**: every slash command is a button on the ⚙️ control-panel card, approvals and questions resolve inside the chat, and one QR scan sets the whole app up.
 
 > **Note:** [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) is
 > still pre-release (`0.1.0-rc.x`) and may break between releases. dsh-feishu
-> tracks the latest release — currently compatible with **dsh `0.1.0-rc.7`**.
+> tracks **two** dsh versions:
+> - the `main` branch (installed from git) tracks **dsh `@next`** — currently
+>   **`0.1.0-rc.8`**;
+> - the npm `@latest` release tracks **dsh `@latest`** — currently
+>   **`0.1.0-rc.7`**.
 
 https://github.com/user-attachments/assets/e9163793-52f2-4e2c-a08a-22b27372be61
 

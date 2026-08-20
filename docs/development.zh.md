@@ -264,6 +264,24 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 main 是开发分支，可能带着未发布的工作（如下一轮 dsh 适配），所以发布必须
 从"恰好要发布的那个 commit"切出分支进行。
 
+### 版本轨道
+
+dsh-feishu 追踪两个 DSH 版本，一个消费轨道一个（两者可能不同——不要假设
+它们一致）：
+
+| dsh-feishu 轨道 | 发布内容 | 适配的 DSH | 用户怎么装（README 小节） |
+|---|---|---|---|
+| `main` 分支 | 下一个 release 的工作 | **dsh `@next`**（最新预发布） | "从源码安装" |
+| npm `@latest`（GitHub latest release） | 当前稳定 release | **dsh `@latest`** | "从 npm 安装" |
+
+我们只发布 npm `@latest` tag——dsh-feishu 没有 npm `@next`；想要最新代码的
+用户从 `main` 安装。README 同时标注两个兼容版本（`main` → dsh `@next`，
+latest release → dsh `@latest`），两条轨道分别验证：
+- `ci.yml` 和 `Canary (main vs dsh@next)` workflow 用 dsh `@next` 验证 `main`
+  （main 的 lockfile 锁定它；canary 在上游发布更快时提升到最新的 @next）；
+- `Release compat (npm latest vs dsh@latest)` workflow 把仓库提升到
+  dsh `@latest`——下一个 release 必须适配的组合。
+
 ### 发版步骤
 
 ```sh

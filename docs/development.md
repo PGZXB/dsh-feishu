@@ -379,6 +379,26 @@ Releases are **tag-driven from a frozen `release/*` branch**, never from
 the next dsh compat pass), so a release must be cut from the exact commit
 that should ship.
 
+### Version tracks
+
+dsh-feishu tracks two DSH versions, one per consumer track (they differ —
+never assume they match):
+
+| dsh-feishu track | Ships | Adapted for DSH | How users install (README sections) |
+|---|---|---|---|
+| `main` branch | next release's work | **dsh `@next`** (latest pre-release) | "Install from source" |
+| npm `@latest` (GitHub latest release) | the current stable release | **dsh `@latest`** | "Install from npm" |
+
+We publish only the `@latest` npm tag — there is no npm `@next` for
+dsh-feishu; users who want the newest code install from `main`. README
+carries both compatibility badges (`main` → dsh `@next`, latest release →
+dsh `@latest`), and the two tracks are verified separately:
+- `ci.yml` and the `Canary (main vs dsh@next)` workflow exercise `main`
+  against dsh `@next` (main's lockfile pins it; canary lifts to the newest
+  @next when upstream publishes faster);
+- the `Release compat (npm latest vs dsh@latest)` workflow lifts the repo
+  to dsh `@latest` — the combination the next release must ship against.
+
 ### Releasing
 
 ```sh

@@ -9,6 +9,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **dsh family bumped to `0.1.0-rc.8`.** `@deepseek-ai/dsh` is pinned
+  exactly in devDependencies; the rest of the `@deepseek-ai/*` surface
+  moves to `^0.1.0-rc.8` (dev, peer, AND runtime deps — the runtime
+  dsh-llm/storage/workspace were missed in the earlier bump, leaving a
+  mixed rc.7/rc.8 tree that broke tool execution). Compatible with dsh
+  `0.1.0-rc.8` (`@next`); the stable `0.2.1` release line tracks dsh
+  `0.1.0-rc.7` (`@latest`). `commands.execute` gained an `images`
+  parameter in rc.8; the surface passes an empty array.
+
+### Added
+
+- **Inbound attachments.** `image` and `file` messages are no longer
+  ignored. An image is downloaded through the message-resource endpoint
+  (`im.v1.messageResource.get` — `im.v1.image.get` can only fetch
+  bot-uploaded images), committed through the host's attachment service,
+  and injected as an `image` content block of the agent's user message —
+  but ONLY when the chat's current model advertises image input (the
+  DeepSeek adapter rejects image content with `UNSUPPORTED_CONTENT`, which
+  would error the whole turn; pi-ai accepts it). A file (and an image
+  under a text-only model or absent attachment service) is saved under the
+  chat's working directory at
+  `<cwd>/.dsh_feishu/attachments/<appId>/<messageId>/<key>.<ext>` (a
+  hidden, per-app+message-bucketed subdirectory; name derived from the
+  resource key + a content-sniffed extension, since Feishu file events
+  carry no original name) — the agent receives the REAL path and reads the
+  file with its workspace tools. A `📎 File received` receipt card posts;
+  download/save failures notice loudly and the turn continues text-only —
+  an attachment never wedges the chat. Reuses the existing `im:resource`
+  scope.
+- **Canary workflow** (`.github/workflows/canary.yml`): runs the full suite
+  daily (UTC 02:00) and on demand against the newest `@deepseek-ai/*`
+  release (`@next` dist-tag), surfacing upstream breaking changes before
+  users hit them.
+- **Session rename/archive actually work.** The session-detail Rename and
+  Archive buttons previously never rendered in real deployments because
+  they depended on the `apiProxy` gateway service, which dsh-base does not
+  mount. The bundle now adds the durable storage domain (`storage` ×3 +
+  `workspace`) and the actions go through `ctx.sessionTitle.rename` and
+  `ctx.workspaceRegistry.archiveSession` — visible on Feishu AND in the dsh
+  web UI sharing the same DSH_HOME. The integration test now asserts the
+  buttons exist and the actions work in the real dsh process (it used to
+  degrade silently).
+
+## [0.2.1] - 2026-08-20
+
+_Compatibility: dsh `0.1.0-rc.7` (npm `@latest`). This release ships the
+stable-rc.7 line; newer dsh releases (`@next`) are tracked on `main`.
+
+### Changed
+
 - **dsh family bumped to `0.1.0-rc.7`.** `@deepseek-ai/dsh` is pinned
   exactly in devDependencies; the rest of the `@deepseek-ai/*` surface
   moves to `^0.1.0-rc.7`. Compatible with dsh `0.1.0-rc.7` (badge + Note in
@@ -34,24 +84,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Inbound attachments.** `image` and `file` messages are no longer
-  ignored. An image is downloaded through the message-resource endpoint
-  (`im.v1.messageResource.get` — `im.v1.image.get` can only fetch
-  bot-uploaded images), committed through the host's attachment service,
-  and injected as an `image` content block of the agent's user message —
-  but ONLY when the chat's current model advertises image input (the
-  DeepSeek adapter rejects image content with `UNSUPPORTED_CONTENT`, which
-  would error the whole turn; pi-ai accepts it). A file (and an image
-  under a text-only model or absent attachment service) is saved under the
-  chat's working directory at
-  `<cwd>/.dsh_feishu/attachments/<appId>/<messageId>/<key>.<ext>` (a
-  hidden, per-app+message-bucketed subdirectory; name derived from the
-  resource key + a content-sniffed extension, since Feishu file events
-  carry no original name) — the agent receives the REAL path and reads the
-  file with its workspace tools. A `📎 File received` receipt card posts;
-  download/save failures notice loudly and the turn continues text-only —
-  an attachment never wedges the chat. Reuses the existing `im:resource`
-  scope.
 - **Canary workflow** (`.github/workflows/canary.yml`): runs the full suite
   daily (UTC 02:00) and on demand against the newest `@deepseek-ai/*`
   release (`@next` dist-tag), surfacing upstream breaking changes before
