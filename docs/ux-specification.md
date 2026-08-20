@@ -707,27 +707,17 @@ arrive in a p2p chat or a group (mention gate applies exactly as for text).
 (`{kind:'image'|'file'; key: string; name?: string}`). Unknown types stay
 ignored. A mixed message is not a Feishu concept — each message is one type.
 
-**Image path (agent sees the image)** — the transport downloads the image
-bytes through the message-resource endpoint (`im.v1.messageResource.get` —
-`/messages/{message_id}/resources/{image_key}?type=image`; `im.v1.image.get`
-can only fetch bot-uploaded images, so user-sent images MUST use the
-message-resource API; needs the existing `im:resource` scope), then the
-bridge saves them through the host's attachment store (`ctx.attachments`
-— `dsh-attachment-local` is part of the dsh-base bundle, so the seam is
-REALLY mounted, unlike `apiProxy`) and injects
-`{type:'image', attachment}` as a content block of the agent's user message
-(the reference is `packages/host/apiproxy/src/api-proxy.ts` →
-`durablePromptContent`: `saveImages(bytes) → refs → {type:'image'}` blocks).
-The turn then runs normally; the model can describe/read the image.
-
-**Image capability gate** — the DeepSeek chat-completions adapter REJECTS
-image content (`UNSUPPORTED_CONTENT` → the whole turn ends in error), while
-pi-ai accepts it. The bridge therefore injects an `image` block ONLY when
-the chat's current model advertises `image` in its input modalities
-(`ctx.llm.listModels` → `inputModalities`, via the same model directory the
-`/model` picker reads). Unknown model capability → conservative: treat the
-image as a file (receipt + name note). A turn must never error because of
-an attachment.
+**Unified attachment path (every attachment is a file)** — a Feishu image
+is a plain file to the agent: it is downloaded through the message-resource
+endpoint (`im.v1.messageResource.get` — `/messages/{message_id}/resources/{image_key}?type=image`;
+`im.v1.image.get` can only fetch bot-uploaded images, so user-sent images
+MUST use the message-resource API; needs the existing `im:resource` scope),
+then saved into the same attachment bucket as files and read by path with
+the agent's workspace tools. There is NO image content block / visual-input
+path — a bare image message registers as pending like a bare file
+(inbound-wait-instruction part), and the agent reads the saved file. This
+mirrors the decision that the DSH web paste-image-into-inputbox capability
+has no meaningful Feishu equivalent.
 
 **File path (save to the workspace, agent reads by path)** — the agent
 cannot ingest arbitrary file bytes as a content block (the attachment
@@ -770,13 +760,13 @@ chat).
 the existing turn pipeline. The only new branch is inside
 `deliverTurn` (build the content blocks before `createUserMessage`):
 
-| Step | Image (model supports) | Image (not) / File |
-|---|---|---|
-| Download | message-resource (image) → bytes + mediaType | message-resource (file) → stream + head (sniff) |
-| Save | `ctx.attachments.saveImage` → ref | stream to `cwd/.dsh_feishu/attachments/<appId>/<chatId>/<name>.<ext>` (host seam, WeChat dedupe) |
-| Content | `[text, {type:'image', attachment}]` | `[text note with the saved path]` |
-| Card | none (streaming card already opens) | `📎 File received` receipt card |
-| Failure | card + text notice, turn still runs text-only | same |
+| Step | Attachment (image / file unified) |
+|---|---|
+| Download | image → message-resource (image) → bytes; file → message-resource (file) → stream + head (sniff) |
+| Save | unified stream/bytes to `cwd/.dsh_feishu/attachments/<appId>/<chatId>/<name>.<ext>` (host seam, WeChat dedupe) |
+| Content | `[text note with the saved path]` (no image content block) |
+| Card | `📎 File received` receipt card |
+| Failure | degraded receipt + loud log; turn / follow-up unaffected |
 
 **Card/panel shape** — no new panel views. The receipt card is a plain
 markdown card (like the approval/question notices), posted before
@@ -784,36 +774,165 @@ markdown card (like the approval/question notices), posted before
 
 **Failure modes**:
 - message-resource download fails (scope missing, key expired):
-  log loudly, post a `⚠️ Could not download` text notice, and run the turn
-  text-only — a broken attachment must never wedge the chat.
-- `ctx.attachments` absent (attachment-local not mounted): feature-detect
-  and degrade — images fall back to the file path (receipt + text note)
-  with a loud log, matching the "hide the row, don't fail" seam rule.
-- `saveImage` rejects bytes (unsupported format, over limits): loud log +
-  text notice; turn continues without the image block.
+  log loudly, post a degraded receipt (no path), and — for a bare attachment
+  message — nothing registers (the follow-up text still works normally); a
+  broken attachment never wedges the chat.
 - File save to the workspace fails (cwd unwritable, path collision): loud
-  log, receipt card still posted, turn continues with the name-only note.
-- Group message without mention: the existing mention gate drops it before
-  any download — no attachment handling for ignored messages.
-- Stale/unknown `image_key` at download time: same as download failure.
+  log, receipt card still posted, pending entry is name-only.
+- Group bare attachment without mention: bypasses the gate (registers
+  pending — see the inbound-wait-instruction part); group TEXT still gated.
+- Stale/unknown `image_key`/`file_key` at download time: same as download
+  failure.
 
 **Acceptance checklist**:
-- [ ] `image` message + image-capable model → agent's user message carries an
-      `image` content block (unit-tested via a fake image-capable llm)
-- [ ] `image` message + text-only model → degrades to a `📎 File received`
-      receipt + name note; turn completes (no UNSUPPORTED_CONTENT error)
-      (unit + integration tested)
-- [ ] `file` message → bytes saved under `cwd/.dsh_feishu/attachments/<appId>/<chatId>/`, receipt card
-      posted, agent's message carries the REAL saved path (unit + integration
-      tested)
+- [ ] `image` message → bytes saved under
+      `cwd/.dsh_feishu/attachments/<appId>/<chatId>/`, receipt card posted,
+      agent's message carries the REAL saved path (unit + integration tested)
+- [ ] `file` message → bytes saved under
+      `cwd/.dsh_feishu/attachments/<appId>/<chatId>/`, receipt card posted,
+      agent's message carries the REAL saved path (unit + integration tested)
 - [ ] A same-named file re-sent in the same chat saves as `name(1).ext`
       (WeChat-style dedupe, integration tested)
 - [ ] The saved file is readable by the agent's tools (integration test
       asserts the file exists on disk at the noted path)
-- [ ] Group messages still gated by the mention gate (no attachment handling
-      for ignored messages)
-- [ ] Download failure → loud notice, turn continues text-only (unit-tested)
-- [ ] `attachments` service absent → image degrades to the file path, loud log
+- [ ] No image content block is ever injected (a Feishu image is a plain
+      file to the agent) — regression
+- [ ] Download failure → degraded receipt, nothing registers, no wedge
       (unit-tested)
 - [ ] `im:resource` scope reused — manifest unchanged, feishu-setup.md
       description updated
+
+## Part: inbound-wait-instruction
+
+> Bare attachment messages (file OR image — every attachment is a plain
+> file to the agent) no longer start a turn by themselves: the bytes land in
+> the workspace, a receipt card posts, and the agent waits for the user's
+> follow-up instruction (text, or a mention in a group) before it does any
+> work. The follow-up message carries every pending attachment into the
+> SAME turn, in order.
+
+### Intended behavior
+
+**Trigger** — an inbound message whose `text` is empty AND that carries at
+least one attachment (a bare `file` or `image` message; `video` and
+rich-text `post` support land in the sibling inbound-rich-text feature and
+reuse this pending path). Such a message is *registered* (pending) instead
+of delivered: the attachment is downloaded and saved to the workspace
+exactly as today, a NEW receipt card posts (the previous ones are kept —
+each file gets its own card, traceable in chat history), and NO turn starts.
+
+The pending set is a per-chat list, not a single slot: consecutive bare
+attachment messages APPEND (`📎 已收到 N 个文件` on each new card), so the
+user can send several files and then one instruction to analyze them all.
+
+**How the follow-up works** — the NEXT inbound message in the same chat that
+carries text drains the pending list: the saved-path notes are injected into
+that turn's user content BEFORE the text, the list is cleared, and the turn
+runs normally. Only the first text message after pending files fires —
+later messages see an empty list. A new bare attachment message arriving
+while a turn is already running simply appends to the list (the running turn
+is unaffected).
+
+**Group mention gate** — attachment messages cannot carry a mention (Feishu
+sends a file/image without an input box, so `@bot` is physically
+impossible), so the mention gate would otherwise dead-lock group usage: an
+un-@ file would be dropped before it could ever become pending. Bare
+attachment messages therefore BYPASS the mention gate and always register
+(pending only — no work happens, so the gate's safety purpose is preserved:
+the agent still never does anything until a gated text instruction follows).
+The follow-up TEXT message still passes the normal gate (group text must
+@ the bot, or solo-group
+relaxation applies) — pending files are only drained by an instruction the
+gate would have accepted anyway. p2p chats are unaffected (no gate).
+
+**Feishu message model — one bubble, one message_type** — Feishu messages
+are single-type: `text`, `image`, `file`, `video`, or `post` (rich text).
+There is no "text + file in one bubble" — a user pasting text and attaching
+a file sends two separate messages (which this feature handles naturally:
+the file registers, the text drains). The `post` type is the one multi-
+element bubble: its content is a 2-D array of inline elements
+(`[[{tag:'text'},{tag:'img'},...],[...]]`) that CAN mix text and
+attachments (image / media-video / file) in ONE message with an ORDER
+that matters ("look at the picture, then read this" vs the reverse). post
+support is the sibling inbound-rich-text feature (PR-A); this part's pending
+path is what a text-less post's attachments will drain into.
+
+**States & transitions** — one authoritative per-chat object,
+`pendingInbound`:
+
+| From | Event | To | Side effects |
+|---|---|---|---|
+| — | bare attachment message (p2p / solo / any group) | pending list non-empty | download+save each attachment; NEW receipt card (`📎 已收到 N 个文件`); NO turn |
+| pending non-empty | text message, gate passed | pending drained, turn runs | inject saved paths in order before text; clear list; normal turn |
+| pending non-empty | another bare attachment message | pending grows | append; another NEW card (count N+1); still no turn |
+| pending non-empty | slash command | unchanged (command handles it; list stays) | command runs normally |
+| pending empty | text message | (no change) | normal turn, no injection |
+| — | message fails download/save | not registered | loud log + degraded receipt (existing behavior); never wedges |
+| — | working-directory gate refuses the follow-up text | pending stays | existing refusal notice; user re-sends instruction after /cd |
+
+The pending object is NOT persisted across restarts — a restart drops it
+(the files remain on disk; the user re-sends an instruction and, because
+the list is empty, the files are not re-attached — acceptable: the paths
+are visible in the kept receipt cards, and the agent can be pointed at
+them by path).
+
+**Concurrency** — the message channel delivers a burst without awaiting
+(`drainInbox` calls the handler back-to-back), so `registerPending` appends
+its placeholders to the chat's pending list SYNCHRONOUSLY before any await,
+and later mutates them in place. Two concurrent bare-attachment messages
+each see the other's entries — a read-then-set around an await would
+silently drop one of them.
+
+**Card/panel shape** — the existing `buildInboundFileCard` gains a count:
+the markdown body shows `📎 已收到 N 个文件` when more than one file is
+pending (count 1 for a single file), listing the just-added file + its
+path. The card still shows the saved path and the "send an instruction"
+hint. NO action buttons (a button was considered and rejected: it makes
+the interaction ambiguous — "do I type or tap?"; the single mental model
+is "type the instruction"). Each file posts its OWN card — the previous
+cards stay in chat history. No panel views.
+
+**Failure modes**:
+- Download/save fails for a bare attachment: existing loud-degrade path
+  (receipt posts with a notice, nothing registers, no turn) — a broken
+  attachment never wedges the chat.
+- Follow-up text refused by the working-directory gate: pending list is
+  kept (the user fixes /cd and re-sends); the refusal notice explains.
+- Group follow-up text not @-ing the bot: existing gate drops it, pending
+  stays — the user must @ the bot to trigger.
+- Mid-turn new bare attachment message: appends to pending; the running
+  turn is unaffected (no double delivery).
+- (PR-A, inbound-rich-text) post parse fails: falls back to a text-only
+  notice; `md` absent: element-array serialization is the fallback.
+
+**Acceptance checklist**:
+- [ ] Bare file message → file on disk, NEW receipt card, NO turn (mock LLM
+      receives nothing) — unit + integration
+- [ ] Bare image message → image on disk (sniffed extension), NEW receipt
+      card, NO turn — unit + integration
+- [ ] Two bare attachment messages → two files on disk, two cards
+      (count 1, 2), still no turn — integration
+- [ ] Follow-up text message → ONE turn whose user content carries BOTH
+      saved paths in order, then the list clears — integration
+- [ ] Follow-up in a group must @ the bot; un-@ text keeps the list —
+      integration
+- [ ] Bare attachment in a group WITHOUT @ registers (bypasses the gate) —
+      integration
+- [ ] Slash command while pending → command runs, list untouched — unit
+- [ ] Failed download → degraded receipt, nothing registers, no wedge — unit
+- [ ] No image content block is ever injected (a Feishu image is a plain
+      file to the agent) — regression
+
+### Reference
+
+- botmux has NO wait-for-instruction mechanism (files immediately trigger
+  processing) — this part is dsh-feishu's own UX, added because a file
+  message otherwise starts a turn before the user can say what to do with
+  it (user-reported F1.5 issue 1).
+- The mention-gate bypass mirrors the reality that Feishu file messages
+  cannot carry a mention (no input box) — the gate still protects the
+  actual work (gated text instruction required).
+- `im.v1.messageResource.get`: `type=file` covers files, audio, AND video —
+  the pending download path reuses the existing file seam for all of them.
+- post / video support is the sibling PR-A (inbound-rich-text), which drains
+  into this pending path.
