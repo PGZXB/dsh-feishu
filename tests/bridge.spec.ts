@@ -399,6 +399,20 @@ describe('Bridge', () => {
       expect(sniffExtension(enc('GIF89a'))).toBe('gif');
     });
 
+    it('detects video containers from their magic bytes', () => {
+      // MP4/MOV: 'ftyp' at offset 4 (ISO BMFF).
+      const mp4 = new Uint8Array([
+        0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d,
+      ]);
+      expect(sniffExtension(mp4)).toBe('mp4');
+      // WebM/MKV: EBML magic 1A 45 DF A3.
+      const webm = new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0x01, 0x00, 0x00, 0x00]);
+      expect(sniffExtension(webm)).toBe('webm');
+      // AVI: 'RIFF' + 'AVI ' at offset 8.
+      const avi = enc('RIFF\x24\x00\x00\x00AVI LIST');
+      expect(sniffExtension(avi)).toBe('avi');
+    });
+
     it('classifies printable text as txt and unknown binary as bin', () => {
       expect(sniffExtension(enc('hello world\n'))).toBe('txt');
       expect(sniffExtension(new Uint8Array([0x00, 0x01, 0xff, 0xfe]))).toBe('bin');

@@ -289,6 +289,12 @@ stable-rc.7 line; newer dsh releases (`@next`) are tracked on `main`.
 
 ### Fixed
 
+- **Inbound videos saved with a `.bin` extension.** `sniffExtension` did not
+  recognize video containers (MP4/MOV `ftyp`, WebM/MKV EBML, AVI `RIFF`), so
+  a `video` message — whose content carries no `file_name`, falling back to
+  the resource key — landed as `<key>.bin`. The sniffer now maps those magic
+  bytes to `mp4` / `webm` / `avi` (and this also fixed the WebP branch, whose
+  `RIFF`+`WEBP` check read an 8-byte head and never matched).
 - **Group messages without an @ are silently dropped on fresh apps** (user
   report: a 1-user-1-bot group stopped answering un-@ messages after the
   app was recreated). Two compounding setup bugs meant **no scopes were
