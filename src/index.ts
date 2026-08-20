@@ -687,7 +687,10 @@ export async function executeDshCommand(
   const commands = ctx.get('commands');
   if (commands === undefined) return undefined;
   try {
-    const execution = await commands.execute(agent, line, new AbortController().signal);
+    // dsh rc.8: commands.execute(agent, line, images, signal) — the surface
+    // never passes encoded images to slash commands (inbound images go
+    // through the attachment-injection path instead), so images is empty.
+    const execution = await commands.execute(agent, line, [], new AbortController().signal);
     if (execution === undefined) return undefined;
     return execution.result.kind === 'success'
       ? { kind: 'success', text: execution.result.text ?? '' }
