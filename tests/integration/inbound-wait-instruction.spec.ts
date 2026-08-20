@@ -89,6 +89,7 @@ function sendMessage(
   fixedMessageId?: string,
   chatType: 'p2p' | 'group' = 'p2p',
   mentions: readonly string[] = [],
+  unsupportedType?: string,
 ): void {
   const messageId = fixedMessageId ?? `om-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   writeFileSync(
@@ -101,6 +102,7 @@ function sendMessage(
       text,
       ...(attachments !== undefined ? { attachments } : {}),
       mentions,
+      ...(unsupportedType !== undefined ? { unsupportedType } : {}),
       createdAt: Date.now(),
     }),
     'utf8',
@@ -358,5 +360,27 @@ describe.skipIf(!integrationReady)('integration > inbound-wait-instruction', () 
         `${String(error)}\n--- dsh stdout ---\n${stdout}\n--- dsh stderr ---\n${stderr}`,
       );
     }
+  }, 150_000);
+
+  it('a folder message gets a loud unsupported-type notice and no turn', async () => {
+    const { chatId } = await boot();
+    sendMessage(chatId, '', undefined, 'om-folder-1', 'p2p', [], 'folder');
+    try {
+      await waitFor(
+        'the unsupported-type notice',
+        () =>
+          readOutbox().some(
+            (r) => r.kind === 'text' && r.chatId === chatId && r.text?.includes("can't process"),
+          ),
+        30_000,
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stdout ---\n${stdout}\n--- dsh stderr ---\n${stderr}`,
+      );
+    }
+    // No turn, no receipt card, nothing pending.
+    expect(llmRequestCount()).toBe(0);
+    expect(cardMarkdowns('📎 File received')).toHaveLength(0);
   }, 150_000);
 });

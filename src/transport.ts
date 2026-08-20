@@ -115,6 +115,24 @@ const MENTION_PATTERN = /<at[^>]*>.*?<\/at>/g;
 /** Message types the surface understands; everything else is ignored. */
 const SUPPORTED_MESSAGE_TYPES = new Set(['text', 'image', 'file', 'post', 'video', 'audio']);
 
+/**
+ * Feishu `message_type` values the platform defines but this surface does
+ * NOT handle. Instead of silently dropping them (a user sending a folder or
+ * sticker would get zero feedback), they normalize into a message carrying
+ * `unsupportedType` so the bridge can reply with a loud notice. Unknown
+ * types (not in this set either) stay ignored — no invented feedback.
+ */
+const KNOWN_UNSUPPORTED_MESSAGE_TYPES = new Set([
+  'folder',
+  'sticker',
+  'share_chat',
+  'share_user',
+  'system',
+  'media',
+  'merge',
+  'interactive',
+]);
+
 /** Parse an image/file message's content JSON into its attachment, or
  *  `undefined` when the content is malformed. */
 function parseAttachment(content: string, messageType: string): InboundAttachment | undefined {
@@ -145,7 +163,25 @@ function parseAttachment(content: string, messageType: string): InboundAttachmen
  */
 export function normalizeMessageEvent(data: RawMessageEvent): FeishuMessage | undefined {
   const message = data.message;
-  if (!SUPPORTED_MESSAGE_TYPES.has(message.message_type)) return undefined;
+  if (!SUPPORTED_MESSAGE_TYPES.has(message.message_type)) {
+    // A known-but-unhandled Feishu type (folder, sticker, …) is surfaced as
+    // an unsupported-type notice instead of vanishing; unknown types are
+    // still ignored.
+    if (KNOWN_UNSUPPORTED_MESSAGE_TYPES.has(message.message_type)) {
+      return {
+        messageId: message.message_id,
+        chatId: message.chat_id,
+        chatType: message.chat_type === 'group' ? 'group' : 'p2p',
+        senderOpenId: data.sender?.sender_id?.open_id ?? '',
+        text: '',
+        attachments: [],
+        mentions: [],
+        unsupportedType: message.message_type,
+        createdAt: Number(message.create_time) || Date.now(),
+      };
+    }
+    return undefined;
+  }
   const senderOpenId = data.sender?.sender_id?.open_id ?? '';
   let text = '';
   let attachments: InboundAttachment[] = [];
