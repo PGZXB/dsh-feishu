@@ -633,9 +633,7 @@ describe('Bridge', () => {
 
   it('replies with a loud notice for a known-but-unhandled message type', async () => {
     const h = makeHarness();
-    await h.bridge.handleMessage(
-      message({ unsupportedType: 'folder', text: '' }),
-    );
+    await h.bridge.handleMessage(message({ unsupportedType: 'folder', text: '' }));
     // The notice is a text reply, NOT a turn (no agent followup).
     expect(h.transport.sentTexts.some((t) => t.text.includes('folder'))).toBe(true);
     expect(h.transport.sentTexts.some((t) => t.text.includes("can't process"))).toBe(true);

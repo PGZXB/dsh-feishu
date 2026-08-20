@@ -304,6 +304,12 @@ stable-rc.7 line; newer dsh releases (`@next`) are tracked on `main`.
   arrive as `message_type: 'audio'`, which the surface silently dropped; the
   type now joins the supported set and routes through the file path like a
   video (its `file_key` downloads via `type=file`).
+- **Known-but-unhandled message types reply loudly instead of vanishing.**
+  A `folder` (or sticker / share_chat / share_user / system / media /
+  merge / interactive) message is no longer silently dropped: the bridge
+  replies `⚠️ I can't process messages of type '…' yet.` (folders get the
+  extra note that folder contents cannot be downloaded via the API — send
+  files or a zip instead). Unknown types stay ignored.
 - **Group messages without an @ are silently dropped on fresh apps** (user
   report: a 1-user-1-bot group stopped answering un-@ messages after the
   app was recreated). Two compounding setup bugs meant **no scopes were

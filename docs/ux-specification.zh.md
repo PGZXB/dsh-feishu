@@ -356,7 +356,7 @@ bridge 记住每个聊天的**最近被接受的发送者**（及其聊天类型
 | `image` | `{"image_key": "img_v2_…"}` | `text: ''`，一个 image 附件 |
 | `file` | `{"file_key": "file_v2_…"}` | `text: ''`，一个 file 附件 |
 
-`FeishuMessage` 增加可选 `attachments` 数组（`{kind:'image'|'file'; key: string; name?: string}`）。未知类型继续忽略。每条消息只有一种类型（飞书不支持混合消息）。
+`FeishuMessage` 增加可选 `attachments` 数组（`{kind:'image'|'file'; key: string; name?: string}`）。`message_type` 为**已知但未处理**的飞书类型（folder、sticker、share_chat、share_user、system、media、merge、interactive）时归一化为带 `unsupportedType` 的消息，bridge 回复响亮提示而非静默丢弃——用户发文件夹必须知道 bot 处理不了（文件夹内容无法通过 API 下载）。完全未知的类型仍忽略。每条消息只有一种类型（飞书不支持混合消息）。
 
 **统一附件路径（所有附件都是文件）** —— 飞书图片对 agent 就是普通文件：transport 通过**消息资源端点**下载图片字节（`im.v1.messageResource.get` —— `/messages/{message_id}/resources/{image_key}?type=image`；`im.v1.image.get` 只能下载机器人自己上传的图片，所以用户发的图片必须走 message-resource API；复用现有 `im:resource` scope），然后与文件一样保存进同一附件目录、由 agent 按路径读取。**没有 image 内容块 / 视觉输入路径**——裸图片消息像裸文件一样登记为 pending（见 inbound-wait-instruction part），agent 读取已保存的文件。这对应了"DSH Web 把图片粘贴进输入框"的能力在飞书场景没有意义这一决定。
 

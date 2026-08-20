@@ -704,8 +704,14 @@ arrive in a p2p chat or a group (mention gate applies exactly as for text).
 | `file` | `{"file_key": "file_v2_…"}` | `text: ''`, one file attachment |
 
 `FeishuMessage` gains an optional `attachments` array
-(`{kind:'image'|'file'; key: string; name?: string}`). Unknown types stay
-ignored. A mixed message is not a Feishu concept — each message is one type.
+(`{kind:'image'|'file'; key: string; name?: string}`). A message whose
+`message_type` is a KNOWN but unhandled Feishu type (folder, sticker,
+share_chat, share_user, system, media, merge, interactive) normalizes with
+`unsupportedType` set, and the bridge replies with a loud notice instead of
+dropping it silently — a user sending a folder must learn the bot cannot
+process it (folder contents are not downloadable via the API). Unknown
+types (not in the platform's vocabulary) stay ignored. A mixed message is
+not a Feishu concept — each message is one type.
 
 **Unified attachment path (every attachment is a file)** — a Feishu image
 is a plain file to the agent: it is downloaded through the message-resource
