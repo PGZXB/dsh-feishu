@@ -60,6 +60,17 @@ export interface MockLlmServer {
    * (turn/end aborted) whether or not the stream was released.
    */
   holdNextResponse(): void;
+  /**
+   * Resolve when the next completion request has actually been received and
+   * held. A test must await this AFTER `holdNextResponse()` and BEFORE
+   * driving a stop/panel action: the working card appears as soon as the
+   * turn starts, but the agent's LLM request is established asynchronously —
+   * a stop issued before the request reaches the server (and its abort
+   * signal binds to the in-flight body) silently cancels nothing and the
+   * turn completes normally (no stopped card → test timeout on slow/loaded
+   * CI runners). Awaiting the hold guarantees the abort will land.
+   */
+  waitForHold(): Promise<void>;
   /** Release a held response; no-op when none is held. */
   release(): void;
 }
@@ -92,6 +103,11 @@ export async function startMockLlmServer(): Promise<MockLlmServer> {
   let scripts: readonly (readonly MockScriptChunk[])[] | undefined;
   let hold = false;
   let releaseHold: (() => void) | undefined;
+  /** Resolver for the next `waitForHold()` — resolved when a request is
+   *  actually held, so tests can stop AFTER the agent's request (and its
+   *  abort binding) is in flight. */
+  let heldResolve: (() => void) | undefined;
+  let heldPromise: Promise<void> | undefined;
 
   /** Stream one scripted response: reasoning, a tool call, then the answer. */
   /** The script for the NEXT completion request, or undefined (default). */
@@ -181,6 +197,11 @@ export async function startMockLlmServer(): Promise<MockLlmServer> {
           writeScripted(res, script);
           res.end('data: [DONE]\n\n');
         };
+        // Signal any waiting `waitForHold()` — the request is in flight and
+        // the test may now drive stop/panel actions deterministically.
+        heldResolve?.();
+        heldResolve = undefined;
+        heldPromise = undefined;
         return;
       }
       writeScripted(res, script);
@@ -216,6 +237,17 @@ export async function startMockLlmServer(): Promise<MockLlmServer> {
     },
     holdNextResponse: () => {
       hold = true;
+      if (heldPromise === undefined) {
+        heldPromise = new Promise<void>((resolve) => {
+          heldResolve = resolve;
+        });
+      }
+    },
+    waitForHold: async () => {
+      // A caller that forgot holdNextResponse would deadlock forever; only
+      // wait when a hold is actually armed.
+      if (heldPromise === undefined) return;
+      await heldPromise;
     },
     release: () => {
       releaseHold?.();
