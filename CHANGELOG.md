@@ -42,6 +42,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   them without an input box, so an @ is physically impossible), but the
   follow-up TEXT instruction still requires an @ — the agent never acts
   without an accepted instruction.
+- **Rich-text (`post`) and `video` messages are no longer dropped
+  (inbound-rich-text).** A `post` message is normalized into a serialized
+  markdown-ish string that PRESERVES the inline element order (text / image
+  / video / file in one bubble — the intra-bubble order is information),
+  with inline `<image N>` / `<video N>` placeholders and an ordered
+  attachment list; the client-authored `md` field is preferred when present.
+  A rich-text post with text starts a turn immediately; an attachment-only
+  post and a bare `video` message register as pending like any file
+  (`type=file` on the resource API serves video — no new download path).
 - **Inbound files stream to disk and keep their original name.** The
   message-resource download previously read `response.file`, but the SDK
   interceptor already unwraps `resp.data`, so every inbound file failed to

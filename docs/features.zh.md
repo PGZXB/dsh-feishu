@@ -30,3 +30,4 @@ dsh-feishu 的功能列表与 TODO 追踪表。✅ = 已实现，📋 = 计划�
 | 上下文占用 | 当前会话的上下文窗口占用 | 卡底部百分比，随 turn 刷新；详情（used/capacity、分布）在 `/status` | 📋 |
 | session-rename-archive | Session rename/archive via dsh sessionTitle + workspaceRegistry (web-visible) | — | 📋 |
 | inbound-wait-instruction | 裸文件/图片消息登记为 pending——发回执卡并等用户指令后才开始工作 | 📎 File received 回执（计数 pending 文件）；补发文字把它们带进一个 turn | ✅ |
+| inbound-rich-text | 飞书富文本（post）和视频消息不再被丢弃：post 序列化为有序富文本 + 附件（保留格式与气泡内顺序），视频按普通文件处理 | 带文字的富文本立即 turn；纯附件 post / 视频登记为 pending | ✅ |
