@@ -89,7 +89,20 @@ export function sniffExtension(data: Uint8Array): string {
   if (startsWith([0x89, 0x50, 0x4e, 0x47])) return 'png';
   if (startsWith([0xff, 0xd8, 0xff])) return 'jpg';
   if (text.startsWith('GIF8')) return 'gif';
-  if (startsWith([0x52, 0x49, 0x46, 0x46]) && text.slice(8, 12) === 'WEBP') return 'webp';
+  if (
+    startsWith([0x52, 0x49, 0x46, 0x46]) &&
+    String.fromCharCode(data[8] ?? 0, data[9] ?? 0, data[10] ?? 0, data[11] ?? 0) === 'WEBP'
+  )
+    return 'webp';
+  if (
+    startsWith([0x52, 0x49, 0x46, 0x46]) &&
+    String.fromCharCode(data[8] ?? 0, data[9] ?? 0, data[10] ?? 0, data[11] ?? 0) === 'AVI '
+  )
+    return 'avi';
+  // MP4/MOV (ISO BMFF): the `ftyp` box starts at offset 4.
+  if (data[4] === 0x66 && data[5] === 0x74 && data[6] === 0x79 && data[7] === 0x70) return 'mp4';
+  // WebM/MKV (EBML): 1A 45 DF A3.
+  if (startsWith([0x1a, 0x45, 0xdf, 0xa3])) return 'webm';
   if (text.startsWith('{"') || text.startsWith('[{')) return 'json';
   if (text.startsWith('<?xml')) return 'xml';
   // Plain text (no control bytes in the head) → txt.
