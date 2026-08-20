@@ -30,7 +30,7 @@ const MEMORY_DIR = join(REPO_ROOT, '_dev', 'int-memory-scenarios');
 const INBOX_DIR = join(MEMORY_DIR, 'inbox');
 const OUTBOX_DIR = join(MEMORY_DIR, 'outbox');
 const ACTIONS_DIR = join(MEMORY_DIR, 'actions');
-const INT_CWD = join(REPO_ROOT, '_dev', 'int-cwd');
+const INT_CWD = join(REPO_ROOT, '_dev', 'int-cwd-scenarios');
 
 function resolveDshBin(): string | undefined {
   if (process.env.DSH_BIN !== undefined && process.env.DSH_BIN !== '') return process.env.DSH_BIN;

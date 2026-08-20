@@ -20,7 +20,13 @@ import type { MemoryOutboxRecord } from '../../src/memory-transport.js';
 import { type MockLlmServer, startMockLlmServer } from './mock-llm-server.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
-const DSH_HOME = process.env.FEISHU_INT_DSH_HOME ?? join(REPO_ROOT, '_dev', 'dsh-home');
+// Each integration suite uses its OWN dsh home (override per suite, e.g.
+// FEISHU_INT_ATTACHMENTS_DSH_HOME): the suites run in parallel (vitest file
+// parallelism) and spawn real dsh processes that share
+// `_dev/dsh-home/feishu/session-map.json` — concurrent writes raced and
+// silently dropped another suite's chat→session binding (CI-only flakes).
+const DSH_HOME =
+  process.env.FEISHU_INT_WAIT_DSH_HOME ?? join(REPO_ROOT, '_dev', 'dsh-home-wait-instruction');
 const PROFILE_DIR = join(DSH_HOME, 'profiles', 'feishu-dev');
 const MEMORY_DIR = join(REPO_ROOT, '_dev', 'int-memory-wait-instruction');
 const INBOX_DIR = join(MEMORY_DIR, 'inbox');
