@@ -11,7 +11,8 @@ name: Release compat (npm latest vs dsh@latest)
 # @latest — the same gates as ci.yml but with the dsh family lifted to
 # @latest instead of main's pinned version.
 #
-# Triggered on a schedule (UTC 04:00) and manually via workflow_dispatch.
+# Triggered on a schedule (UTC 04:00, i.e. 12:00 Beijing) and manually via
+# workflow_dispatch.
 
 on:
   schedule:

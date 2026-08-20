@@ -6,8 +6,6 @@
 [![Node](https://img.shields.io/badge/node-%3E%3D22.13-339933.svg)](package.json)
 [![npm](https://img.shields.io/npm/v/@dsh-feishu/dsh-feishu)](https://www.npmjs.com/package/@dsh-feishu/dsh-feishu)
 [![CI](https://img.shields.io/github/actions/workflow/status/PGZXB/dsh-feishu/ci.yml?branch=main)](.github/workflows/ci.yml)
-[![dsh (main)](https://img.shields.io/badge/dsh%20(main)-0.1.0--rc.8-4D6BFE)](https://github.com/deepseek-ai/deepseek-harness)
-[![dsh (npm)](https://img.shields.io/badge/dsh%20(npm)-0.1.0--rc.7-6A5ACD)](https://github.com/deepseek-ai/deepseek-harness)
 
 给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）做的飞书 UI——一个 dsh 原生插件，带**面板驱动的控制台**：每个 slash 命令都是 ⚙️ 控制面板卡片上的一个按钮，审批和提问都在聊天卡片内完成，扫一次二维码就把整个应用配好。
 
