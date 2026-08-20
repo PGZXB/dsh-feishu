@@ -260,8 +260,23 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 
 ## 发布
 
-发布由 tag 驱动：`node scripts/release.mjs <major|minor|patch>` 更新
-`package.json`、运行 CI 门禁、提交并打 `v*` tag；随后
+发布由 **冻结的 `release/*` 分支上的 tag** 驱动，**绝不在 `main` 上发**——
+main 是开发分支，可能带着未发布的工作（如下一轮 dsh 适配），所以发布必须
+从"恰好要发布的那个 commit"切出分支进行。
+
+### 发版步骤
+
+```sh
+git checkout -b release/vX.Y.Z <commit>   # 从要发布的那个 commit 切出
+# 更新 CHANGELOG.md：把 [Unreleased] 条目移入 [X.Y.Z]，带上日期 + 兼容性说明
+# （这个 release 追踪的 dsh 版本）
+node scripts/release.mjs <major|minor|patch>
+```
+
+`scripts/release.mjs` 拒绝在非 `release/*` 分支上运行；它会更新
+`package.json`、运行 CI 门禁（通过 `scripts/run-gates.mjs`——直接调二进制，
+不依赖 pnpm store）、提交 `chore: release vX.Y.Z`，然后**把 release 分支和
+`v*` tag 一起推**到 origin。随后
 [Release workflow](../.github/workflows/release.yml) 发布到 npm
 （`NODE_AUTH_TOKEN`，沿用 DeepSeek Harness 发布 workflow 的 registry-token
 认证）并创建 GitHub Release。首次公开发布前，轮换飞书 app secret（见

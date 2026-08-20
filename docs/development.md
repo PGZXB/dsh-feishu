@@ -374,8 +374,24 @@ workflow" for the end-to-end practice.
 
 ## Publishing
 
-Publishing is tag-driven: `node scripts/release.mjs <major|minor|patch>`
-bumps `package.json`, runs the CI gates, commits and tags `v*`; the
+Releases are **tag-driven from a frozen `release/*` branch**, never from
+`main` — main is a development branch and may carry unreleased work (e.g.
+the next dsh compat pass), so a release must be cut from the exact commit
+that should ship.
+
+### Releasing
+
+```sh
+git checkout -b release/vX.Y.Z <commit>   # cut from the exact commit to ship
+# update CHANGELOG.md: move the [Unreleased] items into [X.Y.Z] with the
+# date + a compatibility note (which dsh version this release tracks)
+node scripts/release.mjs <major|minor|patch>
+```
+
+`scripts/release.mjs` refuses to run outside a `release/*` branch, bumps
+`package.json`, runs the CI gates (through `scripts/run-gates.mjs` — direct
+binaries, no pnpm store dependency), commits `chore: release vX.Y.Z`, then
+pushes **the release branch and the `v*` tag** to origin. The
 [Release workflow](../.github/workflows/release.yml) then publishes to npm
 (`NODE_AUTH_TOKEN` — the same registry-token pattern the DeepSeek Harness
 release workflow uses) and creates a GitHub Release. Before the first
