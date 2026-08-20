@@ -515,26 +515,6 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
       const registry = ctx.get('workspaceRegistry');
       return registry === undefined ? undefined : (registry as WorkspaceRegistryLike);
     },
-    // Inbound-image seam: ctx.attachments (dsh-attachment-local, mounted by
-    // dsh-base) validates + durably commits one image. Resolved lazily —
-    // the service initializes asynchronously. Absent, images degrade to the
-    // file path (loud log) instead of dropping the message.
-    getSaveImage: () => {
-      const attachments = ctx.get('attachments') as
-        | {
-            saveImage(input: { data: Uint8Array; mediaType: string; name?: string }): Promise<{
-              attachmentId: string;
-              mediaType: string;
-              bytes: number;
-              width: number;
-              height: number;
-              name?: string;
-            }>;
-          }
-        | undefined;
-      if (attachments === undefined) return undefined;
-      return (input) => attachments.saveImage(input);
-    },
     // Inbound-file seam: persist one downloaded file under the chat's
     // working directory at `.dsh_feishu/attachments/<appId>/<chatId>/<name>.<ext>`
     // (hidden subdirectory; bucketed per app + chat so the WeChat-style

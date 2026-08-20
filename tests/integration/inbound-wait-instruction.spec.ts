@@ -1,12 +1,13 @@
 /**
- * Real-composition integration tests for inbound attachments (F1): a real
- * dsh process booted from the real profile, with only Feishu (memory
- * transport) and the LLM API (mock server) mocked. Asserts that an inbound
- * `image` message reaches the agent as an `image` content block, and an
- * inbound `file` message posts a receipt card + file-name note.
+ * Real-composition integration tests for the inbound wait-for-instruction
+ * feature: attachment-only messages (file / image / video / rich-text post)
+ * register as pending instead of starting a turn; the follow-up text message
+ * drains the pending list into ONE turn, in order. A real dsh process boots
+ * from the real profile with only Feishu (memory transport) and the LLM API
+ * (mock server) mocked.
  *
  * Self-skips when the environment lacks a prepared profile or the dsh CLI,
- * like the sibling real-composition suite (see docs/development.md →
+ * like the sibling real-composition suites (see docs/development.md →
  * "Integration test").
  */
 
@@ -21,11 +22,11 @@ import { type MockLlmServer, startMockLlmServer } from './mock-llm-server.js';
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const DSH_HOME = process.env.FEISHU_INT_DSH_HOME ?? join(REPO_ROOT, '_dev', 'dsh-home');
 const PROFILE_DIR = join(DSH_HOME, 'profiles', 'feishu-dev');
-const MEMORY_DIR = join(REPO_ROOT, '_dev', 'int-memory-attachments');
+const MEMORY_DIR = join(REPO_ROOT, '_dev', 'int-memory-wait-instruction');
 const INBOX_DIR = join(MEMORY_DIR, 'inbox');
 const OUTBOX_DIR = join(MEMORY_DIR, 'outbox');
-const ATTACH_DIR = join(REPO_ROOT, '_dev', 'int-attachments-seed');
-const INT_CWD = join(REPO_ROOT, '_dev', 'int-cwd-attachments');
+const ATTACH_DIR = join(REPO_ROOT, '_dev', 'int-attachments-wait-instruction');
+const INT_CWD = join(REPO_ROOT, '_dev', 'int-cwd-wait-instruction');
 
 function resolveDshBin(): string | undefined {
   if (process.env.DSH_BIN !== undefined && process.env.DSH_BIN !== '') return process.env.DSH_BIN;
@@ -80,13 +81,14 @@ if (integrationRequired && !integrationReady) {
   );
 }
 
-/** Drop one inbound message into the message channel. `attachments` is the
- *  normalized attachment list (the shape the bridge consumes). */
+/** Drop one inbound message into the message channel. */
 function sendMessage(
   chatId: string,
   text: string,
   attachments?: readonly { kind: 'image' | 'file'; key: string; name?: string }[],
   fixedMessageId?: string,
+  chatType: 'p2p' | 'group' = 'p2p',
+  mentions: readonly string[] = [],
 ): void {
   const messageId = fixedMessageId ?? `om-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   writeFileSync(
@@ -94,19 +96,18 @@ function sendMessage(
     JSON.stringify({
       messageId,
       chatId,
-      chatType: 'p2p',
+      chatType,
       senderOpenId: 'ou_mock',
       text,
       ...(attachments !== undefined ? { attachments } : {}),
-      mentions: [],
+      mentions,
       createdAt: Date.now(),
     }),
     'utf8',
   );
 }
 
-/** Seed downloadable bytes for an attachment key (`<key>.bin` +
- *  `<key>.mediaType`), consumed by the memory transport's download methods. */
+/** Seed downloadable bytes for an attachment key. */
 function seedAttachment(key: string, bytes: Uint8Array, mediaType?: string): void {
   writeFileSync(join(ATTACH_DIR, `${key}.bin`), bytes);
   if (mediaType !== undefined) {
@@ -114,12 +115,8 @@ function seedAttachment(key: string, bytes: Uint8Array, mediaType?: string): voi
   }
 }
 
-/** Pin the chat's working directory via /cd (the gate refuses turns until
- *  an explicit directory is chosen). */
+/** Pin the chat's working directory via /cd. */
 async function pinWorkingDir(chatId: string): Promise<void> {
-  // /cd is idempotent (setCwd + remint), so retry it if the confirmation
-  // does not arrive — the first /cd can be delayed by dsh cold-start on a
-  // slow CI runner (the bridge reports ready before every service settles).
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     sendMessage(chatId, `/cd ${INT_CWD}`);
     try {
@@ -141,7 +138,7 @@ async function pinWorkingDir(chatId: string): Promise<void> {
   }
 }
 
-describe.skipIf(!integrationReady)('integration > inbound-attachments', () => {
+describe.skipIf(!integrationReady)('integration > inbound-wait-instruction', () => {
   let mock: MockLlmServer | undefined;
   let child: ReturnType<typeof spawn> | undefined;
   let stdout = '';
@@ -170,9 +167,6 @@ describe.skipIf(!integrationReady)('integration > inbound-attachments', () => {
     await stopChild();
     rmSync(MEMORY_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     rmSync(ATTACH_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-    // Attachment buckets live under INT_CWD; clear them too, or WeChat-style
-    // dedupe accumulates `file-1(1).txt`, `file-1(2).txt`, … across runs and
-    // the test's exact-path assertions break.
     rmSync(join(INT_CWD, '.dsh_feishu'), {
       recursive: true,
       force: true,
@@ -186,6 +180,7 @@ describe.skipIf(!integrationReady)('integration > inbound-attachments', () => {
     mock = await startMockLlmServer();
     bridgeReady = false;
     stdout = '';
+    stderr = '';
   });
 
   afterEach(async () => {
@@ -208,10 +203,9 @@ describe.skipIf(!integrationReady)('integration > inbound-attachments', () => {
         FEISHU_TRANSPORT: 'memory',
         FEISHU_MEMORY_DIR: MEMORY_DIR,
         FEISHU_MEMORY_ATTACHMENTS: ATTACH_DIR,
+        FEISHU_MOCK_BOT_OPEN_ID: 'ou_bot',
         DEEPSEEK_API_KEY: 'mock_key',
         DEEPSEEK_BASE_URL: server.url,
-        // The memory transport serves attachment bytes from
-        // FEISHU_MEMORY_ATTACHMENTS (see the transport options).
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -223,7 +217,7 @@ describe.skipIf(!integrationReady)('integration > inbound-attachments', () => {
       stderr += chunk.toString();
     });
     await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
-    const chatId = `oc_att_${Date.now()}`;
+    const chatId = `oc_wi_${Date.now()}`;
     await pinWorkingDir(chatId);
     return { chatId };
   }
@@ -233,7 +227,12 @@ describe.skipIf(!integrationReady)('integration > inbound-attachments', () => {
     return mock?.lastRequestBody();
   }
 
-  /** The markdown content of a receipt/notice card by header title. */
+  /** How many LLM completion requests the mock server has served. */
+  function llmRequestCount(): number {
+    return mock?.completionRequests() ?? 0;
+  }
+
+  /** The markdown content of receipt cards by header title. */
   function cardMarkdowns(title: string): string[] {
     return readOutbox()
       .filter(
@@ -246,14 +245,11 @@ describe.skipIf(!integrationReady)('integration > inbound-attachments', () => {
       );
   }
 
-  it('an inbound image message registers as pending and drains into the follow-up turn', async () => {
-    // Images are plain files to the agent (unified-attachment decision): a
-    // bare image message registers as pending — receipt card, no turn —
-    // and the follow-up text drains it as a file note with the REAL path.
-    const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82]);
-    seedAttachment('img-1', png, 'image/png');
+  it('a bare file message lands on disk, posts a receipt card, and does NOT start a turn', async () => {
+    const content = 'pending file body\n';
+    seedAttachment('pf-1', new TextEncoder().encode(content));
     const { chatId } = await boot();
-    sendMessage(chatId, '', [{ kind: 'image', key: 'img-1' }], 'om-img-1');
+    sendMessage(chatId, '', [{ kind: 'file', key: 'pf-1', name: 'pending.txt' }], 'om-pf-1');
     try {
       await waitFor('the receipt card', () => cardMarkdowns('📎 File received').length > 0, 30_000);
     } catch (error) {
@@ -261,108 +257,72 @@ describe.skipIf(!integrationReady)('integration > inbound-attachments', () => {
         `${String(error)}\n--- dsh stdout ---\n${stdout}\n--- dsh stderr ---\n${stderr}`,
       );
     }
-    // The image is on disk under the chat bucket (sniffed as png).
+    // The file is on disk under the chat bucket.
     const savedFile = join(
       INT_CWD,
       '.dsh_feishu',
       'attachments',
       'cli_mock_app',
       chatId,
-      'img-1.png',
+      'pending.txt',
     );
     try {
-      await waitFor('the saved image on disk', () => existsSync(savedFile), 10_000);
+      await waitFor('the saved file on disk', () => existsSync(savedFile), 10_000);
     } catch (error) {
       throw new Error(
         `${String(error)}\n--- dsh stdout ---\n${stdout}\n--- dsh stderr ---\n${stderr}`,
       );
     }
-    // The follow-up text drains the image as a file note (real path).
-    sendMessage(chatId, 'look at this', undefined, 'om-img-followup');
+    expect(readFileSync(savedFile, 'utf8')).toBe(content);
+    // Give the bridge a moment: a turn must NOT have started.
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    expect(llmRequestCount()).toBe(0);
+  }, 150_000);
+
+  it('two bare files register both; one follow-up text drains both into a single turn', async () => {
+    const contentA = 'file A body\n';
+    const contentB = 'file B body\n';
+    seedAttachment('pf-a', new TextEncoder().encode(contentA));
+    seedAttachment('pf-b', new TextEncoder().encode(contentB));
+    const { chatId } = await boot();
+    const dir = join(INT_CWD, '.dsh_feishu', 'attachments', 'cli_mock_app', chatId);
+    sendMessage(chatId, '', [{ kind: 'file', key: 'pf-a', name: 'a.txt' }], 'om-pf-a');
+    sendMessage(chatId, '', [{ kind: 'file', key: 'pf-b', name: 'b.txt' }], 'om-pf-b');
     try {
       await waitFor(
-        'the saved path in the agent turn',
+        'the second receipt card',
+        () => cardMarkdowns('📎 File received').length >= 2,
+        30_000,
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stdout ---\n${stdout}\n--- dsh stderr ---\n${stderr}`,
+      );
+    }
+    await waitFor(
+      'both files on disk',
+      () => existsSync(join(dir, 'a.txt')) && existsSync(join(dir, 'b.txt')),
+      10_000,
+    );
+    expect(llmRequestCount()).toBe(0);
+    // The follow-up text drains BOTH pending files into one turn.
+    sendMessage(chatId, 'analyze these files', undefined, 'om-analyze');
+    try {
+      await waitFor(
+        'the agent turn to carry both saved paths',
         () => {
           const b = agentLastBody() as { messages?: unknown[] } | undefined;
-          return JSON.stringify(b?.messages ?? []).includes(savedFile);
+          const body = JSON.stringify(b?.messages ?? []);
+          return body.includes(join(dir, 'a.txt')) && body.includes(join(dir, 'b.txt'));
         },
         90_000,
       );
     } catch (error) {
       throw new Error(
-        `${String(error)}\n--- dsh stdout ---\n${stdout}\n--- dsh stderr ---\n${stderr}`,
+        `${String(error)}\n--- dsh stdout ---\n${stdout}\n--- dsh stderr ---\n${stderr}\n--- last body ---\n${JSON.stringify(agentLastBody())}`,
       );
     }
-  }, 150_000);
-
-  it('an inbound file message registers as pending and drains into the follow-up turn', async () => {
-    // A tiny text file: sniffed as .txt, saved under the chat's cwd in the
-    // appId/chatId bucket. Seeded BEFORE boot — the memory transport reads
-    // the attachment dir once at process start. The file registers as
-    // pending (receipt card, no turn); the follow-up text drains it.
-    const content = 'hello from the inbound file\n';
-    seedAttachment('file-1', new TextEncoder().encode(content));
-    const { chatId } = await boot();
-    sendMessage(chatId, '', [{ kind: 'file', key: 'file-1' }], 'om-saved-file-1');
-    try {
-      await waitFor(
-        'the file receipt card',
-        () => cardMarkdowns('📎 File received').length > 0,
-        30_000,
-      );
-    } catch (error) {
-      throw new Error(
-        `${String(error)}\n--- dsh stdout ---\n${stdout}\n--- dsh stderr ---\n${stderr}`,
-      );
-    }
-    // The bytes are on disk at <cwd>/.dsh_feishu/attachments/<appId>/<chatId>/file-1.txt.
-    const savedFile = join(
-      INT_CWD,
-      '.dsh_feishu',
-      'attachments',
-      'cli_mock_app',
-      chatId,
-      'file-1.txt',
-    );
-    try {
-      await waitFor('the saved attachment file on disk', () => existsSync(savedFile), 10_000);
-    } catch (error) {
-      throw new Error(`${String(error)}\n--- dsh stderr ---\n${stderr}`);
-    }
-    expect(readFileSync(savedFile, 'utf8')).toBe(content);
-    // The follow-up text drains the file; the agent's user message carries
-    // the REAL saved path.
-    sendMessage(chatId, 'what is this file', undefined, 'om-file-followup');
-    await waitFor(
-      'the saved path in the agent turn',
-      () => {
-        const b = agentLastBody() as { messages?: unknown[] } | undefined;
-        return JSON.stringify(b?.messages ?? []).includes(savedFile);
-      },
-      90_000,
-    );
-  }, 150_000);
-
-  it('an image whose key is missing registers a degraded receipt and never wedges the chat', async () => {
-    // The download fails (unknown key); the pending registration posts a
-    // degraded receipt (no path), registers nothing, and the chat stays
-    // usable — a follow-up text still turns normally.
-    const { chatId } = await boot();
-    sendMessage(chatId, '', [{ kind: 'image', key: 'missing' }], 'om-missing-img');
-    // Receipt card appears (degrade path)…
-    try {
-      await waitFor(
-        'the degraded file receipt card',
-        () => cardMarkdowns('📎 File received').length > 0,
-        30_000,
-      );
-    } catch (error) {
-      throw new Error(
-        `${String(error)}\n--- dsh stdout ---\n${stdout}\n--- dsh stderr ---\n${stderr}`,
-      );
-    }
-    // …a follow-up text still runs a turn (no wedge).
-    sendMessage(chatId, 'hello', undefined, 'om-after-missing');
+    // The turn completed (green final card).
     await waitFor(
       'the green final card patch',
       () => readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'green'),
@@ -370,42 +330,33 @@ describe.skipIf(!integrationReady)('integration > inbound-attachments', () => {
     );
   }, 150_000);
 
-  it('a repeated file name in the same chat saves as name(1).ext (WeChat-style dedupe)', async () => {
-    // The user re-sends a file with the SAME original name in the SAME
-    // chat: the first lands as `report.txt`, the second as `report(1).txt`
-    // — never an overwrite. Bucketing is per app + chat, so the second
-    // message collides with the first and the dedupe fires. Sent
-    // SEQUENTIALLY (wait for the first file to land before the second) —
-    // real users send one file at a time, and a burst would race the two
-    // saves (both probe the name before either writes).
-    const contentA = 'first upload\n';
-    const contentB = 'second upload\n';
-    seedAttachment('file-a', new TextEncoder().encode(contentA));
-    seedAttachment('file-b', new TextEncoder().encode(contentB));
+  it('a bare attachment in a GROUP without a mention still registers, and the follow-up text must @ the bot', async () => {
+    const content = 'group pending file\n';
+    seedAttachment('pg-1', new TextEncoder().encode(content));
     const { chatId } = await boot();
-    const dir = join(INT_CWD, '.dsh_feishu', 'attachments', 'cli_mock_app', chatId);
-    sendMessage(chatId, '', [{ kind: 'file', key: 'file-a', name: 'report.txt' }], 'om-dedupe-1');
+    // Group bare file, NO mention: registers anyway (attachment messages
+    // cannot carry a mention in Feishu — no input box).
+    sendMessage(chatId, '', [{ kind: 'file', key: 'pg-1', name: 'group.txt' }], 'om-pg-1', 'group');
     try {
-      await waitFor(
-        'the first named file on disk',
-        () => existsSync(join(dir, 'report.txt')),
-        10_000,
-      );
+      await waitFor('the receipt card', () => cardMarkdowns('📎 File received').length > 0, 30_000);
     } catch (error) {
-      throw new Error(`${String(error)}\n--- dsh stderr ---\n${stderr}`);
+      throw new Error(
+        `${String(error)}\n--- dsh stdout ---\n${stdout}\n--- dsh stderr ---\n${stderr}`,
+      );
     }
-    expect(readFileSync(join(dir, 'report.txt'), 'utf8')).toBe(contentA);
-    // Now the second, same-named file in the same chat → deduped.
-    sendMessage(chatId, '', [{ kind: 'file', key: 'file-b', name: 'report.txt' }], 'om-dedupe-2');
+    expect(llmRequestCount()).toBe(0);
+    // Un-@ group text does NOT drain (mention gate) — the file stays pending.
+    sendMessage(chatId, 'look at this', undefined, 'om-noat', 'group');
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    expect(llmRequestCount()).toBe(0);
+    // @-mentioned text drains it.
+    sendMessage(chatId, 'look at this', undefined, 'om-at', 'group', ['ou_bot']);
     try {
-      await waitFor(
-        'the deduped second file on disk',
-        () => existsSync(join(dir, 'report(1).txt')),
-        10_000,
-      );
+      await waitFor('the turn to start after the @ mention', () => llmRequestCount() > 0, 90_000);
     } catch (error) {
-      throw new Error(`${String(error)}\n--- dsh stderr ---\n${stderr}`);
+      throw new Error(
+        `${String(error)}\n--- dsh stdout ---\n${stdout}\n--- dsh stderr ---\n${stderr}`,
+      );
     }
-    expect(readFileSync(join(dir, 'report(1).txt'), 'utf8')).toBe(contentB);
   }, 150_000);
 });

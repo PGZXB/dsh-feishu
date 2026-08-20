@@ -14,6 +14,7 @@
  * @module @dsh-feishu/dsh-feishu/bridge
  */
 
+import { Readable } from 'node:stream';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { type ContentBlock, createUserMessage } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
@@ -56,6 +57,17 @@ import { buildSessionExport, type SessionExportEvent } from './session-export.js
 import type { SessionMap } from './session-map.js';
 
 export type { PanelInputCommand, PanelView } from './panel/types.js';
+
+/** One pending inbound attachment (inbound-wait-instruction): saved to the
+ *  workspace, awaiting the user's follow-up instruction. */
+export interface PendingInboundFile {
+  /** The attachment that was saved. */
+  attachment: InboundAttachment;
+  /** The display name (user file name or key). */
+  name: string;
+  /** The real on-disk path, or `undefined` when the save failed. */
+  savedPath: string | undefined;
+}
 
 import type { PanelView } from './panel/types.js';
 
@@ -226,21 +238,6 @@ export interface AskQuestionsAnswerLike {
   }[];
 }
 
-/**
- * Structural subset of the dsh `ImageAttachmentRef` (the value `saveImage`
- * resolves with): the agent's `image` content block carries it, so the
- * surface must pass it through verbatim. Type-only — no runtime dependency
- * on `@deepseek-ai/dsh-attachment`.
- */
-export interface ImageAttachmentRefLike {
-  readonly attachmentId: string;
-  readonly mediaType: string;
-  readonly bytes: number;
-  readonly width: number;
-  readonly height: number;
-  readonly name?: string;
-}
-
 /** Options for {@link Bridge}. */
 export interface BridgeOptions {
   readonly transport: FeishuTransport;
@@ -325,20 +322,6 @@ export interface BridgeOptions {
         archiveSession(sessionId: string): Promise<unknown>;
         readonly archivedSessionIds: readonly string[];
       }
-    | undefined;
-  /**
-   * Inbound-image seam (`ctx.attachments`, mounted by dsh-base's
-   * `dsh-attachment-local`): validate + durably commit one image so the
-   * agent's user message can carry an `image` content block. Resolved lazily
-   * (async-init service). Absent, inbound images degrade to the file path
-   * (receipt + name note) with a loud log — never a dropped message.
-   */
-  readonly getSaveImage?: () =>
-    | ((input: {
-        data: Uint8Array;
-        mediaType: string;
-        name?: string;
-      }) => Promise<ImageAttachmentRefLike>)
     | undefined;
   /**
    * Inbound-file seam: persist one downloaded file under the chat's working
@@ -469,6 +452,13 @@ export class Bridge {
   private readonly requesterOpenIds = new Map<string, string>();
   /** Chat type of the last accepted message per chat (`p2p` needs no @). */
   private readonly chatTypes = new Map<string, 'p2p' | 'group'>();
+  /**
+   * Pending inbound attachments per chat (inbound-wait-instruction): bare
+   * attachment messages (file/image/video — no text) register here instead
+   * of starting a turn. The next text message in the chat drains the list
+   * into its turn, in order. Not persisted across restarts.
+   */
+  private readonly pendingInbound = new Map<string, PendingInboundFile[]>();
 
   /**
    * The user to proactively @ for a chat: the last accepted sender, only in
@@ -676,6 +666,21 @@ export class Bridge {
         `message ${message.messageId} -> slash command /${slash.name} (chat ${message.chatId})`,
       );
       await this.handleCommand(message, slash);
+      return;
+    }
+    // Inbound-wait-instruction: a bare attachment message (no text) is
+    // registered as pending — every attachment (file OR image, both treated
+    // as plain files) lands on disk and a receipt card posts, but NO turn
+    // starts. The user's follow-up text message drains the pending list into
+    // its turn (the agent then works on the files). Attachment messages
+    // cannot carry a mention (Feishu sends them without an input box), so
+    // this is also where the mention gate is bypassed for groups — handled
+    // in shouldRespond.
+    if (text === '' && (message.attachments?.length ?? 0) > 0) {
+      this.options.logger.debug(
+        `message ${message.messageId} -> pending attachment (chat ${message.chatId})`,
+      );
+      await this.registerPending(message);
       return;
     }
     this.options.logger.debug(`message ${message.messageId} -> turn (chat ${message.chatId})`);
@@ -1167,31 +1172,6 @@ export class Bridge {
   }
 
   /**
-   * Whether the chat's current model can SEE images (advertises `image` in
-   * its input modalities). The DeepSeek adapter rejects image content
-   * (`UNSUPPORTED_CONTENT` ends the whole turn in error), so image blocks
-   * are only injected when this is true; unknown → false (conservative: the
-   * image degrades to a file receipt instead of breaking the turn).
-   * @param chatId - the chat whose model to probe.
-   * @returns true when the model advertises image input, false otherwise.
-   */
-  private async supportsImageInput(chatId: string): Promise<boolean> {
-    const selection = this.currentModelSelection(chatId);
-    const llm = this.options.llm;
-    if (selection === undefined || llm === undefined) return false;
-    const [provider, modelId] = selection.split('/');
-    if (provider === undefined || modelId === undefined) return false;
-    try {
-      const models = await llm.listModels(provider);
-      const model = models.find((m) => m.id === modelId);
-      return model?.inputModalities?.includes('image') ?? false;
-    } catch (error: unknown) {
-      this.options.logger.warn(`image-capability probe for ${selection} failed: ${String(error)}`);
-      return false;
-    }
-  }
-
-  /**
    * Load the model catalog for the /model picker: every registered provider
    * × its advisory model list (a failing provider catalog is skipped, loud
    * in the log). `undefined` when the llm service is absent.
@@ -1288,6 +1268,10 @@ export class Bridge {
     // turn starts — a broken attachment notices loudly but never wedges the
     // chat (the turn continues, text-only when the attachment failed).
     const content = await this.inboundContent(message);
+    // Inbound-wait-instruction: prepend any pending attachments (bare file
+    // messages that arrived earlier) so this text message's turn works on
+    // them too, in arrival order.
+    this.drainPending(message.chatId, content);
     // Two-stage ack stage 1 + the working card state + the card open (the
     // streaming controller's beginTurn; a failed reaction or card post must
     // never block the turn).
@@ -1319,68 +1303,15 @@ export class Bridge {
     if (message.text !== '') blocks.push({ type: 'text', text: message.text });
     // `attachments` is always present on normalized messages; the guard
     // covers transport-level JSON without the field (defensive only).
+    // Every attachment (image or file) is saved as a plain file under the
+    // chat's attachment bucket — a Feishu image is just a file to the agent
+    // (it reads it with its workspace tools; there is no image content block
+    // / visual-input path, per the unified-attachment decision).
     for (const attachment of message.attachments ?? []) {
-      if (attachment.kind === 'image') {
-        const block = await this.inboundImage(message, attachment, blocks);
-        if (block !== undefined) blocks.push(block);
-      } else {
-        await this.inboundFile(message, attachment, blocks);
-      }
+      await this.inboundFile(message, attachment, blocks);
     }
     if (blocks.length === 0) blocks.push({ type: 'text', text: message.text });
     return blocks;
-  }
-
-  /** Download + commit one inbound image; returns an `image` content block,
-   *  or `undefined` (with a loud notice) when the download/save fails. The
-   *  image is only injected when the chat's model supports image input — a
-   *  model that cannot see images (e.g. DeepSeek) would otherwise end the
-   *  whole turn in error (`UNSUPPORTED_CONTENT`). On degrade (service absent
-   *  or model not image-capable) the file path appends its note to `blocks`
-   *  — the message is never left content-less. */
-  private async inboundImage(
-    message: FeishuMessage,
-    attachment: InboundAttachment,
-    blocks: ContentBlock[],
-  ): Promise<ContentBlock | undefined> {
-    const saveImage = this.options.getSaveImage?.();
-    const imageCapable = await this.supportsImageInput(message.chatId);
-    if (saveImage === undefined || !imageCapable) {
-      // Attachment service not mounted, or the model cannot see images:
-      // degrade to the file path (receipt + name note) instead of dropping
-      // the message or erroring the turn (seam rule).
-      this.options.logger.warn(
-        `inbound image ${attachment.key}: ${saveImage === undefined ? 'attachment service absent' : `model does not support image input (${this.currentModelSelection(message.chatId) ?? 'unknown'})`}, treating as a file notice`,
-      );
-      await this.inboundFile(message, attachment, blocks);
-      return undefined;
-    }
-    try {
-      const downloaded = await this.options.transport.downloadImage(
-        message.messageId,
-        attachment.key,
-      );
-      const saved = await saveImage({
-        data: downloaded.data,
-        mediaType: downloaded.mediaType,
-      });
-      this.options.logger.debug(
-        `inbound image ${attachment.key} -> attachment ${saved.attachmentId} (${downloaded.data.length} bytes)`,
-      );
-      // The image block's `attachment` field is branded (`AttachmentId`) in
-      // the dsh types; the surface passes the saved ref through verbatim —
-      // the agent loop consumes it structurally.
-      return { type: 'image', attachment: saved } as ContentBlock;
-    } catch (error: unknown) {
-      this.options.logger.warn(
-        `inbound image ${attachment.key} could not be processed: ${String(error)}`,
-      );
-      await this.options.transport.sendText(
-        message.chatId,
-        '⚠️ An image you sent could not be read — sending as text only.',
-      );
-      return undefined;
-    }
   }
 
   /** Download + persist one inbound file under the chat's working directory,
@@ -1392,14 +1323,71 @@ export class Bridge {
     attachment: InboundAttachment,
     blocks: ContentBlock[],
   ): Promise<void> {
+    const pending = await this.saveInboundFileAttachment(message, attachment);
+    try {
+      await this.options.transport.sendCard(
+        message.chatId,
+        buildInboundFileCard(pending.name, pending.savedPath, 1),
+      );
+    } catch (error: unknown) {
+      this.options.logger.warn(`file receipt card failed: ${String(error)}`);
+    }
+    blocks.push({
+      type: 'text',
+      text:
+        pending.savedPath === undefined
+          ? `[user sent a file: ${pending.name}]`
+          : `[user sent a file: ${pending.name} — saved at ${pending.savedPath}. You can read it with your file tools.]`,
+    });
+  }
+
+  /**
+   * Download one inbound attachment and persist it under the chat's working
+   * directory. Files stream through the message-resource API; images are
+   * downloaded as bytes and re-wrapped as a stream, so BOTH land in the same
+   * attachment bucket as plain files (a Feishu image is just a file to the
+   * agent — it reads it with its workspace tools; there is no image content
+   * block / visual input path). Failures notice loudly and return an entry
+   * with no path (the message is never silently dropped, and a broken
+   * attachment never wedges the chat).
+   * @param message - the owning message.
+   * @param attachment - the attachment to download.
+   * @returns the pending entry (name + real path when the save succeeded).
+   */
+  private async saveInboundFileAttachment(
+    message: FeishuMessage,
+    attachment: InboundAttachment,
+  ): Promise<PendingInboundFile> {
     const name = attachment.name ?? attachment.key;
     let savedPath: string | undefined;
     try {
-      const { stream, head } = await this.options.transport.downloadFile(
-        message.messageId,
-        attachment.key,
-      );
-      this.options.logger.debug(`inbound file ${attachment.key}: downloaded (${message.chatId})`);
+      let stream: NodeJS.ReadableStream;
+      let head: Uint8Array;
+      if (attachment.kind === 'image') {
+        const downloaded = await this.options.transport.downloadImage(
+          message.messageId,
+          attachment.key,
+        );
+        const bytes = Buffer.from(downloaded.data);
+        head = new Uint8Array(bytes.subarray(0, 16));
+        // Re-push the head so the save seam's pipeline sees the full body.
+        const body = new Readable({ read() {} });
+        body.push(head);
+        body.push(bytes.subarray(head.length));
+        body.push(null);
+        stream = body;
+        this.options.logger.debug(
+          `inbound image ${attachment.key}: downloaded (${downloaded.data.length} bytes, ${message.chatId})`,
+        );
+      } else {
+        const downloaded = await this.options.transport.downloadFile(
+          message.messageId,
+          attachment.key,
+        );
+        stream = downloaded.stream;
+        head = downloaded.head;
+        this.options.logger.debug(`inbound file ${attachment.key}: downloaded (${message.chatId})`);
+      }
       const save = this.options.saveInboundFile;
       if (save !== undefined) {
         const extension = sniffExtension(head);
@@ -1422,18 +1410,78 @@ export class Bridge {
     } catch (error: unknown) {
       this.options.logger.warn(`inbound file ${attachment.key} download failed: ${String(error)}`);
     }
-    try {
-      await this.options.transport.sendCard(message.chatId, buildInboundFileCard(name, savedPath));
-    } catch (error: unknown) {
-      this.options.logger.warn(`file receipt card failed: ${String(error)}`);
+    return { attachment, name, savedPath };
+  }
+
+  /**
+   * Inbound-wait-instruction: register a bare attachment message (no text)
+   * as pending. Each attachment is downloaded and saved to the workspace; a
+   * NEW receipt card posts for each (the previous cards are kept — each file
+   * is traceable in chat history), showing the running count. NO turn starts;
+   * the user's follow-up text message drains the pending list into its turn.
+   * @param message - the bare attachment message.
+   */
+  private async registerPending(message: FeishuMessage): Promise<void> {
+    // Append this message's attachments to the chat's pending list
+    // SYNCHRONOUSLY, before any await: the message channel delivers a burst
+    // without awaiting (drainInbox calls the handler back-to-back), so two
+    // concurrent bare-file messages must each see the other's entries — a
+    // read-then-set around an await would silently drop one of them.
+    const pending = this.pendingInbound.get(message.chatId) ?? [];
+    const placeholders: PendingInboundFile[] = (message.attachments ?? []).map((attachment) => ({
+      attachment,
+      name: attachment.name ?? attachment.key,
+      savedPath: undefined,
+    }));
+    pending.push(...placeholders);
+    this.pendingInbound.set(message.chatId, pending);
+    for (let i = 0; i < placeholders.length; i += 1) {
+      const placeholder = placeholders[i];
+      if (placeholder === undefined) continue;
+      const saved = await this.saveInboundFileAttachment(message, placeholder.attachment);
+      // Mutate the already-registered entry in place (its position in the
+      // list is fixed; a re-set here would race concurrent appends).
+      placeholder.name = saved.name;
+      placeholder.savedPath = saved.savedPath;
+      const count = pending.length;
+      this.options.logger.debug(
+        `inbound pending ${placeholder.attachment.kind} ${placeholder.attachment.key}: ${saved.savedPath ?? 'no path'} (${count} pending, chat ${message.chatId})`,
+      );
+      try {
+        await this.options.transport.sendCard(
+          message.chatId,
+          buildInboundFileCard(saved.name, saved.savedPath, count),
+        );
+      } catch (error: unknown) {
+        this.options.logger.warn(`pending receipt card failed: ${String(error)}`);
+      }
     }
-    blocks.push({
+  }
+
+  /**
+   * Inbound-wait-instruction: drain the chat's pending attachments into the
+   * current turn — the saved-path notes are injected BEFORE the message's own
+   * content, in arrival order, and the list is cleared. Called by
+   * `deliverTurn` for every text message; no-op when nothing is pending.
+   * @param chatId - the chat.
+   * @param blocks - the content blocks being built for the turn; pending
+   *   notes are prepended in place.
+   */
+  private drainPending(chatId: string, blocks: ContentBlock[]): void {
+    const pending = this.pendingInbound.get(chatId);
+    if (pending === undefined || pending.length === 0) return;
+    this.pendingInbound.delete(chatId);
+    const notes: ContentBlock[] = pending.map((file) => ({
       type: 'text',
       text:
-        savedPath === undefined
-          ? `[user sent a file: ${name}]`
-          : `[user sent a file: ${name} — saved at ${savedPath}. You can read it with your file tools.]`,
-    });
+        file.savedPath === undefined
+          ? `[user sent a file: ${file.name}]`
+          : `[user sent a file: ${file.name} — saved at ${file.savedPath}. You can read it with your file tools.]`,
+    }));
+    this.options.logger.debug(
+      `inbound pending drained: ${pending.length} file(s) into turn (chat ${chatId})`,
+    );
+    blocks.unshift(...notes);
   }
 
   /**
@@ -1459,6 +1507,18 @@ export class Bridge {
     if (message.chatType === 'p2p') {
       this.options.logger.debug(
         `message ${message.messageId}: p2p chat -> respond (no mention gate)`,
+      );
+      return true;
+    }
+    // Inbound-wait-instruction: a bare attachment message (no text) bypasses
+    // the group mention gate. Feishu sends attachments without an input box,
+    // so an @ is physically impossible — gating it would dead-lock group file
+    // usage. Registration is pending-only (no work happens), and the follow-up
+    // TEXT instruction still passes the gate below, so the gate's safety
+    // purpose (the agent never acts without an accepted instruction) holds.
+    if (message.text === '' && (message.attachments?.length ?? 0) > 0) {
+      this.options.logger.debug(
+        `message ${message.messageId}: bare attachment -> register (mention gate bypassed)`,
       );
       return true;
     }
