@@ -140,7 +140,7 @@ function checkDocPairs() {
   if (pairFailures === 0) pass('all bilingual doc pairs are tracked together');
 }
 
-const COMMIT_RE = /^(feat|fix|docs|test|refactor|chore|perf|style)(\([a-z0-9-]+\))?: .+/;
+const COMMIT_RE = /^(feat|fix|docs|test|refactor|chore|perf|style|ci)(\([a-z0-9-]+\))?: .+/;
 
 function checkCommits(count) {
   const log = git(['log', `-${count}`, '--pretty=%s']).split('\n').filter(Boolean);
