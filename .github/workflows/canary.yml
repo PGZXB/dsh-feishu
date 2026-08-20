@@ -1,15 +1,12 @@
-name: Canary (latest dsh)
+name: Canary (main vs dsh@next)
 
-# Daily check against the NEWEST @deepseek-ai/dsh release (not the
-# lockfile-pinned one the main CI uses). DeepSeek Harness is pre-release
-# (0.1.0-rc.x) and can break consumers between releases; this workflow
-# surfaces upstream breakage before our users hit it. A red run means
-# dsh-feishu needs a compatibility fix for the latest dsh.
-#
-# Use the @next dist-tag: for most @deepseek-ai/* packages the npm
-# `latest` tag still points at the old 0.0.1-rc.x line (e.g.
-# dsh-session@latest = 0.0.1-rc.1, whose peer @deepseek-ai/dsh-type-meta
-# was never published), while `next` tracks the current 0.1.0-rc.x line.
+# Daily check that `main` stays adapted to the NEWEST @deepseek-ai/dsh
+# pre-release (@next dist-tag). main deliberately tracks @next (the npm
+# `latest` tag is reserved for the stable release line) — when upstream
+# publishes a newer @next (rc.9, …), this workflow lifts the whole dsh
+# family to it and runs the full gates against the fresh CLI. A red run
+# means main needs a compatibility fix for the newest dsh (e.g. rc.8's
+# commands.execute gained an images parameter).
 #
 # Triggered on a schedule (UTC 02:00, i.e. 10:00 Beijing) and manually via
 # workflow_dispatch.
@@ -21,7 +18,7 @@ on:
 
 jobs:
   canary:
-    name: unit + integration against latest dsh
+    name: unit + integration against dsh@next
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,11 +32,11 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      # Upgrade EVERY dsh-family dependency to the newest release via the
-      # @next dist-tag (not the lockfile-pinned rc.7, and not @latest —
-      # see the header comment), so the whole seam surface is exercised
-      # against the newest release. The dsh CLI bundles its sub-packages,
-      # but our direct dev/peer deps must be lifted too.
+      # Lift EVERY dsh-family dependency to the newest @next pre-release
+      # (not the lockfile-pinned one — main's lockfile may be a release
+      # behind @next when upstream publishes faster than we adapt). The dsh
+      # CLI bundles its sub-packages, but our direct dev/peer/runtime deps
+      # must be lifted too.
       - name: Install with newest dsh (@next, not frozen)
         run: |
           pnpm add -D @deepseek-ai/dsh@next \
@@ -61,7 +58,7 @@ jobs:
         run: pnpm run build
 
       # Same integration profile preparation as ci.yml; DSH_BIN is the
-      # freshly installed latest CLI.
+      # freshly installed newest CLI.
       - name: Prepare integration-test profile
         env:
           DSH_HOME: ${{ github.workspace }}/_dev/dsh-home

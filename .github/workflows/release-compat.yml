@@ -1,0 +1,73 @@
+name: Release compat (npm latest vs dsh@latest)
+
+# Daily check that the release line stays compatible with the dsh @latest
+# dist-tag — the exact combination an `npm i @dsh-feishu/dsh-feishu` user
+# gets. dsh-feishu's npm @latest release tracks dsh @latest, while main
+# tracks dsh @next (see docs/development.md → "Publishing"); the two can
+# diverge. A red run means the next release cut from main needs to pin
+# dsh @latest (or the shipped release needs a patch).
+#
+# This checks the REPO (which becomes the next release) against dsh
+# @latest — the same gates as ci.yml but with the dsh family lifted to
+# @latest instead of main's pinned version.
+#
+# Triggered on a schedule (UTC 04:00) and manually via workflow_dispatch.
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+jobs:
+  release-compat:
+    name: repo against dsh@latest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # Lift the dsh family to the @latest dist-tag (not main's pinned
+      # version, which tracks @next) — the release line's target.
+      - name: Install with dsh@latest (not frozen)
+        run: |
+          pnpm add -D @deepseek-ai/dsh@latest \
+            @deepseek-ai/dsh-agent@latest @deepseek-ai/dsh-llm@latest \
+            @deepseek-ai/dsh-session@latest \
+            @deepseek-ai/dsh-user-approval@latest \
+            @deepseek-ai/dsh-user-questions@latest \
+            @deepseek-ai/dsh-credentials@latest \
+            @deepseek-ai/dsh-commands@latest @deepseek-ai/dsh-schedule@latest
+          pnpm install --no-frozen-lockfile
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Prepare integration-test profile
+        env:
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home
+        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
+
+      - name: Prepare scenario integration-test profile
+        env:
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-scenarios
+        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
+
+      - name: Test (unit + integration, FEISHU_INT_REQUIRED)
+        env:
+          DSH_BIN: ${{ github.workspace }}/node_modules/.bin/dsh
+          FEISHU_INT_REQUIRED: '1'
+        run: pnpm run test
