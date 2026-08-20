@@ -734,22 +734,30 @@ cannot ingest arbitrary file bytes as a content block (the attachment
 domain is image-only), but it CAN read files under its working directory
 (its bash/read tools run under the fs sandbox, which permits
 `workspace-write` inside the workspace root). The bridge therefore:
-1. downloads the file bytes through the message-resource endpoint
+1. streams the file body through the message-resource endpoint
    (`im.v1.messageResource.get` — `/messages/{message_id}/resources/{file_key}?type=file`;
    `im.v1.file.get` can only fetch bot-uploaded files, so user-sent files
-   MUST use the message-resource API);
+   MUST use the message-resource API). Streamed, not buffered — the
+   resource API serves files up to ~100 MB; the leading bytes are peeked
+   for extension sniffing and pushed back, so the full body pipes straight
+   to disk (`pipeline()`; botmux's `downloadWithAppToken` lesson);
 2. saves them under the chat's working directory at
-   `<cwd>/.dsh_feishu/attachments/<appId>/<messageId>/<key>.<ext>` — a
+   `<cwd>/.dsh_feishu/attachments/<appId>/<chatId>/<name>.<ext>` — a
    hidden subdirectory so uploads never pollute the workspace root,
-   bucketed per app + message (botmux's `attachment-path.ts` layout) so
-   concurrent chats and apps never collide. The name is derived from the
-   resource key + a content sniff for the extension (Feishu file events do
-   NOT carry the original file name, so the surface cannot preserve it).
-   Files are kept permanently — the agent can re-read them any time, and
-   they are visible to the same tools that see the rest of the workspace;
+   bucketed per app + chat. The name is the user's ORIGINAL `file_name`
+   (Feishu file events carry it; parsed into `attachment.name`),
+   sanitized for path safety (separators, traversal segments, control and
+   Windows-reserved characters replaced; Unicode kept; 200-byte cap), and
+   deduped WeChat-style — a same-named file re-sent in the same chat lands
+   as `name(1).ext`, `name(2).ext`, … never an overwrite. Bucketing per
+   chat (not per message) is what makes the dedupe fire; when no
+   `file_name` survives sanitization the resource key is used (sanitized,
+   same dedupe). Files are kept permanently — the agent can re-read them
+   any time, and they are visible to the same tools that see the rest of
+   the workspace;
 3. posts a small `📎 File received` receipt card (name/extension + path);
 4. injects a text note with the REAL path:
-   `[user sent a file: <key>.<ext> — saved at <cwd>/.dsh_feishu/attachments/<appId>/<messageId>/<file>]`
+   `[user sent a file: <name>.<ext> — saved at <cwd>/.dsh_feishu/attachments/<appId>/<chatId>/<file>]`
    so the model can read it (e.g. `read` the file, grep it, run a script
    over it).
 
@@ -764,8 +772,8 @@ the existing turn pipeline. The only new branch is inside
 
 | Step | Image (model supports) | Image (not) / File |
 |---|---|---|
-| Download | message-resource (image) → bytes + mediaType | message-resource (file) → bytes + name |
-| Save | `ctx.attachments.saveImage` → ref | write `cwd/.dsh_feishu/attachments/<appId>/<messageId>/<key>.<ext>` (host seam) |
+| Download | message-resource (image) → bytes + mediaType | message-resource (file) → stream + head (sniff) |
+| Save | `ctx.attachments.saveImage` → ref | stream to `cwd/.dsh_feishu/attachments/<appId>/<chatId>/<name>.<ext>` (host seam, WeChat dedupe) |
 | Content | `[text, {type:'image', attachment}]` | `[text note with the saved path]` |
 | Card | none (streaming card already opens) | `📎 File received` receipt card |
 | Failure | card + text notice, turn still runs text-only | same |
@@ -795,9 +803,11 @@ markdown card (like the approval/question notices), posted before
 - [ ] `image` message + text-only model → degrades to a `📎 File received`
       receipt + name note; turn completes (no UNSUPPORTED_CONTENT error)
       (unit + integration tested)
-- [ ] `file` message → bytes saved under `cwd/.dsh_feishu/attachments/<appId>/<messageId>/`, receipt card
+- [ ] `file` message → bytes saved under `cwd/.dsh_feishu/attachments/<appId>/<chatId>/`, receipt card
       posted, agent's message carries the REAL saved path (unit + integration
       tested)
+- [ ] A same-named file re-sent in the same chat saves as `name(1).ext`
+      (WeChat-style dedupe, integration tested)
 - [ ] The saved file is readable by the agent's tools (integration test
       asserts the file exists on disk at the noted path)
 - [ ] Group messages still gated by the mention gate (no attachment handling

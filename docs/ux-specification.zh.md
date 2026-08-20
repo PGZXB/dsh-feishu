@@ -363,11 +363,11 @@ bridge 记住每个聊天的**最近被接受的发送者**（及其聊天类型
 **图片能力门禁** —— DeepSeek chat-completions 适配器**拒绝** image 内容（`UNSUPPORTED_CONTENT` → 整轮以错误结束），而 pi-ai 接受。因此 bridge **仅当**当前模型在输入模态中声明支持 `image` 时才注入 image 块（`ctx.llm.listModels` → `inputModalities`，与 `/model` 选择器读同一模型目录）。模型能力未知 → 保守处理：把图片当文件处理（回执 + 名称备注）。附件**绝不能**让回合报错。
 
 **文件路径（保存到工作区，agent 按路径读取）** —— agent 无法把任意文件字节作为内容块摄取（attachment 域仅限图片），但可以读取工作目录下的文件（其 bash/read 工具在 fs sandbox 下运行，`workspace-write` 允许写工作区根）。因此 bridge：
-1. 通过消息资源端点下载文件字节（`im.v1.messageResource.get` —— `/messages/{message_id}/resources/{file_key}?type=file`；`im.v1.file.get` 只能下载机器人自己上传的文件）；
-2. 保存到聊天工作目录 `<cwd>/.dsh_feishu/attachments/<appId>/<messageId>/<key>.<ext>` —— 隐藏子目录，按 app + message 分桶（botmux `attachment-path.ts` 布局），并发聊天/应用互不冲突。文件名 = 资源 key + magic bytes 嗅探的扩展名（pdf/zip/json/xml/png/jpg/gif/webp/txt/bin）——飞书文件事件不带原始文件名。文件永久保留，agent 随时可重读；
+1. **流式**下载文件体（`im.v1.messageResource.get` —— `/messages/{message_id}/resources/{file_key}?type=file`；`im.v1.file.get` 只能下载机器人自己上传的文件）。流式而非缓冲——资源 API 服务最大约 100 MB 的文件；先 peek 开头字节做扩展名嗅探再推回流，完整文件体经 `pipeline()` 直接写盘（botmux `downloadWithAppToken` 同款）；
+2. 保存到聊天工作目录 `<cwd>/.dsh_feishu/attachments/<appId>/<chatId>/<name>.<ext>` —— 隐藏子目录，按 app + chat 分桶。文件名 = 用户**原始文件名**（`file_name`，飞书文件事件携带，解析进 `attachment.name`），做路径安全清洗（分隔符、穿越段、控制字符、Windows 保留字符替换；保留 Unicode；200 字节上限），并微信式去重——同一 chat 重复发送同名文件依次存为 `name(1).ext`、`name(2).ext`…… 永不覆盖。按 chat（而非 message）分桶正是去重生效的前提；`file_name` 无法清洗时回退到清洗后的资源 key（同样去重）。文件永久保留，agent 随时可重读；
 3. 发布 `📎 File received` 回执卡（名称/扩展名 + 路径）；
 4. 注入带**真实路径**的文本备注：
-   `[user sent a file: <key>.<ext> — saved at <cwd>/.dsh_feishu/attachments/<appId>/<messageId>/<file>]`
+   `[user sent a file: <name>.<ext> — saved at <cwd>/.dsh_feishu/attachments/<appId>/<chatId>/<file>]`
    模型可用文件工具读取（read、grep、跑脚本）。
 
 飞书 `file_key` 没有公开下载 URL —— 工作区文件本身就是交付物。下载/保存失败仍发布回执 + 响亮日志，回合以纯文本继续（附件绝不卡死聊天）。
@@ -378,8 +378,8 @@ bridge 记住每个聊天的**最近被接受的发送者**（及其聊天类型
 
 | 步骤 | 图片（模型支持） | 图片（不支持）/ 文件 |
 |---|---|---|
-| 下载 | message-resource (image) → bytes + mediaType | message-resource (file) → bytes + name |
-| 保存 | `ctx.attachments.saveImage` → ref | 写入 `cwd/.dsh_feishu/attachments/<appId>/<messageId>/<key>.<ext>`（宿主 seam） |
+| 下载 | message-resource (image) → bytes + mediaType | message-resource (file) → stream + head（嗅探） |
+| 保存 | `ctx.attachments.saveImage` → ref | 流式写入 `cwd/.dsh_feishu/attachments/<appId>/<chatId>/<name>.<ext>`（宿主 seam，微信式去重） |
 | 内容 | `[text, {type:'image', attachment}]` | `[text 备注带真实路径]` |
 | 卡片 | 无（streaming 卡已开） | `📎 File received` 回执卡 |
 | 失败 | 卡片 + 文本提示，回合以纯文本继续 | 同上 |
@@ -401,7 +401,8 @@ bridge 记住每个聊天的**最近被接受的发送者**（及其聊天类型
 
 - [ ] `image` 消息 + 支持图片的模型 → agent 用户消息带 `image` 内容块（用假 image-capable llm 单测）
 - [ ] `image` 消息 + 纯文本模型 → 降级为 `📎 File received` 回执 + 名称备注；回合完成（无 UNSUPPORTED_CONTENT 错误）（单测 + 集成测试）
-- [ ] `file` 消息 → 字节保存到 `cwd/.dsh_feishu/attachments/<appId>/<messageId>/`，回执卡发布，agent 消息带**真实保存路径**（单测 + 集成测试）
+- [ ] `file` 消息 → 文件保存到 `cwd/.dsh_feishu/attachments/<appId>/<chatId>/`，回执卡发布，agent 消息带**真实保存路径**（单测 + 集成测试）
+- [ ] 同一 chat 重复发送同名文件 → 第二个存为 `name(1).ext`（微信式去重，集成测试）
 - [ ] 保存的文件可被 agent 工具读取（集成测试断言文件落在磁盘上、路径出现在 agent 回合中）
 - [ ] 群消息仍受 mention gate 约束（被忽略的消息不做附件处理）
 - [ ] 下载失败 → 响亮提示，回合以纯文本继续（单测）

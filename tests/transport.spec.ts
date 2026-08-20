@@ -4,6 +4,7 @@
  * path is exercised through a fake SDK surface.
  */
 
+import { Readable } from 'node:stream';
 import type { RawMessageEvent } from '@larksuiteoapi/node-sdk';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -240,3 +241,119 @@ describe('LarkTransport.createGroup', () => {
     expect(result).toEqual({ chatId: 'oc_new' });
   });
 });
+
+describe('LarkTransport message-resource downloads', () => {
+  /** A transport whose client's `request` is a fake returning `body`. */
+  function transportWithRequest(body: unknown): {
+    transport: LarkTransport;
+    request: ReturnType<typeof vi.fn>;
+  } {
+    const transport = new LarkTransport({
+      credentials: { appId: 'cli_test', appSecret: 'secret' },
+    });
+    const request = vi.fn().mockResolvedValue(body);
+    (transport as unknown as { client: { request: unknown } }).client = {
+      request,
+    } as never;
+    return { transport, request };
+  }
+
+  it('downloadFile streams the body and returns the head for sniffing', async () => {
+    const body = new Uint8Array([0x1f, 0x8b, 0x08, 0x00, 0x01, 0x02]);
+    const { transport, request } = transportWithRequest({
+      data: Readable.from([body]),
+      headers: { 'content-type': 'application/octet-stream' },
+    });
+
+    const { stream, head } = await transport.downloadFile('om_msg1', 'file_v3_key');
+
+    expect(head).toEqual(body); // smaller than 16 bytes → whole body
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of stream as unknown as AsyncIterable<Uint8Array>) {
+      chunks.push(chunk);
+    }
+    const collected = concat(chunks);
+    expect(collected).toEqual(body);
+    expect(request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'GET',
+        url: '/open-apis/im/v1/messages/om_msg1/resources/file_v3_key',
+        params: { type: 'file' },
+        responseType: 'stream',
+        $return_headers: true,
+      }),
+    );
+  });
+
+  it('downloadFile re-pushes the head so the stream still yields the full body', async () => {
+    const body = new Uint8Array(Array.from({ length: 40 }, (_, i) => i));
+    const { transport } = transportWithRequest({
+      data: Readable.from([body]),
+      headers: { 'content-type': 'application/octet-stream' },
+    });
+
+    const { stream, head } = await transport.downloadFile('om_msg1', 'file_v3_key');
+
+    expect(head).toEqual(body.slice(0, 16));
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of stream as unknown as AsyncIterable<Uint8Array>) {
+      chunks.push(chunk);
+    }
+    expect(concat(chunks)).toEqual(body);
+  });
+
+  it('downloadImage returns bytes with the png default media type', async () => {
+    const { transport, request } = transportWithRequest({
+      data: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+      headers: { 'content-type': 'image/png' },
+    });
+
+    const image = await transport.downloadImage('om_msg1', 'img_v3_key');
+
+    expect(image).toEqual({
+      data: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+      mediaType: 'image/png',
+    });
+    expect(request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: { type: 'image' },
+        responseType: 'arraybuffer',
+        $return_headers: true,
+      }),
+    );
+  });
+
+  it('downloadFile surfaces a JSON error envelope instead of persisting it', async () => {
+    const envelope = JSON.stringify({ code: 99991661, msg: 'resource not found' });
+    const { transport } = transportWithRequest({
+      data: Readable.from([new TextEncoder().encode(envelope)]),
+      headers: { 'content-type': 'application/json' },
+    });
+
+    await expect(transport.downloadFile('om_msg1', 'missing')).rejects.toMatchObject({
+      name: 'FeishuApiError',
+      operation: 'im.v1.messageResource.get (file)',
+      code: 99991661,
+    });
+  });
+
+  it('downloadFile throws when the response carries no bytes', async () => {
+    const { transport } = transportWithRequest({ data: undefined, headers: {} });
+    await expect(transport.downloadFile('om_msg1', 'empty')).rejects.toThrow(
+      /response carried no resource bytes/,
+    );
+  });
+});
+
+/** Concatenate byte chunks into one Uint8Array (test helper). */
+function concat(chunks: readonly Uint8Array[]): Uint8Array {
+  let length = 0;
+  for (const chunk of chunks) length += chunk.length;
+  const out = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}

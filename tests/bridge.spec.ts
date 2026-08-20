@@ -9,6 +9,7 @@
 
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import type { UserMessage } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
@@ -117,9 +118,13 @@ class RecordingTransport implements FeishuTransport {
     if (this.downloadImageImpl === undefined) throw new Error(`no downloadImage for ${key}`);
     return this.downloadImageImpl(key);
   }
-  async downloadFile(_messageId: string, key: string): Promise<Uint8Array> {
+  async downloadFile(
+    _messageId: string,
+    key: string,
+  ): Promise<{ stream: NodeJS.ReadableStream; head: Uint8Array }> {
     if (this.downloadFileImpl === undefined) throw new Error(`no downloadFile for ${key}`);
-    return this.downloadFileImpl(key);
+    const data = await this.downloadFileImpl(key);
+    return { stream: Readable.from([data]), head: data.slice(0, 16) };
   }
   deliver(message: FeishuMessage): void {
     this.handler?.(message);
@@ -453,8 +458,21 @@ describe('Bridge', () => {
 
     it('posts a file receipt card and names the saved path to the agent', async () => {
       const h = makeHarness({
-        saveInboundFile: async ({ data }) => {
-          expect(data).toEqual(new Uint8Array([1, 2, 3]));
+        saveInboundFile: async ({ stream, extension }) => {
+          // The stream carries the full body (head re-pushed); the sniffed
+          // extension comes from the downloaded bytes ([1,2,3] → bin).
+          expect(extension).toBe('bin');
+          const chunks: Uint8Array[] = [];
+          for await (const chunk of stream as unknown as AsyncIterable<Uint8Array>) {
+            chunks.push(chunk);
+          }
+          const collected = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+          let offset = 0;
+          for (const chunk of chunks) {
+            collected.set(chunk, offset);
+            offset += chunk.length;
+          }
+          expect(collected).toEqual(new Uint8Array([1, 2, 3]));
           return { path: '/work/.dsh_feishu/attachments/file-1.bin' };
         },
       });

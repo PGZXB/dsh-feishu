@@ -24,6 +24,7 @@
 
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
 import type {
   CardAction,
   CardJson,
@@ -199,13 +200,25 @@ export class MemoryTransport implements FeishuTransport {
     return { data: seeded.data, mediaType: seeded.mediaType ?? 'image/png' };
   }
 
-  /** Resolve an inbound file's bytes from the seeded attachment map. */
-  async downloadFile(_messageId: string, key: string): Promise<Uint8Array> {
+  /** Stream an inbound file from the seeded attachment map. The head (first
+   *  16 bytes, or the whole file when smaller) is returned separately and
+   *  re-pushed into the stream, mirroring the Lark transport's shape. */
+  async downloadFile(
+    _messageId: string,
+    key: string,
+  ): Promise<{ stream: NodeJS.ReadableStream; head: Uint8Array }> {
     const seeded = this.seededAttachments.get(key);
     if (seeded === undefined) {
       throw new Error(`memory transport: no seeded file for key ${key}`);
     }
-    return seeded.data;
+    const data = Buffer.from(seeded.data);
+    const head = new Uint8Array(data.subarray(0, 16));
+    // Re-push the head so the caller's downstream pipe sees the full body.
+    const stream = new Readable({ read() {} });
+    stream.push(head);
+    stream.push(data.subarray(head.length));
+    stream.push(null);
+    return { stream, head };
   }
 
   /** Direct same-process delivery (bypasses the file channel) for tests. */
