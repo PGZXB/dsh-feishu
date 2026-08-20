@@ -15,7 +15,7 @@
  * approvals, and questions land in later iterations.
  */
 
-import { createWriteStream, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -31,6 +31,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session';
 import type {} from '@deepseek-ai/dsh-user-approval';
 import type {} from '@deepseek-ai/dsh-user-questions';
 import z from '@deepseek-ai/schemastery';
+import { pickAttachmentFileName } from './attachment-naming.js';
 import {
   type AgentDefaultModelService,
   type AgentStore,
@@ -535,19 +536,27 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
       return (input) => attachments.saveImage(input);
     },
     // Inbound-file seam: persist one downloaded file under the chat's
-    // working directory at `.dsh_feishu/attachments/<appId>/<messageId>/<key>.<ext>`
-    // (hidden subdirectory; bucketed per app + message, botmux layout, so
-    // concurrent chats and apps never collide). The name derives from the
-    // resource key + sniffed extension — Feishu file events carry no
-    // original name. Files are kept permanently.
-    saveInboundFile: async ({ chatId, appId, messageId, attachment, stream, extension }) => {
+    // working directory at `.dsh_feishu/attachments/<appId>/<chatId>/<name>.<ext>`
+    // (hidden subdirectory; bucketed per app + chat so the WeChat-style
+    // `(1)`/`(2)` dedupe actually fires when the SAME chat re-sends a file
+    // with the same name — a per-message bucket would never collide and
+    // dedupe would be dead code). The name is the user's original
+    // `file_name` when present (sanitized), falling back to the resource
+    // key. Files are kept permanently.
+    saveInboundFile: async ({ chatId, appId, attachment, stream, extension }) => {
       const cwd = sessionMap.cwdFor(chatId) ?? config.defaultCwd ?? process.cwd();
       const safeAppId = appId.replace(/[^a-zA-Z0-9_-]/g, '_');
-      const safeMessageId = messageId.replace(/[^a-zA-Z0-9_-]/g, '_');
-      const safeKey = attachment.key.replace(/[^a-zA-Z0-9_-]/g, '_');
-      const dir = join(cwd, '.dsh_feishu', 'attachments', safeAppId, safeMessageId);
+      const safeChatId = chatId.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const dir = join(cwd, '.dsh_feishu', 'attachments', safeAppId, safeChatId);
       mkdirSync(dir, { recursive: true });
-      const path = join(dir, `${safeKey}.${extension}`);
+      const fileName = pickAttachmentFileName(
+        dir,
+        attachment.name,
+        attachment.key,
+        extension,
+        existsSync,
+      );
+      const path = join(dir, fileName);
       // Stream the body to disk (pipeline handles backpressure + cleanup);
       // the resource API serves files up to ~100 MB — buffering would spike
       // memory (botmux lesson).

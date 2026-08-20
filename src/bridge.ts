@@ -342,9 +342,10 @@ export interface BridgeOptions {
     | undefined;
   /**
    * Inbound-file seam: persist one downloaded file under the chat's working
-   * directory at `<cwd>/.dsh_feishu/attachments/<appId>/<messageId>/<key>.<ext>`
+   * directory at `<cwd>/.dsh_feishu/attachments/<appId>/<chatId>/<name>.<ext>`
    * so the agent can read it with its workspace tools. Bucketed per app +
-   * message (botmux layout) so concurrent chats never collide. Implemented
+   * chat so the WeChat-style name dedupe fires when the same chat re-sends a
+   * same-named file (a per-message bucket would never collide). Implemented
    * by the host (index.ts) where fs access lives; the bridge only names the
    * file. Absent, files degrade to a name-only note (the receipt card still
    * posts).
@@ -354,8 +355,6 @@ export interface BridgeOptions {
     chatId: string;
     /** The Feishu app id the surface runs as (bucket segment). */
     appId: string;
-    /** The owning message id (bucket segment). */
-    messageId: string;
     /** The normalized attachment (key + optional name). */
     attachment: InboundAttachment;
     /** The downloaded body, streamed (not buffered) so large files pipe to
@@ -1407,7 +1406,6 @@ export class Bridge {
         const saved = await save({
           chatId: message.chatId,
           appId: this.options.appId ?? 'unknown',
-          messageId: message.messageId,
           attachment,
           stream,
           extension,

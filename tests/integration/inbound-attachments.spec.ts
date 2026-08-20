@@ -170,6 +170,15 @@ describe.skipIf(!integrationReady)('integration > inbound-attachments', () => {
     await stopChild();
     rmSync(MEMORY_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     rmSync(ATTACH_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    // Attachment buckets live under INT_CWD; clear them too, or WeChat-style
+    // dedupe accumulates `file-1(1).txt`, `file-1(2).txt`, … across runs and
+    // the test's exact-path assertions break.
+    rmSync(join(INT_CWD, '.dsh_feishu'), {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
     mkdirSync(INT_CWD, { recursive: true });
     mkdirSync(INBOX_DIR, { recursive: true });
     mkdirSync(OUTBOX_DIR, { recursive: true });
@@ -269,8 +278,8 @@ describe.skipIf(!integrationReady)('integration > inbound-attachments', () => {
 
   it('an inbound file message saves the file to the workspace and names its path to the agent', async () => {
     // A tiny text file: sniffed as .txt, saved under the chat's cwd in the
-    // appId/messageId bucket (botmux layout). Seeded BEFORE boot — the
-    // memory transport reads the attachment dir once at process start.
+    // appId/chatId bucket. Seeded BEFORE boot — the memory transport reads
+    // the attachment dir once at process start.
     const content = 'hello from the inbound file\n';
     seedAttachment('file-1', new TextEncoder().encode(content));
     const { chatId } = await boot();
@@ -286,13 +295,13 @@ describe.skipIf(!integrationReady)('integration > inbound-attachments', () => {
         `${String(error)}\n--- dsh stdout ---\n${stdout}\n--- dsh stderr ---\n${stderr}`,
       );
     }
-    // The bytes are on disk at <cwd>/.dsh_feishu/attachments/<appId>/<messageId>/file-1.txt.
+    // The bytes are on disk at <cwd>/.dsh_feishu/attachments/<appId>/<chatId>/file-1.txt.
     const savedFile = join(
       INT_CWD,
       '.dsh_feishu',
       'attachments',
       'cli_mock_app',
-      'om-saved-file-1',
+      chatId,
       'file-1.txt',
     );
     try {
@@ -335,5 +344,44 @@ describe.skipIf(!integrationReady)('integration > inbound-attachments', () => {
       () => readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'green'),
       90_000,
     );
+  }, 150_000);
+
+  it('a repeated file name in the same chat saves as name(1).ext (WeChat-style dedupe)', async () => {
+    // The user re-sends a file with the SAME original name in the SAME
+    // chat: the first lands as `report.txt`, the second as `report(1).txt`
+    // — never an overwrite. Bucketing is per app + chat, so the second
+    // message collides with the first and the dedupe fires. Sent
+    // SEQUENTIALLY (wait for the first file to land before the second) —
+    // real users send one file at a time, and a burst would race the two
+    // saves (both probe the name before either writes).
+    const contentA = 'first upload\n';
+    const contentB = 'second upload\n';
+    seedAttachment('file-a', new TextEncoder().encode(contentA));
+    seedAttachment('file-b', new TextEncoder().encode(contentB));
+    const { chatId } = await boot();
+    const dir = join(INT_CWD, '.dsh_feishu', 'attachments', 'cli_mock_app', chatId);
+    sendMessage(chatId, '', [{ kind: 'file', key: 'file-a', name: 'report.txt' }], 'om-dedupe-1');
+    try {
+      await waitFor(
+        'the first named file on disk',
+        () => existsSync(join(dir, 'report.txt')),
+        10_000,
+      );
+    } catch (error) {
+      throw new Error(`${String(error)}\n--- dsh stderr ---\n${stderr}`);
+    }
+    expect(readFileSync(join(dir, 'report.txt'), 'utf8')).toBe(contentA);
+    // Now the second, same-named file in the same chat → deduped.
+    sendMessage(chatId, '', [{ kind: 'file', key: 'file-b', name: 'report.txt' }], 'om-dedupe-2');
+    try {
+      await waitFor(
+        'the deduped second file on disk',
+        () => existsSync(join(dir, 'report(1).txt')),
+        10_000,
+      );
+    } catch (error) {
+      throw new Error(`${String(error)}\n--- dsh stderr ---\n${stderr}`);
+    }
+    expect(readFileSync(join(dir, 'report(1).txt'), 'utf8')).toBe(contentB);
   }, 150_000);
 });
