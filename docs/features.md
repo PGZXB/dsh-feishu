@@ -30,3 +30,4 @@ Feature list and TODO tracker for dsh-feishu. ✅ = shipped, 📋 = planned
 | Context occupancy | Current session's context-window usage | Percent on the card bottom, refreshed per turn; details (used/capacity, breakdown) in `/status` | 📋 |
 | session-rename-archive | Session rename/archive via dsh sessionTitle + workspaceRegistry (web-visible) | — | 📋 |
 | inbound-wait-instruction | Bare file/image messages register as pending — a receipt card posts and the agent waits for the user's instruction before working | 📎 File received receipt (counts pending files); follow-up text drains them into one turn | ✅ |
+| inbound-rich-text | Feishu rich-text (post) and video messages are no longer dropped: a post is serialized into ordered rich text + attachments (formatting and intra-bubble order preserved), a video is a plain file | Rich-text-with-text posts turn immediately; attachment-only posts / videos register as pending | ✅ |

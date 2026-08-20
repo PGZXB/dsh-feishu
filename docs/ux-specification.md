@@ -936,3 +936,148 @@ cards stay in chat history. No panel views.
   the pending download path reuses the existing file seam for all of them.
 - post / video support is the sibling PR-A (inbound-rich-text), which drains
   into this pending path.
+
+## Part: inbound-rich-text
+
+> Feishu rich-text (`post`) and `video` messages are no longer silently
+> dropped. A `post` message is normalized into a serialized markdown-ish
+> string that PRESERVES the inline element order (text / image / media /
+> file in one bubble — "look at the picture, then read this" vs the
+> reverse), plus an ordered attachment list; a `video` message is a file
+> like any other. Rich-text-with-text posts start a turn immediately (the
+> existing mixed path); attachment-only posts and bare videos register as
+> pending (the sibling inbound-wait-instruction path).
+
+### Intended behavior
+
+**Trigger** — an inbound message whose `message_type` is `post` (rich text)
+or `video`. Today the surface's `SUPPORTED_MESSAGE_TYPES` is
+`['text','image','file']`, so both are silently ignored — the user's
+formatted message (bold / lists / quotes / links / code blocks) or video
+vanishes with no receipt, no save, no turn. This feature makes them first-
+class.
+
+**Feishu `post` content model** — a rich-text message's `content` is a
+2-D JSON array of inline element groups:
+
+```json
+{
+  "title": "…",
+  "content": [
+    [ {"tag":"text","text":"First line:","style":["bold"]}, {"tag":"a","href":"…","text":"link"}, {"tag":"at","user_id":"…","user_name":"…"} ],
+    [ {"tag":"img","image_key":"img_…"} ],
+    [ {"tag":"text","text":"Second line:"}, {"tag":"code_block","language":"PYTHON","text":"print(1)"} ],
+    [ {"tag":"media","file_key":"file_…","image_key":"img_…"} ],
+    [ {"tag":"hr"} ]
+  ]
+}
+```
+
+Each outer array element is a paragraph; the inner elements are inline and
+ORDERED — the order between text and attachments is information. The
+official element tags: `text` (with `style`: `bold` / `underline` /
+`lineThrough` / `italic`), `a` (link), `at`, `img` (image), `media` (video),
+`emotion` (emoji), `hr`, `code_block` (with `language` + `text`), `file`.
+The client also authors an `md` field (the markdown source) that already
+carries formatting and `![img](image_key)` tokens.
+
+**Normalization — `post` → serialized rich-text + ordered attachments** —
+a `post` message normalizes into:
+
+1. a `text` string — the linearized markdown-ish rendering of the inline
+   elements, in order, with attachment placeholders inline:
+
+```
+First line: **bold** [link](https://…) @User
+<image 1>
+
+Second line: ```python
+print(1)
+```
+
+<video 2>
+---
+```
+
+   Mapping: `text` styles → `**`/`*`/`~~`/`<u>…</u>`; `a` → `[text](href)`;
+   `at` → `@name`; `code_block` → fenced block (language + text); `hr` →
+   `---`; `emotion` → its emoji text; `img` → `<image N>`, `media` → `<video
+   N>`, `file` → `<file N>`. The `md` field, when present, is the preferred
+   source (it already carries formatting + `![img](image_key)` tokens —
+   rewritten to `<image N>` placeholders); the element array is the fallback
+   when `md` is absent. Each element group is separated by a newline; the
+   group order is preserved exactly.
+
+2. an `attachments` array, in placeholder order — each `img`/`media`/`file`
+   becomes an attachment (`{kind:'image'|'file', key, name?}`), numbered by
+   its placeholder position (1-based). The agent correlates `<image N>` with
+   the saved path via the ordered note list (the existing
+   `[user sent a file: … — saved at …]` notes).
+
+**`video` message** — `message_type: 'video'` with `file_key` (+ `image_key`
+cover). Normalizes to a single `file`-kind attachment (the video body),
+exactly like a bare file message — it registers as pending and the follow-up
+text drains it. `im.v1.messageResource.get?type=file` serves video (the
+resource API's `type=file` covers files, audio, AND video), so no new
+download path is needed.
+
+**Routing (reuses the sibling parts)** — after normalization:
+
+- `post` with non-empty text → the existing mixed path: immediate turn, the
+  serialized text as the `text` block and the attachments injected in
+  placeholder order (the inbound-attachments part's unified path).
+- `post` with text empty (attachments only) / bare `video` → the
+  inbound-wait-instruction pending path (receipt card, no turn, drained by
+  the follow-up text).
+- `post` with neither text nor attachments → ignored with a loud log (no
+  usable content).
+
+**Card/panel shape** — none new. Rich-text posts with text use the streaming
+card like any text message; attachment-only posts / videos use the existing
+`📎 File received` pending receipt cards. No buttons, no panel views.
+
+**Failure modes**:
+- `post` content JSON malformed (not parseable): the message degrades to a
+  text-only notice with a loud log — the raw content string is NOT delivered
+  as agent text (it is machine JSON, useless to the model).
+- `md` field absent: element-array serialization is the fallback — never an
+  empty agent message when elements exist.
+- Unknown element tag: skipped with a debug log (forward-compat — new Feishu
+  tags degrade gracefully rather than breaking the parse).
+- Attachment download/save fails inside a rich-text post: the sibling
+  degraded-receipt path (loud log, name-only note, never wedges).
+- `video` message with a stale key: same download-failure path.
+
+**Acceptance checklist**:
+- [ ] `post` with text + bold/link/code/at → agent's user message carries the
+      serialized markdown-ish text with formatting preserved (unit)
+- [ ] `post` mixing text + image + video → placeholders `<image 1>` /
+      `<video 2>` in order, attachments array in the same order, and the
+      saved paths correlate (unit + integration)
+- [ ] `post` with text → immediate turn (unit + integration)
+- [ ] `post` attachments-only → pending (receipt card, no turn; follow-up
+      drains) (integration)
+- [ ] `video` message → pending like a bare file, drained by follow-up text
+      (unit + integration)
+- [ ] `post` with `md` field → `md`-based serialization preferred (unit)
+- [ ] `post` malformed content → loud log, no crash, message not delivered
+      as raw JSON (unit)
+- [ ] Unknown tag → skipped with debug log, rest of the post intact (unit)
+
+### Reference
+
+- Feishu message content spec (`open.feishu.cn … message-content-description`):
+  `post` content is the 2-D element array with `text`/`a`/`at`/`img`/`media`/
+  `emotion`/`hr`/`code_block`/`file` tags and the client-authored `md` field;
+  styles are `bold`/`underline`/`lineThrough`/`italic`.
+- `im.v1.messageResource.get`: `type=image` covers images AND rich-text
+  images; `type=file` covers files, audio, AND video — the existing download
+  seams serve every post element and the `video` message, no new endpoint.
+- lark-cli's `lark-event-im` reference confirms `post` / `video` are distinct
+  `message_type` values alongside `text`/`image`/`file`/`audio`/`sticker`.
+- botmux's rich-text handling flattens post content to text only (no
+  attachment ordering) — dsh-feishu's ordered-placeholder serialization is
+  our own design, preserving the intra-bubble order the user asked for.
+- The pending routing reuses the sibling inbound-wait-instruction part
+  (drained by the follow-up text; attachment messages bypass the group
+  mention gate because Feishu cannot @ from an attachment).

@@ -472,3 +472,122 @@ turn 运行中到达的新裸附件消息只追加（不影响正在跑的 turn�
 - `im.v1.messageResource.get`：`type=file` 覆盖文件、音频和视频——pending
   下载路径对它们全部复用现有 file seam。
 - post / video 支持是兄弟 PR（inbound-rich-text），它们排空进本 pending 路径。
+
+## Part: inbound-rich-text
+
+> 飞书富文本（`post`）和 `video` 消息不再被静默丢弃。`post` 归一化为保留
+> 气泡内元素顺序（文字 / 图片 / 视频 / 文件在一个气泡里——"先看图再看文字"
+> 与反过来不同）的 markdown 式序列化文本 + 有序附件列表；`video` 消息与
+> 其它文件一样处理。带文字的富文本立即触发 turn（现有混合路径）；纯附件
+> post 和裸 video 登记为 pending（兄弟特性 inbound-wait-instruction 路径）。
+
+### 预期行为
+
+**触发** —— `message_type` 为 `post`（富文本）或 `video` 的入站消息。现状
+`SUPPORTED_MESSAGE_TYPES` 是 `['text','image','file']`，两者都被静默忽略——
+用户带格式的消息（加粗/列表/引用/链接/代码块）或视频无回执、无保存、无
+turn 地消失。本特性让它们成为一等公民。
+
+**飞书 `post` content 模型** —— 富文本消息的 `content` 是二维 JSON 数组：
+
+```json
+{
+  "title": "…",
+  "content": [
+    [ {"tag":"text","text":"第一行","style":["bold"]}, {"tag":"a","href":"…","text":"链接"}, {"tag":"at","user_id":"…","user_name":"…"} ],
+    [ {"tag":"img","image_key":"img_…"} ],
+    [ {"tag":"text","text":"第二行"}, {"tag":"code_block","language":"PYTHON","text":"print(1)"} ],
+    [ {"tag":"media","file_key":"file_…","image_key":"img_…"} ],
+    [ {"tag":"hr"} ]
+  ]
+}
+```
+
+每个外层元素是一段（paragraph），内层元素有序且**顺序即信息**。官方元素
+tag：`text`（`style`：`bold`/`underline`/`lineThrough`/`italic`）、`a`（链接）、
+`at`、`img`（图片）、`media`（视频）、`emotion`（表情）、`hr`、
+`code_block`（`language`+`text`）、`file`。客户端还生成 `md` 字段（markdown
+原文，已含格式与 `![img](image_key)` token）。
+
+**归一化 —— `post` → 序列化富文本 + 有序附件** —— `post` 消息归一化为：
+
+1. `text` 字符串 —— 内联元素的线性化 markdown 式渲染，保持顺序，附件用
+   行内占位符：
+
+```
+第一行: **加粗** [链接](https://…) @用户
+<image 1>
+
+第二行: ```python
+print(1)
+```
+
+<video 2>
+---
+```
+
+   映射：`text` 样式 → `**`/`*`/`~~`/`<u>…</u>`；`a` → `[text](href)`；
+   `at` → `@名字`；`code_block` → 围栏代码块（语言+内容）；`hr` → `---`；
+   `emotion` → 表情文本；`img` → `<image N>`，`media` → `<video N>`，
+   `file` → `<file N>`。`md` 字段存在时优先（已含格式与 `![img](image_key)`
+   token，改写成 `<image N>` 占位符）；`md` 缺失时用元素数组序列化兜底。
+   每个元素组之间换行；组顺序严格保留。
+
+2. `attachments` 数组，按占位符顺序——每个 `img`/`media`/`file` 变成附件
+   （`{kind:'image'|'file', key, name?}`），按占位符位置（从 1 起）编号。
+   agent 通过有序的 `[user sent a file: … — saved at …]` 备注把 `<image N>`
+   与真实保存路径对应起来。
+
+**`video` 消息** —— `message_type: 'video'`，content 含 `file_key`（+ 封面
+`image_key`）。归一化为单个 `file` 类附件（视频本体），与裸文件消息完全一样
+——登记为 pending，跟进文字排空。`im.v1.messageResource.get?type=file` 服务
+视频（资源 API 的 `type=file` 覆盖文件、音频和视频），无需新下载路径。
+
+**路由（复用兄弟 part）** —— 归一化后：
+
+- `post` 带文字 → 现有混合路径：立即 turn，序列化文本作为 `text` 块，附件
+  按占位符顺序注入（inbound-attachments part 的统一路径）。
+- `post` 文字为空（仅附件）/ 裸 `video` → inbound-wait-instruction 的 pending
+  路径（回执卡、不触发 turn、由跟进文字排空）。
+- `post` 既无文字也无附件 → 响亮日志忽略（无可用内容）。
+
+**卡片/面板形态** —— 无新增。带文字的富文本用 streaming 卡（与普通文字
+消息一致）；纯附件 post / 视频用现有 `📎 File received` pending 回执卡。
+无按钮、无面板视图。
+
+**失败模式**：
+- `post` content JSON 解析失败：降级为纯文本提示 + 响亮日志——原始 content
+  字符串**不**作为 agent 文本投递（它是机器 JSON，对模型无用）。
+- `md` 字段缺失：元素数组序列化兜底——存在元素时绝不产生空 agent 消息。
+- 未知元素 tag：debug 日志跳过（向前兼容——新飞书 tag 优雅降级而非破坏解析）。
+- post 内附件下载/保存失败：兄弟特性的降级回执路径（响亮日志、仅名称备注、
+  绝不卡死）。
+- `video` 消息 key 过期：同下载失败路径。
+
+**验收清单**：
+- [ ] `post` 带文字 + 加粗/链接/代码/at → agent 用户消息带序列化 markdown
+      式文本、格式保留（单测）
+- [ ] `post` 混合文字 + 图片 + 视频 → `<image 1>`/`<video 2>` 占位符按顺序、
+      附件数组同序、保存路径对应（单测 + 集成）
+- [ ] `post` 带文字 → 立即 turn（单测 + 集成）
+- [ ] `post` 仅附件 → pending（回执卡、无 turn；跟进文字排空）（集成）
+- [ ] `video` 消息 → 像裸文件一样 pending，跟进文字排空（单测 + 集成）
+- [ ] `post` 有 `md` 字段 → 优先 `md` 序列化（单测）
+- [ ] `post` content 损坏 → 响亮日志、不崩溃、原始 JSON 不投递（单测）
+- [ ] 未知 tag → debug 日志跳过，其余 post 完整（单测）
+
+### Reference
+
+- 飞书消息内容规范（`open.feishu.cn … message-content-description`）：
+  `post` content 是二维元素数组，含 `text`/`a`/`at`/`img`/`media`/`emotion`/
+  `hr`/`code_block`/`file` tag 与客户端 `md` 字段；样式为
+  `bold`/`underline`/`lineThrough`/`italic`。
+- `im.v1.messageResource.get`：`type=image` 覆盖图片与富文本图片；`type=file`
+  覆盖文件、音频和视频——现有下载 seam 服务 post 的每个元素与 `video`
+  消息，无需新端点。
+- lark-cli 的 `lark-event-im` 参考确认 `post`/`video` 是与 `text`/`image`/
+  `file`/`audio`/`sticker` 并列的独立 `message_type`。
+- botmux 的富文本处理只把 post 内容摊平成纯文本（无附件顺序）——dsh-feishu
+  的有序占位符序列化是我们自己的设计，保留用户要求的气泡内顺序。
+- pending 路由复用兄弟特性 inbound-wait-instruction part（跟进文字排空；
+  附件消息绕过群 mention gate，因为飞书无法从附件里 @）。
