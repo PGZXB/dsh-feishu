@@ -134,6 +134,49 @@ describe('normalizeMessageEvent', () => {
     const message = normalizeMessageEvent(rawEvent({ message: { content: 'not json' } }));
     expect(message).toBeUndefined();
   });
+
+  it('normalizes a rich-text post into serialized text + ordered attachments', () => {
+    const message = normalizeMessageEvent(
+      rawEvent({
+        message: {
+          message_type: 'post',
+          content: JSON.stringify({
+            title: '',
+            content: [
+              [{ tag: 'text', text: 'First:', style: ['bold'] }],
+              [{ tag: 'img', image_key: 'img_1' }],
+              [{ tag: 'media', file_key: 'file_v', image_key: 'img_c' }],
+            ],
+          }),
+        },
+      }),
+    );
+    expect(message?.text).toBe('**First:**\n<image 1>\n<video 2>');
+    expect(message?.attachments).toEqual([
+      { kind: 'image', key: 'img_1' },
+      { kind: 'file', key: 'file_v' },
+    ]);
+  });
+
+  it('normalizes a video message into a file attachment', () => {
+    const message = normalizeMessageEvent(
+      rawEvent({
+        message: {
+          message_type: 'video',
+          content: JSON.stringify({ file_key: 'file_v1', image_key: 'img_c1' }),
+        },
+      }),
+    );
+    expect(message?.text).toBe('');
+    expect(message?.attachments).toEqual([{ kind: 'file', key: 'file_v1' }]);
+  });
+
+  it('ignores a malformed post content', () => {
+    const message = normalizeMessageEvent(
+      rawEvent({ message: { message_type: 'post', content: 'not json' } }),
+    );
+    expect(message).toBeUndefined();
+  });
 });
 
 describe('normalizeCardAction', () => {

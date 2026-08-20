@@ -34,6 +34,7 @@ import type {
   InboundAttachment,
   SentCard,
 } from './feishu/types.js';
+import { serializePost } from './rich-text.js';
 
 /**
  * The HTTP instance the SDK's `Client` and `WSClient` use for every Feishu
@@ -112,7 +113,7 @@ export class FeishuApiError extends Error {
 const MENTION_PATTERN = /<at[^>]*>.*?<\/at>/g;
 
 /** Message types the surface understands; everything else is ignored. */
-const SUPPORTED_MESSAGE_TYPES = new Set(['text', 'image', 'file']);
+const SUPPORTED_MESSAGE_TYPES = new Set(['text', 'image', 'file', 'post', 'video']);
 
 /** Parse an image/file message's content JSON into its attachment, or
  *  `undefined` when the content is malformed. */
@@ -147,7 +148,7 @@ export function normalizeMessageEvent(data: RawMessageEvent): FeishuMessage | un
   if (!SUPPORTED_MESSAGE_TYPES.has(message.message_type)) return undefined;
   const senderOpenId = data.sender?.sender_id?.open_id ?? '';
   let text = '';
-  let attachment: InboundAttachment | undefined;
+  let attachments: InboundAttachment[] = [];
   if (message.message_type === 'text') {
     try {
       const parsed = JSON.parse(message.content) as { text?: string };
@@ -156,10 +157,24 @@ export function normalizeMessageEvent(data: RawMessageEvent): FeishuMessage | un
       return undefined;
     }
     text = text.replace(MENTION_PATTERN, ' ').replace(/\s+/g, ' ').trim();
+  } else if (message.message_type === 'post') {
+    // Rich text: serialize the inline element order into a markdown-ish
+    // string with `<image N>` / `<video N>` placeholders, plus the ordered
+    // attachment list. Malformed content degrades to a loud-ignored message
+    // (the raw JSON is never delivered to the agent as text).
+    const serialized = serializePost(message.content);
+    if (serialized === undefined) {
+      // Loud log at the transport boundary (no logger here — the bridge
+      // logs dropped messages; return undefined to ignore).
+      return undefined;
+    }
+    text = serialized.text;
+    attachments = [...serialized.attachments];
   } else {
-    attachment = parseAttachment(message.content, message.message_type);
+    const attachment = parseAttachment(message.content, message.message_type);
     // A malformed image/file content (no key) is not a usable message.
     if (attachment === undefined) return undefined;
+    attachments = [attachment];
   }
   return {
     messageId: message.message_id,
@@ -167,7 +182,7 @@ export function normalizeMessageEvent(data: RawMessageEvent): FeishuMessage | un
     chatType: message.chat_type === 'group' ? 'group' : 'p2p',
     senderOpenId,
     text,
-    attachments: attachment === undefined ? [] : [attachment],
+    attachments,
     mentions: (message.mentions ?? [])
       .map((mention) => mention.id?.open_id)
       .filter((id): id is string => id !== undefined && id !== ''),
