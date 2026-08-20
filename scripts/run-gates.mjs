@@ -34,17 +34,24 @@ const args = process.argv.slice(2);
 const noTest = args.includes('--no-test');
 const testOnly = args.includes('--test-only');
 
+const testEnv = {
+  FEISHU_INT_REQUIRED: '1',
+  // The integration suites resolve the dsh CLI from DSH_BIN first, then
+  // PATH. Pin it to the worktree's own CLI — a stale dsh on PATH (e.g. an
+  // old npx cache) silently runs the tests against the wrong version and
+  // fails with confusing errors (rc.6 CLI + rc.8 code: "signal.
+  // addEventListener is not a function").
+  DSH_BIN: bin('dsh'),
+};
 const GATES = testOnly
-  ? [
-      { name: 'test (FEISHU_INT_REQUIRED=1)', cmd: bin('vitest'), argv: ['run'], env: { FEISHU_INT_REQUIRED: '1' } },
-    ]
+  ? [{ name: 'test (FEISHU_INT_REQUIRED=1)', cmd: bin('vitest'), argv: ['run'], env: testEnv }]
   : [
       { name: 'lint (biome check)', cmd: bin('biome'), argv: ['check', 'src', 'tests'] },
       { name: 'typecheck (tsc --noEmit)', cmd: bin('tsc'), argv: ['--noEmit'] },
       { name: 'build (tsc emit)', cmd: bin('tsc'), argv: ['-p', 'tsconfig.build.json'] },
       ...(noTest
         ? []
-        : [{ name: 'test (FEISHU_INT_REQUIRED=1)', cmd: bin('vitest'), argv: ['run'], env: { FEISHU_INT_REQUIRED: '1' } }]),
+        : [{ name: 'test (FEISHU_INT_REQUIRED=1)', cmd: bin('vitest'), argv: ['run'], env: testEnv }]),
     ];
 
 let failed = false;
