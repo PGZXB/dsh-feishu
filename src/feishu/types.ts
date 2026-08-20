@@ -30,6 +30,14 @@ export interface FeishuMessage {
    * key the transport can download (image_key / file_key).
    */
   readonly attachments: readonly InboundAttachment[];
+  /**
+   * Set when the message's `message_type` is a KNOWN Feishu type the surface
+   * does not handle (folder, sticker, share_chat, system, …). The bridge
+   * replies with a loud unsupported-type notice instead of silently dropping
+   * the message (misconfiguration fails loud; a user sending a folder must
+   * learn the bot cannot process it). `undefined` for handled messages.
+   */
+  readonly unsupportedType?: string;
   /** Unix epoch milliseconds from the Feishu `create_time` string. */
   readonly createdAt: number;
 }

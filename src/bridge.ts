@@ -665,6 +665,22 @@ export class Bridge {
   async handleMessage(message: FeishuMessage): Promise<void> {
     if (!this.dedup.claim(message.messageId)) return;
     if (!(await this.shouldRespond(message))) return;
+    // A known-but-unhandled Feishu message type (folder, sticker, …) gets a
+    // loud notice instead of vanishing — the user must learn the bot cannot
+    // process it (misconfiguration fails loud). No turn, no pending.
+    if (message.unsupportedType !== undefined) {
+      this.options.logger.info(
+        `message ${message.messageId}: unsupported type ${message.unsupportedType} (chat ${message.chatId})`,
+      );
+      await this.options.transport.sendText(
+        message.chatId,
+        `⚠️ I can't process messages of type \`${message.unsupportedType}\` yet.` +
+          (message.unsupportedType === 'folder'
+            ? ' Folder contents cannot be downloaded via the API — please send the files individually or as a zip archive instead.'
+            : ''),
+      );
+      return;
+    }
     this.lastInboundAtValue = Date.now();
     this.options.logger.info(
       `inbound message ${message.messageId} in ${message.chatId} (${message.chatType}): ${message.text.slice(0, 80)}`,

@@ -106,13 +106,16 @@ describe('normalizeMessageEvent', () => {
     expect(message).toBeUndefined();
   });
 
-  it('ignores unsupported message types (audio, post, …)', () => {
-    for (const type of ['audio', 'post', 'media']) {
+  it('surfaces known-but-unhandled types (media, sticker) as unsupported; ignores unknown ones', () => {
+    for (const type of ['media', 'sticker']) {
       const message = normalizeMessageEvent(
         rawEvent({ message: { message_type: type, content: '{}' } }),
       );
-      expect(message).toBeUndefined();
+      expect(message?.unsupportedType).toBe(type);
     }
+    expect(
+      normalizeMessageEvent(rawEvent({ message: { message_type: 'nonsense' } })),
+    ).toBeUndefined();
   });
 
   it('extracts mention open ids', () => {
@@ -182,6 +185,27 @@ describe('normalizeMessageEvent', () => {
     );
     expect(message?.text).toBe('');
     expect(message?.attachments).toEqual([{ kind: 'file', key: 'file_a1' }]);
+  });
+
+  it('surfaces a known-but-unhandled type (folder) as an unsupported-type message', () => {
+    const message = normalizeMessageEvent(
+      rawEvent({
+        message: {
+          message_type: 'folder',
+          content: JSON.stringify({ file_key: 'f1', file_name: 'folder' }),
+        },
+      }),
+    );
+    expect(message?.unsupportedType).toBe('folder');
+    expect(message?.text).toBe('');
+    expect(message?.attachments).toEqual([]);
+  });
+
+  it('ignores an unknown message type entirely', () => {
+    const message = normalizeMessageEvent(
+      rawEvent({ message: { message_type: 'definitely-not-a-feishu-type' } }),
+    );
+    expect(message).toBeUndefined();
   });
 
   it('ignores a malformed post content', () => {
