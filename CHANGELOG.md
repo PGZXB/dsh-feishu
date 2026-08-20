@@ -5,7 +5,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.1] - 2026-08-20
+
+_Compatibility: dsh `0.1.0-rc.7` (npm `@latest`). This release ships the
+stable-rc.7 line; newer dsh releases (`@next`) are tracked on `main`.
 
 ### Changed
 
