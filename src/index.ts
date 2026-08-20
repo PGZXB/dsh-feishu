@@ -116,8 +116,9 @@ export interface Config {
   readonly requireWorkingDir?: boolean;
   /**
    * Two-stage reaction ack emojis (received / done / error / stopped).
-   * Defaults GoGoGo / DONE / WARN / WARN. Set `received` to '' to disable
-   * the ack entirely.
+   * Defaults GoGoGo / DONE / ERROR / ERROR — valid Feishu `emoji_type`
+   * values (WARN is NOT in the platform's reaction table and the ack 400s).
+   * Set `received` to '' to disable the ack entirely.
    */
   readonly reactions?: {
     readonly received?: string;

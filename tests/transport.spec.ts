@@ -171,6 +171,19 @@ describe('normalizeMessageEvent', () => {
     expect(message?.attachments).toEqual([{ kind: 'file', key: 'file_v1' }]);
   });
 
+  it('normalizes an audio (voice) message into a file attachment', () => {
+    const message = normalizeMessageEvent(
+      rawEvent({
+        message: {
+          message_type: 'audio',
+          content: JSON.stringify({ file_key: 'file_a1', duration: '5000' }),
+        },
+      }),
+    );
+    expect(message?.text).toBe('');
+    expect(message?.attachments).toEqual([{ kind: 'file', key: 'file_a1' }]);
+  });
+
   it('ignores a malformed post content', () => {
     const message = normalizeMessageEvent(
       rawEvent({ message: { message_type: 'post', content: 'not json' } }),

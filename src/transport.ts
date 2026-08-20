@@ -113,7 +113,7 @@ export class FeishuApiError extends Error {
 const MENTION_PATTERN = /<at[^>]*>.*?<\/at>/g;
 
 /** Message types the surface understands; everything else is ignored. */
-const SUPPORTED_MESSAGE_TYPES = new Set(['text', 'image', 'file', 'post', 'video']);
+const SUPPORTED_MESSAGE_TYPES = new Set(['text', 'image', 'file', 'post', 'video', 'audio']);
 
 /** Parse an image/file message's content JSON into its attachment, or
  *  `undefined` when the content is malformed. */

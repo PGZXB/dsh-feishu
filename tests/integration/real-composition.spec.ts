@@ -2868,14 +2868,14 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         90_000,
       );
       await waitFor(
-        'the WARN reaction swap',
+        'the ERROR reaction swap',
         () =>
           readOutbox().some(
             (r) =>
               r.kind === 'reaction' &&
               r.messageId === messageId &&
               r.action === 'add' &&
-              r.emojiType === 'WARN',
+              r.emojiType === 'ERROR',
           ),
         30_000,
       );
@@ -2884,7 +2884,7 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
       );
       expect(records[0]).toMatchObject({ action: 'add', emojiType: 'GoGoGo' });
       expect(records[1]).toMatchObject({ action: 'remove', reactionId: records[0]?.reactionId });
-      expect(records[2]).toMatchObject({ action: 'add', emojiType: 'WARN' });
+      expect(records[2]).toMatchObject({ action: 'add', emojiType: 'ERROR' });
     } catch (error) {
       throw new Error(
         `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
