@@ -70,7 +70,8 @@ scripts/              # repo tooling
 该套件断言完整的 surface：消息 → session → agent turn → 卡片发布并被 patch → **由卡片承载的最终答案**（它就地以绿色收尾），此外还有卡片操作、session 生命周期、web 命令包装器，以及工作目录 gate。脚本化的 mock LLM（`setScripts`、`holdNextResponse`，以及一个应答 HTTP 500 的 `error` 块）驱动工具调用、推理、错误 turn 和重试。除非满足前置条件，否则套件会自行跳过：
 
 - dsh CLI 可解析（`$DSH_BIN`，或 `PATH` 上的 `dsh`）。
-- 在 `$FEISHU_INT_DSH_HOME/profiles/feishu-dev` 存在一个准备好的 profile（默认 `_dev/dsh-home/profiles/feishu-dev`——用 `dsh plugin --profile feishu-dev add link:<checkout>` 创建，见下文"在真实 dsh profile 中验证 bundle"一节）。刻意与环境的 `DSH_HOME` 相互独立，这样测试永远不会碰到另一个 dsh home。
+- dsh CLI 可解析（`$DSH_BIN`，或 `PATH` 上的 `dsh`）。
+- 在 `$FEISHU_INT_*_DSH_HOME/profiles/feishu-dev` 存在一个准备好的 profile（默认 `_dev/dsh-home-<套件>/profiles/feishu-dev`——用 `dsh plugin --profile feishu-dev add link:<checkout>` 创建，见下文"在真实 dsh profile 中验证 bundle"一节）。刻意与环境的 `DSH_HOME` 相互独立，这样测试永远不会碰到另一个 dsh home。**每个集成套件使用自己的 home**（`dsh-home-attachments`、`dsh-home-rich-text`、`dsh-home-wait-instruction`、`dsh-home-real`、`dsh-home-scenarios`）：vitest 并行运行各套件，共享一个 `_dev/dsh-home/feishu/session-map.json` 会让并发的 dsh 进程竞争写入、静默丢掉某个套件的 chat→session 绑定（CI-only flaky，例如 session-lifecycle 测试读文件发现自己的 chat 缺失）。
 - checkout 已构建（`pnpm run build`）。
 
 CI 在每次 push 时都运行该套件（两个 node 版本分支都跑）：workflow 构建 checkout、准备 profile，并以 `FEISHU_INT_REQUIRED=1` 运行测试——这样缺少前置条件会响亮地让任务失败，而不是静默跳过。dsh CLI 是 devDependency（`@deepseek-ai/dsh`），原生构建脚本（node-pty 及其同类）在 `pnpm-workspace.yaml` 中获准——不涉及任何凭据；正是上面这些 Feishu 和 LLM mock 让套件在无需密钥的情况下也能运行。

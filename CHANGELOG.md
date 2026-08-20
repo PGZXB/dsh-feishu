@@ -303,6 +303,16 @@ stable-rc.7 line; newer dsh releases (`@next`) are tracked on `main`.
   (no stopped card / ERROR reaction), timing out on slow or loaded CI
   runners. The mock server now exposes `waitForHold()`, and every
   hold-based test awaits it before acting — the abort is deterministic.
+- **Flaky session-lifecycle test (shared dsh home).** The integration suites
+  run in parallel (vitest file parallelism), each spawning a real dsh
+  process — but four of them shared `_dev/dsh-home`, so concurrent processes
+  raced their writes to `_dev/dsh-home/feishu/session-map.json` and silently
+  dropped another suite's chat→session binding (the session-lifecycle test
+  read the file and found its chat missing → `expected undefined to be
+  defined`, CI-only). Each suite now uses its own home
+  (`dsh-home-attachments` / `dsh-home-rich-text` / `dsh-home-wait-instruction`
+  / `dsh-home-real` / `dsh-home-scenarios`), isolating the session map and
+  every other durable file; CI prepares one profile per suite.
 - **Turn-termination reaction ack 400s.** The terminal emoji for an error or
   stopped turn defaulted to `WARN`, which is NOT a valid Feishu `emoji_type`
   (the platform's reaction table has no WARN) — the swap always failed with

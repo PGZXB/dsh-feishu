@@ -95,11 +95,18 @@ command wrappers, and the working-directory gate. A scripted mock LLM
 unless the prerequisites are met:
 
 - The dsh CLI is resolvable (`$DSH_BIN`, or `dsh` on `PATH`).
-- A prepared profile exists at `$FEISHU_INT_DSH_HOME/profiles/feishu-dev`
-  (default `_dev/dsh-home/profiles/feishu-dev` — create it with
+- A prepared profile exists at `$FEISHU_INT_*_DSH_HOME/profiles/feishu-dev`
+  (default `_dev/dsh-home-<suite>/profiles/feishu-dev` — create it with
   `dsh plugin --profile feishu-dev add link:<checkout>`, see the "Verifying
   the bundle" section below). Deliberately independent of the ambient
-  `DSH_HOME` so the test never touches another dsh home.
+  `DSH_HOME` so the test never touches another dsh home. **Each integration
+  suite uses its OWN home** (`dsh-home-attachments`, `dsh-home-rich-text`,
+  `dsh-home-wait-instruction`, `dsh-home-real`, `dsh-home-scenarios`):
+  vitest runs the suites in parallel, and sharing one
+  `_dev/dsh-home/feishu/session-map.json` made concurrent dsh processes
+  race their writes and silently drop one suite's chat→session binding
+  (CI-only flakes, e.g. the session-lifecycle test reading the file and
+  finding its chat missing).
 - The checkout is built (`pnpm run build`).
 
 CI runs the suite on every push (both node-version legs): the workflow
