@@ -240,6 +240,14 @@ The harness sandbox (and this checkout's environment) has specific rules:
 - Every new session fires a **title-generation completion** ("Create a
   concise title for an AI coding…"). Never assert an exact LLM completion
   count; assert card contents.
+- **After `holdNextResponse()`, await `waitForHold()` before driving a
+  stop/panel action.** The working card appears as soon as the turn starts,
+  but the agent's LLM request is established asynchronously (buildRequest →
+  resolveApiKey → fetch). A stop issued before the request reaches the mock
+  (and its abort signal binds to the in-flight body) cancels nothing and the
+  turn completes normally — no stopped card / ERROR reaction, a timeout on
+  slow or loaded CI runners. `waitForHold()` resolves when the held request
+  is actually in flight, making the abort deterministic.
 - Message ids built from `Date.now()` collide when two messages are written
   in the same millisecond (and the surface's dedup silently drops the
   second). Append a random suffix. waitFor predicates that match ANY chat's
