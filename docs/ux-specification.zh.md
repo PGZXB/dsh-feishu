@@ -358,9 +358,7 @@ bridge 记住每个聊天的**最近被接受的发送者**（及其聊天类型
 
 `FeishuMessage` 增加可选 `attachments` 数组（`{kind:'image'|'file'; key: string; name?: string}`）。未知类型继续忽略。每条消息只有一种类型（飞书不支持混合消息）。
 
-**图片路径（agent 看到图片）** —— transport 通过**消息资源端点**下载图片字节（`im.v1.messageResource.get` —— `/messages/{message_id}/resources/{image_key}?type=image`；`im.v1.image.get` 只能下载机器人自己上传的图片，所以用户发的图片必须走 message-resource API；复用现有 `im:resource` scope），bridge 再通过宿主附件服务保存（`ctx.attachments` —— `dsh-attachment-local` 是 dsh-base bundle 的一部分，seam 真实装载，不同于 `apiProxy`），并注入 `{type:'image', attachment}` 内容块到 agent 的用户消息（参考 `packages/host/apiproxy/src/api-proxy.ts` → `durablePromptContent`：`saveImages(bytes) → refs → {type:'image'}` 块）。回合正常进行，模型可以描述/读取图片。
-
-**图片能力门禁** —— DeepSeek chat-completions 适配器**拒绝** image 内容（`UNSUPPORTED_CONTENT` → 整轮以错误结束），而 pi-ai 接受。因此 bridge **仅当**当前模型在输入模态中声明支持 `image` 时才注入 image 块（`ctx.llm.listModels` → `inputModalities`，与 `/model` 选择器读同一模型目录）。模型能力未知 → 保守处理：把图片当文件处理（回执 + 名称备注）。附件**绝不能**让回合报错。
+**统一附件路径（所有附件都是文件）** —— 飞书图片对 agent 就是普通文件：transport 通过**消息资源端点**下载图片字节（`im.v1.messageResource.get` —— `/messages/{message_id}/resources/{image_key}?type=image`；`im.v1.image.get` 只能下载机器人自己上传的图片，所以用户发的图片必须走 message-resource API；复用现有 `im:resource` scope），然后与文件一样保存进同一附件目录、由 agent 按路径读取。**没有 image 内容块 / 视觉输入路径**——裸图片消息像裸文件一样登记为 pending（见 inbound-wait-instruction part），agent 读取已保存的文件。这对应了"DSH Web 把图片粘贴进输入框"的能力在飞书场景没有意义这一决定。
 
 **文件路径（保存到工作区，agent 按路径读取）** —— agent 无法把任意文件字节作为内容块摄取（attachment 域仅限图片），但可以读取工作目录下的文件（其 bash/read 工具在 fs sandbox 下运行，`workspace-write` 允许写工作区根）。因此 bridge：
 1. **流式**下载文件体（`im.v1.messageResource.get` —— `/messages/{message_id}/resources/{file_key}?type=file`；`im.v1.file.get` 只能下载机器人自己上传的文件）。流式而非缓冲——资源 API 服务最大约 100 MB 的文件；先 peek 开头字节做扩展名嗅探再推回流，完整文件体经 `pipeline()` 直接写盘（botmux `downloadWithAppToken` 同款）；
@@ -376,13 +374,13 @@ bridge 记住每个聊天的**最近被接受的发送者**（及其聊天类型
 
 本特性**没有新状态机**：喂入现有 turn 管道。唯一新分支在 `deliverTurn`（构建内容块时）：
 
-| 步骤 | 图片（模型支持） | 图片（不支持）/ 文件 |
-|---|---|---|
-| 下载 | message-resource (image) → bytes + mediaType | message-resource (file) → stream + head（嗅探） |
-| 保存 | `ctx.attachments.saveImage` → ref | 流式写入 `cwd/.dsh_feishu/attachments/<appId>/<chatId>/<name>.<ext>`（宿主 seam，微信式去重） |
-| 内容 | `[text, {type:'image', attachment}]` | `[text 备注带真实路径]` |
-| 卡片 | 无（streaming 卡已开） | `📎 File received` 回执卡 |
-| 失败 | 卡片 + 文本提示，回合以纯文本继续 | 同上 |
+| 步骤 | 附件（image / file 统一） |
+|---|---|
+| 下载 | image → message-resource (image) → bytes；file → message-resource (file) → stream + head（嗅探） |
+| 保存 | 统一流式/字节写入 `cwd/.dsh_feishu/attachments/<appId>/<chatId>/<name>.<ext>`（宿主 seam，微信式去重） |
+| 内容 | `[text 备注带真实路径]`（无 image 内容块） |
+| 卡片 | `📎 File received` 回执卡 |
+| 失败 | 降级回执 + 响亮日志，回合/后续文字不受影响 |
 
 ### 卡片/面板形态
 
@@ -390,20 +388,87 @@ bridge 记住每个聊天的**最近被接受的发送者**（及其聊天类型
 
 ### 失败模式
 
-- message-resource 下载失败（scope 缺失、key 过期）：响亮日志 + `⚠️ Could not download` 文本提示，回合以纯文本继续——坏附件绝不卡死聊天。
-- `ctx.attachments` 缺失（attachment-local 未装载）：feature-detect 并降级——图片回退到文件路径（回执 + 文本备注）+ 响亮日志，符合 "hide the row, don't fail" seam 规则。
-- `saveImage` 拒绝字节（格式不支持、超限）：响亮日志 + 文本提示；回合继续、无 image 块。
-- 文件保存到工作区失败（cwd 不可写、路径冲突）：响亮日志，回执卡照发，回合以仅名称备注继续。
-- 群消息未 @：现有 mention gate 在下载前丢弃——被忽略的消息不做附件处理。
+- message-resource 下载失败（scope 缺失、key 过期）：响亮日志 + 降级回执（无路径）——裸附件消息不登记任何东西，后续文字仍正常工作；坏附件绝不卡死聊天。
+- 文件保存到工作区失败（cwd 不可写、路径冲突）：响亮日志，回执卡照发，pending 条目仅名称。
+- 群裸附件未 @：豁免 gate（登记 pending——见 inbound-wait-instruction part）；群**文字**仍受 gate 约束。
 - 下载时 key 过期/未知：同下载失败。
 
 ### 验收清单
 
-- [ ] `image` 消息 + 支持图片的模型 → agent 用户消息带 `image` 内容块（用假 image-capable llm 单测）
-- [ ] `image` 消息 + 纯文本模型 → 降级为 `📎 File received` 回执 + 名称备注；回合完成（无 UNSUPPORTED_CONTENT 错误）（单测 + 集成测试）
+- [ ] `image` 消息 → 图片保存到 `cwd/.dsh_feishu/attachments/<appId>/<chatId>/`，回执卡发布，agent 消息带**真实保存路径**（单测 + 集成测试）
 - [ ] `file` 消息 → 文件保存到 `cwd/.dsh_feishu/attachments/<appId>/<chatId>/`，回执卡发布，agent 消息带**真实保存路径**（单测 + 集成测试）
 - [ ] 同一 chat 重复发送同名文件 → 第二个存为 `name(1).ext`（微信式去重，集成测试）
 - [ ] 保存的文件可被 agent 工具读取（集成测试断言文件落在磁盘上、路径出现在 agent 回合中）
-- [ ] 群消息仍受 mention gate 约束（被忽略的消息不做附件处理）
-- [ ] 下载失败 → 响亮提示，回合以纯文本继续（单测）
-- [ ] `attachments` 服务缺失 → 图片降级到文件路径，响亮日志（单测）
+- [ ] 从不注入 image 内容块（飞书图片对 agent 是普通文件）——回归
+- [ ] 下载失败 → 降级回执，不登记任何东西，不卡死（单测）
+
+## Part: inbound-wait-instruction
+
+> 裸附件消息（文件或图片——所有附件对 agent 都是普通文件）不再自行触发
+> turn：字节落到工作区、回执卡发布、agent 等用户补指令（文字，或在群里
+> @）才开始工作。下一条文字消息把全部 pending 附件**按顺序**带进同一个
+> turn。
+
+### 预期行为
+
+**触发** —— `text` 为空且至少带一个附件的入站消息（裸 `file`/`image` 消息；
+`video` 与富文本 `post` 支持在兄弟特性 inbound-rich-text 中落地并复用本
+pending 路径）。此类消息**登记**（pending）而非投递：附件照常下载并保存到
+工作区，每份文件发一张**新**回执卡（旧卡保留——每份文件在聊天记录中可追溯），
+**不启动 turn**。
+
+pending 集是 per-chat 列表而非单槽：连续裸附件消息**追加**（每张新卡显示
+`📎 已收到 N 个文件`），用户可先发多份文件再发一条指令一起分析。
+
+**跟进机制** —— 同 chat 下一条带文字的消息排空 pending 列表：把每条
+saved-path 备注**按到达顺序**注入该 turn 的用户内容（在文字之前），清空列表，
+正常跑 turn。只有 pending 之后第一条文字消息会触发——后续消息看到空列表。
+turn 运行中到达的新裸附件消息只追加（不影响正在跑的 turn）。
+
+**群 mention gate** —— 附件消息无法带 @（飞书发文件/图片没有输入框，
+`@bot` 物理上不可能），否则 gate 会让群文件永远进不了 pending。因此裸附件
+消息**绕过** mention gate 直接登记（仅 pending、不干活——gate 的安全目的仍
+保留：agent 在收到一条通过 gate 的文字指令前不会做任何事）。跟进**文字**消息
+仍走正常 gate（群文字必须 @ bot，或 solo 群豁免）。p2p 无 gate。
+
+**并发** —— 消息通道批量投递不 await（`drainInbox` 逐个调用 handler），所以
+`registerPending` 在任何 await 之前**同步**把占位条目追加进该 chat 的 pending
+列表，之后原地更新。两条并发裸附件消息彼此都能看到对方的条目——围绕 await
+的"先读后写"会静默丢文件。
+
+**卡片/面板形态** —— `buildInboundFileCard` 增加计数：多于一份文件时 markdown
+正文显示 `📎 已收到 N 个文件`（单份为 1），列出刚到的文件 + 路径。卡片仍显示
+保存路径和"发送指令"提示。**无操作按钮**（曾考虑过「▶ 开始处理」按钮并否决：
+它让交互变得含糊——"该打字还是点按钮？"；唯一心智模型是"发文字指令"）。
+每份文件发自己的卡——旧卡留在聊天记录。无面板视图。
+
+**失败模式**：
+- 裸附件下载/保存失败：现有响亮降级路径（回执带提示、不登记、不触发 turn）——
+  坏附件绝不卡死聊天。
+- 跟进文字被 working-directory gate 拒绝：pending 保留（用户修好 /cd 重发）。
+- 群跟进文字未 @ bot：现有 gate 丢弃，pending 保留——用户必须 @ 触发。
+- turn 运行中新裸附件消息：追加 pending；运行中的 turn 不受影响（不会重复投递）。
+- （PR-A inbound-rich-text）post 解析失败：回退纯文本提示；`md` 缺失时用元素
+  数组序列化兜底。
+
+**验收清单**：
+- [ ] 裸文件消息 → 文件落盘、新回执卡、无 turn（mock LLM 未收到任何请求）——单测 + 集成
+- [ ] 裸图片消息 → 图片落盘（嗅探扩展名）、新回执卡、无 turn——单测 + 集成
+- [ ] 两条裸附件消息 → 两份文件落盘、两张卡（计数 1、2）、仍无 turn——集成
+- [ ] 跟进文字消息 → 一个 turn 的用户内容按顺序带**两条** saved-path，然后列表清空——集成
+- [ ] 群里跟进必须 @ bot；未 @ 文字保留列表——集成
+- [ ] 群裸附件未 @ 也登记（绕过 gate）——集成
+- [ ] pending 期间发斜杠命令 → 命令正常运行、列表不动——单测
+- [ ] 下载失败 → 降级回执、不登记、不卡死——单测
+- [ ] 从不注入 image 内容块（飞书图片对 agent 是普通文件）——回归
+
+### Reference
+
+- botmux 没有 wait-for-instruction 机制（文件立即触发处理）——本 part 是
+  dsh-feishu 自己的 UX，因文件消息会在用户说出用途前就启动 turn 而新增
+  （用户实测 F1.5 问题 1）。
+- mention-gate 绕过对应现实：飞书附件消息无法带 @（无输入框）——gate 仍保护
+  实际工作（必须通过 gate 的文字指令）。
+- `im.v1.messageResource.get`：`type=file` 覆盖文件、音频和视频——pending
+  下载路径对它们全部复用现有 file seam。
+- post / video 支持是兄弟 PR（inbound-rich-text），它们排空进本 pending 路径。

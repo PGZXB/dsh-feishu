@@ -477,7 +477,7 @@ export class LarkTransport implements FeishuTransport {
     this.logger?.debug(`transport downloadImage ${key} (message ${messageId})`);
     const bytes = await this.downloadMessageResource(messageId, key);
     // The resource endpoint does not echo the media type; default to png —
-    // saveImage re-detects the real format from the bytes.
+    // the caller sniffs the real extension from the leading bytes.
     return { data: bytes, mediaType: 'image/png' };
   }
 

@@ -21,21 +21,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Inbound attachments.** `image` and `file` messages are no longer
-  ignored. An image is downloaded through the message-resource endpoint
-  (`im.v1.messageResource.get` — `im.v1.image.get` can only fetch
-  bot-uploaded images), committed through the host's attachment service,
-  and injected as an `image` content block of the agent's user message —
-  but ONLY when the chat's current model advertises image input (the
-  DeepSeek adapter rejects image content with `UNSUPPORTED_CONTENT`, which
-  would error the whole turn; pi-ai accepts it). A file (and an image
-  under a text-only model or absent attachment service) is saved under the
-  chat's working directory at
-  `<cwd>/.dsh_feishu/attachments/<appId>/<chatId>/<name>.<ext>` (a
-  hidden, per-app+chat-bucketed subdirectory) — the agent receives the
-  REAL path and reads the file with its workspace tools. A `📎 File
-  received` receipt card posts; download/save failures notice loudly and
-  the turn continues text-only — an attachment never wedges the chat.
-  Reuses the existing `im:resource` scope.
+  ignored. Every attachment (image or file) is downloaded through the
+  message-resource endpoint (`im.v1.messageResource.get` — `im.v1.image.get`
+  can only fetch bot-uploaded images; `type=file` covers files and video)
+  and saved under the chat's working directory at
+  `<cwd>/.dsh_feishu/attachments/<appId>/<chatId>/<name>.<ext>` (a hidden,
+  per-app+chat-bucketed subdirectory) — the agent receives the REAL path
+  and reads the file with its workspace tools. A `📎 File received` receipt
+  card posts; download/save failures notice loudly and never wedge the
+  chat. Reuses the existing `im:resource` scope. (Feishu images are plain
+  files to the agent — there is no image content block / visual-input path.)
+- **Bare attachment messages wait for the user's instruction
+  (inbound-wait-instruction).** A file/image message without text no longer
+  starts a turn by itself: the bytes land in the workspace, a NEW receipt
+  card posts for each file (kept in chat history, showing the running count
+  `📎 已收到 N 个文件`), and the agent waits. The next text message drains
+  the pending list into its turn — every pending file's saved path is
+  injected before the text, in arrival order, then the list clears. In
+  groups, bare attachment messages bypass the mention gate (Feishu sends
+  them without an input box, so an @ is physically impossible), but the
+  follow-up TEXT instruction still requires an @ — the agent never acts
+  without an accepted instruction.
 - **Inbound files stream to disk and keep their original name.** The
   message-resource download previously read `response.file`, but the SDK
   interceptor already unwraps `resp.data`, so every inbound file failed to

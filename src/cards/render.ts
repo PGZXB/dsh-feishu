@@ -905,13 +905,22 @@ export function buildPanelNoticeCard(options: {
 }
 
 /**
- * The inbound-file receipt card: posted when a user sends a file message.
- * The file bytes are saved under the chat's working directory
+ * The inbound-file receipt card: posted when a user sends a file message
+ * (or a bare attachment message registered as pending — inbound-wait-
+ * instruction). The file bytes are saved under the chat's working directory
  * (`<cwd>/.dsh_feishu/attachments/…`) and the card shows the path so the
  * user knows where it landed; the agent receives the path too and reads the
- * file with its workspace tools.
+ * file with its workspace tools. Each file posts its OWN card — the running
+ * `count` (1, 2, …) tells the user how many files are awaiting an
+ * instruction; the previous cards stay in chat history. NO action buttons:
+ * the single interaction model is "send an instruction".
+ * @param name - the file display name.
+ * @param savedPath - the real on-disk path, when the save succeeded.
+ * @param count - the number of files pending an instruction (1 for a single
+ *   file message; N for the N-th bare attachment awaiting follow-up).
  */
-export function buildInboundFileCard(name: string, savedPath?: string): CardJson {
+export function buildInboundFileCard(name: string, savedPath?: string, count = 1): CardJson {
+  const pendingLine = count > 1 ? `\n\n**${count} files awaiting your instruction.**` : '';
   return {
     config: { wide_screen_mode: true },
     header: { title: { tag: 'plain_text', content: '📎 File received' }, template: 'blue' },
@@ -920,8 +929,8 @@ export function buildInboundFileCard(name: string, savedPath?: string): CardJson
         tag: 'markdown',
         content:
           savedPath === undefined
-            ? `**${name}**\n\nTell me what to do with it.`
-            : `**${name}**\n\nSaved to \`${savedPath}\` — tell me what to do with it.`,
+            ? `**${name}**\n\nTell me what to do with it.${pendingLine}`
+            : `**${name}**\n\nSaved to \`${savedPath}\` — tell me what to do with it.${pendingLine}`,
       },
     ],
   };

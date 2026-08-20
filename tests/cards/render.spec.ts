@@ -9,6 +9,7 @@ import {
   buildApprovalCard,
   buildApprovalDecidedCard,
   buildCard,
+  buildInboundFileCard,
   buildModelPickerCard,
   buildPanelCard,
   buildPermissionPickerCard,
@@ -932,5 +933,24 @@ describe('interaction cards (approvals/questions)', () => {
     const card = buildQuestionAnsweredCard('Which stack?', 'Rust');
     expect(card.elements.some((el) => el.tag === 'action')).toBe(false);
     expect(JSON.stringify(card.elements)).toContain('Answer: Rust');
+  });
+
+  it('inbound-file receipt card shows the saved path and the pending count', () => {
+    const card = buildInboundFileCard('report.pdf', '/work/attachments/report.pdf', 3);
+    expect(card.header?.title.content).toBe('📎 File received');
+    const content = JSON.stringify(card.elements);
+    expect(content).toContain('report.pdf');
+    expect(content).toContain('/work/attachments/report.pdf');
+    expect(content).toContain('**3 files awaiting your instruction.**');
+    // No action buttons — the interaction model is "send an instruction".
+    expect(card.elements.some((el) => el.tag === 'action')).toBe(false);
+  });
+
+  it('inbound-file receipt card defaults to count 1 and a name-only note without a path', () => {
+    const card = buildInboundFileCard('notes.txt');
+    const content = JSON.stringify(card.elements);
+    expect(content).toContain('notes.txt');
+    expect(content).not.toContain('awaiting your instruction');
+    expect(content).toContain('Tell me what to do with it.');
   });
 });

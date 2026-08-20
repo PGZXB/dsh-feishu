@@ -17,7 +17,7 @@ Feature list and TODO tracker for dsh-feishu. ✅ = shipped, 📋 = planned
 | Allowlists | `allowedChats` / `allowedUsers` gate who can talk to the bot | Env/config-driven, applied to messages and card actions | ✅ |
 | Session-log export | `/export` sends the chat's session log as a downloadable file message | File message with markdown transcript | ✅ |
 | Diagnostics | `/feishu-status` shows a diagnostic card (connection state, sessions, last inbound) | Read-only status card, usable mid-turn | ✅ |
-| Inbound attachments | Images/files the user sends are no longer ignored: images are injected into the agent (image-capable models) or receipt-noted, files become receipt cards | Image → agent processes it (model supports images) / 📎 receipt; file → saved to workspace, agent reads by path | ✅ |
+| Inbound attachments | Images/files the user sends are saved to the workspace as plain files and the agent reads them by path; a bare file/image message registers as pending — a receipt card posts and the agent waits for your instruction | 📎 File received receipt (counts pending files); follow-up text makes the agent work on them | ✅ |
 | Outbound files/images | Agent-produced images/files send as native Feishu image/file messages | Tap to view original / download | 📋 |
 | Session hard delete | Remove a session from the active list (archive + hide, restorable from the archived list) | Session-detail card Delete + confirm view | 📋 |
 | Agent preset selection | Pick an agent preset (e.g. PTC mode) when choosing a working directory | Mode dropdown on the `/repo` / `/cd` picker card; preset binds to the new session | 📋 |
@@ -29,3 +29,4 @@ Feature list and TODO tracker for dsh-feishu. ✅ = shipped, 📋 = planned
 | Session stats line | Durable per-session usage: turns, steps, LLM/tool time, TTFT, tok/s, cache hit, tokens | One small line at the card bottom, refreshed per turn; details in `/status` | 📋 |
 | Context occupancy | Current session's context-window usage | Percent on the card bottom, refreshed per turn; details (used/capacity, breakdown) in `/status` | 📋 |
 | session-rename-archive | Session rename/archive via dsh sessionTitle + workspaceRegistry (web-visible) | — | 📋 |
+| inbound-wait-instruction | Bare file/image messages register as pending — a receipt card posts and the agent waits for the user's instruction before working | 📎 File received receipt (counts pending files); follow-up text drains them into one turn | ✅ |

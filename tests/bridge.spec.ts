@@ -242,7 +242,6 @@ function makeHarness(
     readSession?: NonNullable<BridgeOptions['readSession']>;
     sessionTitle?: NonNullable<BridgeOptions['sessionTitle']>;
     getWorkspaceRegistry?: NonNullable<BridgeOptions['getWorkspaceRegistry']>;
-    getSaveImage?: NonNullable<BridgeOptions['getSaveImage']>;
     saveInboundFile?: NonNullable<BridgeOptions['saveInboundFile']>;
   } = {},
 ): Harness {
@@ -294,7 +293,6 @@ function makeHarness(
     ...(options.getWorkspaceRegistry !== undefined
       ? { getWorkspaceRegistry: options.getWorkspaceRegistry }
       : {}),
-    ...(options.getSaveImage !== undefined ? { getSaveImage: options.getSaveImage } : {}),
     ...(options.saveInboundFile !== undefined ? { saveInboundFile: options.saveInboundFile } : {}),
     // Tests default the working-directory gate OFF (production defaults it
     // ON); the gate's own tests enable it explicitly.
@@ -410,35 +408,19 @@ describe('Bridge', () => {
   describe('inbound attachments', () => {
     const pngBytes = new Uint8Array([137, 80, 78, 71]);
 
-    /** An llm catalog where the current model advertises image input. */
-    const imageCapableLlm = (): LlmService => ({
-      listProviders: () => [{ id: 'pi-ai', name: 'pi-ai' }],
-      async listModels(provider: string) {
-        return [
-          { provider, id: 'pi-1.5-vision', name: 'pi vision', inputModalities: ['text', 'image'] },
-        ];
-      },
-    });
-    /** Point the default model at the image-capable entry. */
-    const imageCapableDefault = (): NonNullable<BridgeOptions['agentDefaultModel']> => ({
-      currentSelection: () => ({ provider: 'pi-ai', model: 'pi-1.5-vision' }),
-      saveSelection: async () => {},
-    });
-
-    it('injects an image message as an image content block', async () => {
-      const saved: unknown[] = [];
+    it('registers a bare image message as pending: saved as a file, receipt card, no image block, no turn until a follow-up', async () => {
       const h = makeHarness({
-        llm: imageCapableLlm(),
-        agentDefaultModel: imageCapableDefault(),
-        getSaveImage: () => (input: { data: Uint8Array; mediaType: string }) => {
-          saved.push(input);
-          return Promise.resolve({
-            attachmentId: 'att-1',
-            mediaType: input.mediaType,
-            bytes: input.data.length,
-            width: 1,
-            height: 1,
-          });
+        saveInboundFile: async ({ attachment, stream, extension }) => {
+          // Images land in the same attachment bucket as files; the sniffed
+          // extension comes from the PNG magic bytes (png).
+          expect(attachment.kind).toBe('image');
+          expect(extension).toBe('png');
+          const chunks: Uint8Array[] = [];
+          for await (const chunk of stream as unknown as AsyncIterable<Uint8Array>) {
+            chunks.push(chunk);
+          }
+          expect(chunks.reduce((n, c) => n + c.length, 0)).toBe(pngBytes.length);
+          return { path: '/work/.dsh_feishu/attachments/img-1.png' };
         },
       });
       h.transport.downloadImageImpl = async () => ({ data: pngBytes, mediaType: 'image/png' });
@@ -448,15 +430,37 @@ describe('Bridge', () => {
           attachments: [{ kind: 'image', key: 'img-1' }],
         }),
       );
-      const followups = h.agentStore.followups.get('feishu-session-1');
-      expect(saved).toEqual([{ data: pngBytes, mediaType: 'image/png' }]);
-      const blocks = followups?.[0]?.content as unknown[];
-      expect(blocks?.[0]).toMatchObject({ type: 'image' });
-      // No receipt card for images.
+      // Pending: receipt card posts, NO turn, NO image block injected.
       expect(h.transport.sentCards).toHaveLength(1);
+      expect(h.transport.sentCards[0]?.header?.title.content).toBe('📎 File received');
+      expect(h.agentStore.followups.get('feishu-session-1')).toBeUndefined();
+      // The follow-up text drains the image as a FILE note (no image block —
+      // Feishu images are plain files to the agent).
+      await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: 'look at this' }));
+      const followups = h.agentStore.followups.get('feishu-session-1');
+      const blocks = followups?.[0]?.content as unknown[];
+      expect(JSON.stringify(blocks)).toContain('/work/.dsh_feishu/attachments/img-1.png');
+      expect(JSON.stringify(blocks)).not.toContain('"type":"image"');
     });
 
-    it('posts a file receipt card and names the saved path to the agent', async () => {
+    it('a failed image download registers nothing and never wedges the chat', async () => {
+      const h = makeHarness(); // downloadImageImpl left unset → throws
+      await h.bridge.handleMessage(
+        message({
+          text: '',
+          attachments: [{ kind: 'image', key: 'missing' }],
+        }),
+      );
+      // The degraded receipt card posts (no path), nothing registers, no turn.
+      expect(h.transport.sentCards).toHaveLength(1);
+      expect(h.transport.sentCards[0]?.header?.title.content).toBe('📎 File received');
+      expect(h.agentStore.followups.get('feishu-session-1')).toBeUndefined();
+      // A follow-up text message still works normally.
+      await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: 'hi' }));
+      expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(1);
+    });
+
+    it('registers a bare file message as pending: receipt card, no turn until a follow-up instruction', async () => {
       const h = makeHarness({
         saveInboundFile: async ({ stream, extension }) => {
           // The stream carries the full body (head re-pushed); the sniffed
@@ -483,10 +487,13 @@ describe('Bridge', () => {
           attachments: [{ kind: 'file', key: 'file-1', name: 'notes.txt' }],
         }),
       );
-      // Receipt card + streaming card; receipt shows the saved path.
-      expect(h.transport.sentCards).toHaveLength(2);
+      // Pending: the receipt card posts but NO turn starts (no followup).
+      expect(h.transport.sentCards).toHaveLength(1);
       expect(h.transport.sentCards[0]?.header?.title.content).toBe('📎 File received');
       expect(JSON.stringify(h.transport.sentCards[0]?.elements)).toContain('.dsh_feishu');
+      expect(h.agentStore.followups.get('feishu-session-1')).toBeUndefined();
+      // The follow-up text drains the pending file into its turn.
+      await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: 'read this file' }));
       const followups = h.agentStore.followups.get('feishu-session-1');
       const blocks = followups?.[0]?.content as unknown[];
       expect(blocks?.[0]).toEqual({
@@ -495,7 +502,7 @@ describe('Bridge', () => {
       });
     });
 
-    it('falls back to a name-only note when the save seam is absent', async () => {
+    it('falls back to a name-only pending entry when the save seam is absent, then drains it', async () => {
       const h = makeHarness(); // no saveInboundFile
       h.transport.downloadFileImpl = async () => new Uint8Array([1, 2, 3]);
       await h.bridge.handleMessage(
@@ -504,41 +511,87 @@ describe('Bridge', () => {
           attachments: [{ kind: 'file', key: 'file-1', name: 'notes.txt' }],
         }),
       );
+      expect(h.agentStore.followups.get('feishu-session-1')).toBeUndefined();
+      await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: 'what is this' }));
       const followups = h.agentStore.followups.get('feishu-session-1');
       const blocks = followups?.[0]?.content as unknown[];
       expect(blocks?.[0]).toEqual({ type: 'text', text: '[user sent a file: notes.txt]' });
     });
 
-    it('a failed image download notices loudly and the turn continues text-only', async () => {
+    it('two bare file messages pending together drain into one follow-up turn, in order', async () => {
+      const paths = ['/work/.dsh_feishu/attachments/a.txt', '/work/.dsh_feishu/attachments/b.txt'];
       const h = makeHarness({
-        llm: imageCapableLlm(),
-        agentDefaultModel: imageCapableDefault(),
-        getSaveImage: () => (input: { data: Uint8Array; mediaType: string }) =>
+        saveInboundFile: async ({ attachment }) =>
           Promise.resolve({
-            attachmentId: 'att-1',
-            mediaType: input.mediaType,
-            bytes: input.data.length,
-            width: 1,
-            height: 1,
+            path: attachment.key === 'a' ? (paths[0] ?? '') : (paths[1] ?? ''),
           }),
       });
-      // downloadImageImpl left unset → throws.
+      h.transport.downloadFileImpl = async () => new Uint8Array([1, 2, 3]);
+      await h.bridge.handleMessage(
+        message({
+          messageId: 'om_file1',
+          text: '',
+          attachments: [{ kind: 'file', key: 'a', name: 'a.txt' }],
+        }),
+      );
+      await h.bridge.handleMessage(
+        message({
+          messageId: 'om_file2',
+          text: '',
+          attachments: [{ kind: 'file', key: 'b', name: 'b.txt' }],
+        }),
+      );
+      // Two receipt cards (each file its own card), no turn yet.
+      expect(h.transport.sentCards).toHaveLength(2);
+      expect(h.agentStore.followups.get('feishu-session-1')).toBeUndefined();
+      await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: 'analyze both' }));
+      const followups = h.agentStore.followups.get('feishu-session-1');
+      const blocks = followups?.[0]?.content as unknown[];
+      expect(JSON.stringify(blocks)).toContain(paths[0] ?? '');
+      expect(JSON.stringify(blocks)).toContain(paths[1] ?? '');
+      // The list drained: a second text message does NOT re-inject.
+      await h.bridge.handleMessage(message({ messageId: 'om_msg3', text: 'anything else?' }));
+      expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(2);
+      const secondBlocks = h.agentStore.followups.get('feishu-session-1')?.[1]
+        ?.content as unknown[];
+      expect(JSON.stringify(secondBlocks)).not.toContain(paths[0] ?? '');
+    });
+
+    it('a bare file message in a group bypasses the mention gate (registers pending); the follow-up text must @ the bot', async () => {
+      const h = makeHarness({
+        saveInboundFile: async () =>
+          Promise.resolve({ path: '/work/.dsh_feishu/attachments/g.txt' }),
+      });
+      h.transport.downloadFileImpl = async () => new Uint8Array([1, 2, 3]);
+      h.transport.botOpenId = 'ou_bot';
+      // Group bare file, NO mention: registers (bypass).
       await h.bridge.handleMessage(
         message({
           text: '',
-          attachments: [{ kind: 'image', key: 'missing' }],
+          chatType: 'group',
+          mentions: [],
+          attachments: [{ kind: 'file', key: 'g', name: 'g.txt' }],
         }),
       );
-      expect(h.transport.sentTexts.some((t) => t.text.includes('could not be read'))).toBe(true);
-      // The turn still ran (text-only).
+      expect(h.transport.sentCards).toHaveLength(1);
+      expect(h.agentStore.followups.get('feishu-session-1')).toBeUndefined();
+      // Un-@ group text: the mention gate drops it, the file stays pending.
+      await h.bridge.handleMessage(
+        message({ messageId: 'om_msg2', text: 'look', chatType: 'group', mentions: [] }),
+      );
+      expect(h.agentStore.followups.get('feishu-session-1')).toBeUndefined();
+      // @-mentioned text drains it.
+      await h.bridge.handleMessage(
+        message({ messageId: 'om_msg3', text: 'look', chatType: 'group', mentions: ['ou_bot'] }),
+      );
       expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(1);
     });
 
-    it('degrades to the file path when the attachment service is absent', async () => {
-      const h = makeHarness({
-        llm: imageCapableLlm(),
-        agentDefaultModel: imageCapableDefault(),
-      }); // no getSaveImage
+    it('a bare image message without a save seam still registers a name-only pending entry', async () => {
+      // No saveInboundFile: the image download succeeds but nothing can
+      // persist it — the pending entry is name-only and the follow-up text
+      // still drains it (no image block, no wedge).
+      const h = makeHarness();
       h.transport.downloadImageImpl = async () => ({ data: pngBytes, mediaType: 'image/png' });
       await h.bridge.handleMessage(
         message({
@@ -546,42 +599,12 @@ describe('Bridge', () => {
           attachments: [{ kind: 'image', key: 'img-1' }],
         }),
       );
-      // Degraded: receipt card (file path) + file-name note; image NOT saved.
       expect(h.transport.sentCards[0]?.header?.title.content).toBe('📎 File received');
+      expect(h.agentStore.followups.get('feishu-session-1')).toBeUndefined();
+      await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: 'look' }));
       const followups = h.agentStore.followups.get('feishu-session-1');
       const blocks = followups?.[0]?.content as unknown[];
       expect(JSON.stringify(blocks)).toContain('img-1');
-      expect(JSON.stringify(blocks)).not.toContain('"type":"image"');
-    });
-
-    it('degrades to the file path when the model cannot see images', async () => {
-      // FakeLlmService (DeepSeek, no image modality) + no capability → the
-      // image becomes a file receipt, never an injected image block.
-      const h = makeHarness({
-        llm: new FakeLlmService(),
-        agentDefaultModel: {
-          currentSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-v4-flash' }),
-          saveSelection: async () => {},
-        },
-        getSaveImage: () => (input: { data: Uint8Array; mediaType: string }) =>
-          Promise.resolve({
-            attachmentId: 'att-1',
-            mediaType: input.mediaType,
-            bytes: input.data.length,
-            width: 1,
-            height: 1,
-          }),
-      });
-      h.transport.downloadImageImpl = async () => ({ data: pngBytes, mediaType: 'image/png' });
-      await h.bridge.handleMessage(
-        message({
-          text: '',
-          attachments: [{ kind: 'image', key: 'img-1' }],
-        }),
-      );
-      expect(h.transport.sentCards[0]?.header?.title.content).toBe('📎 File received');
-      const followups = h.agentStore.followups.get('feishu-session-1');
-      const blocks = followups?.[0]?.content as unknown[];
       expect(JSON.stringify(blocks)).not.toContain('"type":"image"');
     });
   });
