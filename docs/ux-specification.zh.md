@@ -483,9 +483,9 @@ turn 运行中到达的新裸附件消息只追加（不影响正在跑的 turn�
 
 ### 预期行为
 
-**触发** —— `message_type` 为 `post`（富文本）或 `video` 的入站消息。现状
-`SUPPORTED_MESSAGE_TYPES` 是 `['text','image','file']`，两者都被静默忽略——
-用户带格式的消息（加粗/列表/引用/链接/代码块）或视频无回执、无保存、无
+**触发** —— `message_type` 为 `post`（富文本）、`video` 或 `audio`（语音条；
+同一 `type=file` 下载路径服务它们）的入站消息。它们曾被静默忽略——用户带
+格式的消息（加粗/列表/引用/链接/代码块）、视频或语音无回执、无保存、无
 turn 地消失。本特性让它们成为一等公民。
 
 **飞书 `post` content 模型** —— 富文本消息的 `content` 是二维 JSON 数组：
@@ -538,22 +538,23 @@ print(1)
    agent 通过有序的 `[user sent a file: … — saved at …]` 备注把 `<image N>`
    与真实保存路径对应起来。
 
-**`video` 消息** —— `message_type: 'video'`，content 含 `file_key`（+ 封面
-`image_key`）。归一化为单个 `file` 类附件（视频本体），与裸文件消息完全一样
-——登记为 pending，跟进文字排空。`im.v1.messageResource.get?type=file` 服务
-视频（资源 API 的 `type=file` 覆盖文件、音频和视频），无需新下载路径。
+**`video` / `audio` 消息** —— `message_type: 'video'`（content 含 `file_key`
++ 封面 `image_key`）与 `message_type: 'audio'`（语音条，`file_key` +
+`duration`）归一化为单个 `file` 类附件（媒体本体），与裸文件消息完全一样
+——登记为 pending，跟进文字排空。`im.v1.messageResource.get?type=file`
+服务文件、音频和视频，无需新下载路径。
 
 **路由（复用兄弟 part）** —— 归一化后：
 
 - `post` 带文字 → 现有混合路径：立即 turn，序列化文本作为 `text` 块，附件
   按占位符顺序注入（inbound-attachments part 的统一路径）。
-- `post` 文字为空（仅附件）/ 裸 `video` → inbound-wait-instruction 的 pending
-  路径（回执卡、不触发 turn、由跟进文字排空）。
+- `post` 文字为空（仅附件）/ 裸 `video` / 裸 `audio` → inbound-wait-instruction
+  的 pending 路径（回执卡、不触发 turn、由跟进文字排空）。
 - `post` 既无文字也无附件 → 响亮日志忽略（无可用内容）。
 
 **卡片/面板形态** —— 无新增。带文字的富文本用 streaming 卡（与普通文字
-消息一致）；纯附件 post / 视频用现有 `📎 File received` pending 回执卡。
-无按钮、无面板视图。
+消息一致）；纯附件 post / 视频 / 语音用现有 `📎 File received` pending
+回执卡。无按钮、无面板视图。
 
 **失败模式**：
 - `post` content JSON 解析失败：降级为纯文本提示 + 响亮日志——原始 content
@@ -562,7 +563,7 @@ print(1)
 - 未知元素 tag：debug 日志跳过（向前兼容——新飞书 tag 优雅降级而非破坏解析）。
 - post 内附件下载/保存失败：兄弟特性的降级回执路径（响亮日志、仅名称备注、
   绝不卡死）。
-- `video` 消息 key 过期：同下载失败路径。
+- `video` / `audio` 消息 key 过期：同下载失败路径。
 
 **验收清单**：
 - [ ] `post` 带文字 + 加粗/链接/代码/at → agent 用户消息带序列化 markdown
@@ -572,6 +573,7 @@ print(1)
 - [ ] `post` 带文字 → 立即 turn（单测 + 集成）
 - [ ] `post` 仅附件 → pending（回执卡、无 turn；跟进文字排空）（集成）
 - [ ] `video` 消息 → 像裸文件一样 pending，跟进文字排空（单测 + 集成）
+- [ ] `audio`（语音）消息 → 像裸文件一样 pending，跟进文字排空（单测）
 - [ ] `post` 有 `md` 字段 → 优先 `md` 序列化（单测）
 - [ ] `post` content 损坏 → 响亮日志、不崩溃、原始 JSON 不投递（单测）
 - [ ] 未知 tag → debug 日志跳过，其余 post 完整（单测）

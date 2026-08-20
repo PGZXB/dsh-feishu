@@ -951,11 +951,11 @@ cards stay in chat history. No panel views.
 ### Intended behavior
 
 **Trigger** — an inbound message whose `message_type` is `post` (rich text)
-or `video`. Today the surface's `SUPPORTED_MESSAGE_TYPES` is
-`['text','image','file']`, so both are silently ignored — the user's
-formatted message (bold / lists / quotes / links / code blocks) or video
-vanishes with no receipt, no save, no turn. This feature makes them first-
-class.
+or `video` (or `audio` — voice bubbles; the same `type=file` download
+path serves them). These were silently ignored: the user's formatted
+message (bold / lists / quotes / links / code blocks), video, or voice
+vanishes with no receipt, no save, no turn. This feature makes them
+first-class.
 
 **Feishu `post` content model** — a rich-text message's `content` is a
 2-D JSON array of inline element groups:
@@ -1014,21 +1014,21 @@ print(1)
    the saved path via the ordered note list (the existing
    `[user sent a file: … — saved at …]` notes).
 
-**`video` message** — `message_type: 'video'` with `file_key` (+ `image_key`
-cover). Normalizes to a single `file`-kind attachment (the video body),
-exactly like a bare file message — it registers as pending and the follow-up
-text drains it. `im.v1.messageResource.get?type=file` serves video (the
-resource API's `type=file` covers files, audio, AND video), so no new
-download path is needed.
+**`video` / `audio` messages** — `message_type: 'video'` (with `file_key` +
+`image_key` cover) and `message_type: 'audio'` (voice bubble, `file_key` +
+`duration`) normalize to a single `file`-kind attachment (the media body),
+exactly like a bare file message — they register as pending and the
+follow-up text drains them. `im.v1.messageResource.get?type=file` serves
+files, audio, AND video, so no new download path is needed.
 
 **Routing (reuses the sibling parts)** — after normalization:
 
 - `post` with non-empty text → the existing mixed path: immediate turn, the
   serialized text as the `text` block and the attachments injected in
   placeholder order (the inbound-attachments part's unified path).
-- `post` with text empty (attachments only) / bare `video` → the
-  inbound-wait-instruction pending path (receipt card, no turn, drained by
-  the follow-up text).
+- `post` with text empty (attachments only) / bare `video` / bare `audio` →
+  the inbound-wait-instruction pending path (receipt card, no turn, drained
+  by the follow-up text).
 - `post` with neither text nor attachments → ignored with a loud log (no
   usable content).
 
@@ -1046,7 +1046,7 @@ card like any text message; attachment-only posts / videos use the existing
   tags degrade gracefully rather than breaking the parse).
 - Attachment download/save fails inside a rich-text post: the sibling
   degraded-receipt path (loud log, name-only note, never wedges).
-- `video` message with a stale key: same download-failure path.
+- `video` / `audio` message with a stale key: same download-failure path.
 
 **Acceptance checklist**:
 - [ ] `post` with text + bold/link/code/at → agent's user message carries the
@@ -1059,6 +1059,8 @@ card like any text message; attachment-only posts / videos use the existing
       drains) (integration)
 - [ ] `video` message → pending like a bare file, drained by follow-up text
       (unit + integration)
+- [ ] `audio` (voice) message → pending like a bare file, drained by
+      follow-up text (unit)
 - [ ] `post` with `md` field → `md`-based serialization preferred (unit)
 - [ ] `post` malformed content → loud log, no crash, message not delivered
       as raw JSON (unit)

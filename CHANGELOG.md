@@ -295,6 +295,15 @@ stable-rc.7 line; newer dsh releases (`@next`) are tracked on `main`.
   the resource key — landed as `<key>.bin`. The sniffer now maps those magic
   bytes to `mp4` / `webm` / `avi` (and this also fixed the WebP branch, whose
   `RIFF`+`WEBP` check read an 8-byte head and never matched).
+- **Turn-termination reaction ack 400s.** The terminal emoji for an error or
+  stopped turn defaulted to `WARN`, which is NOT a valid Feishu `emoji_type`
+  (the platform's reaction table has no WARN) — the swap always failed with
+  a 400 (logged, non-blocking). The defaults are now `ERROR` / `ERROR`
+  (valid), so stopped/error turns ack cleanly.
+- **Inbound audio (voice) messages are now handled.** Feishu voice bubbles
+  arrive as `message_type: 'audio'`, which the surface silently dropped; the
+  type now joins the supported set and routes through the file path like a
+  video (its `file_key` downloads via `type=file`).
 - **Group messages without an @ are silently dropped on fresh apps** (user
   report: a 1-user-1-bot group stopped answering un-@ messages after the
   app was recreated). Two compounding setup bugs meant **no scopes were
