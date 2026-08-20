@@ -384,10 +384,10 @@ that should ship.
 dsh-feishu tracks two DSH versions, one per consumer track (they differ —
 never assume they match):
 
-| dsh-feishu track | Ships | Adapted for DSH | How users install (see README) |
+| dsh-feishu track | Ships | Adapted for DSH | How users install (README sections) |
 |---|---|---|---|
-| `main` branch | next release's work | **dsh `@next`** (latest pre-release) | git checkout of `main` (the bleeding-edge install) |
-| npm `@latest` (GitHub latest release) | the current stable release | **dsh `@latest`** | `npm i @dsh-feishu/dsh-feishu` (the stable install) |
+| `main` branch | next release's work | **dsh `@next`** (latest pre-release) | "Install from source" |
+| npm `@latest` (GitHub latest release) | the current stable release | **dsh `@latest`** | "Install from npm" |
 
 We publish only the `@latest` npm tag — there is no npm `@next` for
 dsh-feishu; users who want the newest code install from `main`. README
