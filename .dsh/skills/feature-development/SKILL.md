@@ -6,10 +6,10 @@ when-to-use: A feature, command, card, panel view, or behavior change is being p
 
 # Feature Development
 
-The delivery order is fixed: **scaffold → spec → state machine → integration
-tests (brainstormed) → implementation → unit tests (high coverage) →
-re-brainstormed integration tests → docs → PR**. Each step gates the next;
-nothing ships without its tests and its docs.
+The delivery order is fixed: **scaffold → grill (design interview) → spec →
+state machine → integration tests (brainstormed) → implementation → unit
+tests (high coverage) → re-brainstormed integration tests → docs → PR**. Each
+step gates the next; nothing ships without its tests and its docs.
 
 ## Principles
 
@@ -54,6 +54,27 @@ This creates the worktree `_dev/dsh-feishu-<name>` on `feat/<name>`, appends
 the spec skeleton, the scenario-matrix test skeleton, and the 📋 features.md
 row. All further work happens inside that worktree.
 
+### 0.5. Grill (design interview)
+
+Before writing the spec, interrogate the requirements with the `grill-me`
+skill's discipline: map every undecided requirement into a **design tree** and
+work it in **rounds**, asking the whole current frontier at once (number each
+question, give your recommended answer) and waiting for the user's answers
+between rounds.
+
+- **Ask via the `ask_user_question` tool, one question per prompt — never print
+  questions as chat text.** The user runs the interview through the GUI's
+  structured prompts; a wall of text is not how they answer.
+- **Finding facts is your job, never the user's.** A frontier question that
+  needs a fact from the environment (filesystem, harness source, installed
+  types) is answered by you or a sub-agent; the *decisions* belong to the
+  user. Only questions genuinely downstream of a fact get held for the
+  sub-agent.
+- **A settled answer unblocks questions that depended on it.** Recompute the
+  frontier each round rather than re-asking anything settled.
+- Grilling ends when the frontier is empty (nothing left silently assumed). The
+  spec you write next records the decisions that came out of it.
+
 ### 1. Spec
 
 1. Study the reference implementation first — the botmux and DSH web checkouts
@@ -65,6 +86,9 @@ row. All further work happens inside that worktree.
    failure modes, and the acceptance checklist.
 3. Read the installed `.d.ts` of every host seam the feature touches (getters
    vs methods matter — wrong shapes typecheck fine and blow up at runtime).
+   For signals you plan to reproduce on the host, also read the producer's
+   runtime code — type declarations alone miss empty/edge shapes (see the
+   pitfall below).
 
 ### 2. State machine
 
@@ -87,9 +111,24 @@ row. All further work happens inside that worktree.
 2. Write the integration tests from that matrix in `tests/integration/` (real
    dsh process, memory transport, mock LLM) — they will fail until the
    implementation exists. This is expected.
-3. Keep the scenarios real: unique message ids, filter waits by `chatId`,
+3. **A new integration suite registers its OWN dsh home + CI steps, in the
+   same change.** Creating a suite hard-fails under `FEISHU_INT_REQUIRED=1`
+   unless all of these land together:
+   - its own `_dev/dsh-home-<suite>` profile (never share one — parallel
+     suites race `session-map.json` writes), prepared locally with
+     `DSH_HOME="$(pwd)/_dev/dsh-home-<suite>" dsh plugin --profile feishu-dev add "link:$(pwd)"`
+     then storeDir/cacheDir appended to its `pnpm-workspace.yaml`;
+   - a profile-prepare step in **both** `.github/workflows/ci.yml` **and**
+     `.github/workflows/canary.yml` (a missing step silently self-skips
+     locally but hard-fails CI, and vice-versa looks green but is the same
+     miss on the other leg);
+   - an entry in `docs/development.md`'s per-suite homes list.
+   To run the full `FEISHU_INT_REQUIRED=1` matrix locally you must prepare
+   **ALL** the per-suite homes, not just the new one (an unprepared unrelated
+   suite hard-fails).
+4. Keep the scenarios real: unique message ids, filter waits by `chatId`,
    assert card contents not completion counts, restore test-written settings.
-4. **Read callback values FROM the rendered card, never construct them by
+5. **Read callback values FROM the rendered card, never construct them by
    hand.** A real click submits exactly what the renderer put in the card —
    the rename regression (a submit that "silently did nothing") existed
    because tests built the action directly with the session id and bypassed
@@ -188,6 +227,16 @@ pnpm run check:mergeable --ci=github  # also check the live PR checks
   `pnpm run check` guards this.
 - **Integration-test hygiene** — wait for the dsh child to exit before
   resetting state; unique message ids; filter waits by chatId.
+- **A host signal can be narrower than the client's, and empty at an edge**
+  — dsh-feishu reproduces many web behaviors, but the host only sees part of
+  the data. Check the signal against the reference at every edge (a case the
+  client still shows can be empty on the host) and add a host-side fallback
+  where it drops one. Per-feature examples live in the feature's
+  ux-specification part.
+- **A new integration suite needs its own dsh home + CI steps** — prepare
+  `_dev/dsh-home-<suite>`, add the profile-prepare step to BOTH ci.yml and
+  canary.yml, and list it in `docs/development.md`. Missing one hard-fails
+  `FEISHU_INT_REQUIRED=1` on the leg that checks it.
 - **Local "green" is not CI green** — run `pnpm run gates`, not
   `biome check --write` + output tails (see AGENTS.md).
 
