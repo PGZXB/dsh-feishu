@@ -60,15 +60,19 @@ if (!existsSync(sessionState)) {
   process.exit(2);
 }
 
-// The bot app name (unique per setup run, persisted in the state dir).
+// The bot app name (unique per setup run, persisted in the state dir). It is
+// part of the app identity: creds.json now carries the `name` it was created
+// with, so reusing creds reuses the SAME name the search-for-bot step must
+// match (a per-run throwaway name never matches a reused app).
 const stateDir = process.env.E2E_STATE ?? join(ROOT, 'e2e', '.state');
+const credsFile = join(stateDir, 'creds.json');
 const botNameFile = join(stateDir, 'bot-name');
 const botName =
+  (existsSync(credsFile) ? JSON.parse(readFileSync(credsFile, 'utf8')).name : undefined) ??
   process.env.E2E_BOT_NAME ??
   (existsSync(botNameFile) ? readFileSync(botNameFile, 'utf8').trim() : 'DSH-E2E-TESTBOT');
 
 // App credentials: env first, then creds.json in the state dir.
-const credsFile = join(stateDir, 'creds.json');
 const appId =
   process.env.E2E_APP_ID ??
   (existsSync(credsFile) ? JSON.parse(readFileSync(credsFile, 'utf8')).appId : undefined);
@@ -196,12 +200,19 @@ try {
 
   // The bot appears as a `.bot-result-card` (cursor:pointer) in the search
   // results; clicking it opens the p2p chat. The bot name is unique per
-  // setup run, so exactly one card carries it.
-  const botCard = page.locator('.bot-result-card:visible').filter({ hasText: botName }).first();
-  if ((await botCard.count().catch(() => 0)) === 0) {
-    throw new Error(`no bot result card found for "${botName}" in the search results`);
+  // setup run, so exactly one card carries it. Poll for the card — search
+  // results can take a moment to render after typing, and the card text may
+  // truncate the long name, so match the stable `DSH-E2E-TESTBOT` prefix.
+  const prefix = botName.slice(0, Math.min(botName.length, 15));
+  const deadline = Date.now() + 30_000;
+  const botCard = page.locator('.bot-result-card:visible').filter({ hasText: prefix }).first();
+  while ((await botCard.count().catch(() => 0)) === 0) {
+    if (Date.now() > deadline) {
+      throw new Error(`no bot result card found for "${botName}" in the search results`);
+    }
+    await page.waitForTimeout(1_000);
   }
-  debug('browser', 'bot result card found — opening the p2p chat');
+  debug('browser', `bot result card found (prefix "${prefix}") — opening the p2p chat`);
   await botCard.click();
   await page.waitForTimeout(5_000);
 

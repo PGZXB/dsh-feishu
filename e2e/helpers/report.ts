@@ -211,6 +211,22 @@ export function flattenCases(report: PlaywrightReport): E2eCase[] {
               ? 'failed'
               : (statusRaw as E2eCase['status']);
         const firstError = result?.errors?.find((e) => e.message !== undefined && e.message !== '');
+        // Playwright's error.location is an OBJECT ({file, column, line}), not
+        // a string — normalize it to "file:line" so the HTML escapes cleanly.
+        const normalizeLocation = (loc: unknown): string | undefined => {
+          if (typeof loc === 'string' && loc !== '') return loc;
+          if (loc !== null && typeof loc === 'object') {
+            const o = loc as Record<string, unknown>;
+            const file = typeof o.file === 'string' ? o.file : undefined;
+            const line = typeof o.line === 'number' ? o.line : undefined;
+            return file !== undefined
+              ? `${file}${line !== undefined ? `:${line}` : ''}`
+              : undefined;
+          }
+          return undefined;
+        };
+        const errorLocation =
+          firstError !== undefined ? normalizeLocation(firstError.location) : undefined;
         out.push({
           caseId: caseIdFromTitle(title),
           title,
@@ -222,7 +238,7 @@ export function flattenCases(report: PlaywrightReport): E2eCase[] {
             ? {
                 error: {
                   message: firstError.message ?? 'unknown error',
-                  ...(firstError.location !== undefined ? { location: firstError.location } : {}),
+                  ...(errorLocation !== undefined ? { location: errorLocation } : {}),
                 },
               }
             : {}),
@@ -321,7 +337,10 @@ function screenshotKind(path: string): 'screenshot' | undefined {
 }
 
 function esc(s: string): string {
-  return s
+  // Coerce non-strings (a normalized field could still be an object) — the
+  // HTML must never crash the whole report on one bad value.
+  const str = typeof s === 'string' ? s : String(s);
+  return str
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')

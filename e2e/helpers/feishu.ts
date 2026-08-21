@@ -210,3 +210,19 @@ export async function clickButton(page: Page, label: string): Promise<void> {
 export async function clickCardText(page: Page, label: string): Promise<void> {
   await page.getByText(label, { exact: false }).first().click();
 }
+
+/**
+ * Click a button that lives INSIDE the most recent bot message (a card's
+ * action button). Scoped to the last `.js-message-item` so a panel button
+ * never resolves against a stale button elsewhere on the page.
+ * @param page - the browser page.
+ * @param label - substring of the button label.
+ */
+export async function clickCardButton(page: Page, label: string): Promise<void> {
+  // The last non-self message item is the bot's most recent card.
+  const lastBotMessage = page.locator('.js-message-item:not(.message-self)').last();
+  await lastBotMessage
+    .getByRole('button', { name: new RegExp(label) })
+    .first()
+    .click();
+}

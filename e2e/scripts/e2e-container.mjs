@@ -248,12 +248,15 @@ async function main() {
     if (id?.[1] && secret?.[1]) {
       writeFileSync(
         credsFile,
-        `${JSON.stringify({ appId: id[1], appSecret: secret[1] }, null, 2)}\n`,
+        // Include the app name so the setup's search-for-bot step can reuse
+        // this exact app (the name is part of the app identity, not a
+        // per-run throwaway — reusing creds must reuse the same name).
+        `${JSON.stringify({ appId: id[1], appSecret: secret[1], name: env.E2E_BOT_NAME }, null, 2)}\n`,
       );
       console.log(`  [setup] credentials exported to ${credsFile}`);
       process.env.E2E_APP_ID = id[1];
       process.env.E2E_APP_SECRET = secret[1];
-      creds = { appId: id[1], appSecret: secret[1] };
+      creds = { appId: id[1], appSecret: secret[1], name: env.E2E_BOT_NAME };
     } else {
       console.error('✗ setup:feishu succeeded but wrote no appId/appSecret to the profile');
       process.exit(2);

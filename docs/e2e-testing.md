@@ -83,7 +83,31 @@ Key pieces:
   / `im.v1.chat.delete`, the same calls `/group` wraps) + the unique group
   name builder.
 - **e2e/helpers/assert.ts** — rule-based chat assertions.
+- **e2e/helpers/scenario.ts** — the shared group-chat lifecycle every scenario
+  uses (create backend group → open → screenshot → disband in `finally`).
 - **e2e/scenarios/*.spec.ts** — one file per scenario.
+
+### Scenarios
+
+The suite covers the surface commands that resolve locally (no LLM round-trip
+in the loop), so every assertion is deterministic. Each scenario runs in its
+own backend group and disbands it afterwards.
+
+| Scenario | Asserts |
+| --- | --- |
+| `help.spec.ts` | `/help` → `dsh-feishu commands:` block |
+| `status.spec.ts` | `/status` → local `chat:` / `mention mode:` text |
+| `feishu-status.spec.ts` | `/feishu-status` → diagnostic card (`connection:`) — the real long-connection check |
+| `schedule.spec.ts` | `/schedule` on a fresh group → `no session yet` notice |
+| `panel.spec.ts` | `/panel` → control-panel card with command buttons; clicking `Stop turn` resolves to the stop-turn command |
+| `repo-picker.spec.ts` | `/repo` → project-picker panel card (`Pick a project`) |
+| `model-picker.spec.ts` | bare `/model` → model-picker panel card (`Choose a model`) |
+
+The deeper picker selections (choosing a project/model) and interactions that
+need a real session/catalog/allowlist stay in the integration suite — the
+E2E layer proves the cards render and the panel buttons fire, not the choice
+logic.
+
 - **e2e/Dockerfile** — the run image: Playwright's official image + full
   ffmpeg (the bundled one only encodes VP8; mp4 conversion needs H.264).
 
@@ -190,29 +214,23 @@ video/screenshot policy) lives in `summary.json` / `summary.html`.
    ```ts
    import { test } from '@playwright/test';
    import { loadE2eConfig } from '../helpers/config.js';
-   import { waitForBotReplyContaining } from '../helpers/assert.js';
-   import { openApp, openChat, sendMessage, snapshot } from '../helpers/feishu.js';
+   import { waitForCardContaining } from '../helpers/assert.js';
+   import { sendMessage, snapshot } from '../helpers/feishu.js';
    import { caseIdFromTitle } from '../helpers/report.js';
-   import { createGroup, deleteGroup, groupNameFor } from '../helpers/group.js';
+   import { disbandGroup, openCaseGroup, scenarioDebug } from '../helpers/scenario.js';
 
    const cfg = loadE2eConfig();
+   const debug = scenarioDebug(process.env.E2E_DEBUG === '1');
 
    test('send /model → model picker card', async ({ page }, testInfo) => {
      const caseId = caseIdFromTitle(testInfo.title);
-     const groupName = groupNameFor(caseId, cfg.runId);
-     const { chatId } = await createGroup(cfg, groupName, [cfg.userOpenId!]);
+     const { groupName, chatId } = await openCaseGroup(page, cfg, caseId, cfg.timeoutMs, debug);
      try {
-       await openApp(page, cfg);
-       await openChat(page, groupName, cfg.timeoutMs);
-       await snapshot(page, cfg, 'model-chat-open', caseId);
        await sendMessage(page, '/model');
-       await waitForBotReplyContaining(page, 'Model', cfg.timeoutMs);
+       await waitForCardContaining(page, 'Choose a model', cfg.timeoutMs);
        await snapshot(page, cfg, 'model-picker', caseId);
      } finally {
-       // Disband the group so runs do not accumulate chats.
-       await deleteGroup(cfg, chatId).catch((error) =>
-         console.warn(`[cleanup] could not disband ${groupName}: ${error.message}`),
-       );
+       await disbandGroup(cfg, groupName, chatId, debug);
      }
    });
    ```
@@ -232,8 +250,12 @@ video/screenshot policy) lives in `summary.json` / `summary.html`.
 | `sendMessage(page, text)` | type into the chat composer and send |
 | `chatMessages(page)` | read the rendered messages `{text, isSelf}[]` |
 | `clickButton(page, label)` / `clickCardText(page, label)` | click a card button / card text |
+| `clickCardButton(page, label)` | click a button inside the last bot card (panel action) |
 | `snapshot(page, cfg, label, caseId)` | save a key screenshot into `report/screenshots/<caseId>/` |
 | `waitForBotReplyContaining(page, text, timeoutMs)` | wait for a bot reply containing text (rule-based) |
+| `waitForCardContaining(page, text, timeoutMs)` | wait for a rendered card containing text (rule-based) |
+| `openCaseGroup(page, cfg, caseId, timeoutMs, debug)` | create a per-case backend group and open its chat |
+| `disbandGroup(cfg, groupName, chatId, debug)` | best-effort group cleanup |
 | `groupNameFor(caseId, runId)` | unique group name `<caseId>-<runId>`, truncated to ≤ 60 chars |
 | `createGroup(cfg, name, memberOpenIds)` / `deleteGroup(cfg, chatId)` | backend group create/delete (`im.v1.chat.create` / `im.v1.chat.delete`) |
 
@@ -248,7 +270,8 @@ helper together.
 | App shell URL | path matches `/(messenger\|home\|space\|contact\|drive)/` (any tenant subdomain) |
 | Chat message item | `.js-message-item`; `.message-self` marks the user's own |
 | Chat input (composer) | `.innerdocbody` / `.zone-container.editor-kit-container` (visible) |
-| Card buttons | `<button>` elements; match by accessible name |
+| Card buttons | `<button>` elements inside the last `.js-message-item:not(.message-self)`; match by accessible name |
+| Pickers | Feishu card `select_static` dropdowns (or numbered buttons); the card's markdown title is the deterministic anchor (`Pick a project` / `Choose a model`) |
 | Login QR | a `canvas` inside `[class*="scan-QR-code"]` on the accounts login page (expires — the login helper reloads for a fresh one) |
 
 ## Troubleshooting
