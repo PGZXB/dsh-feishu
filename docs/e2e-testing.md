@@ -142,6 +142,11 @@ FEISHU_DEBUG=1           # the plugin's own debug tracing (visible now that
 No chat name is needed: every case creates its own group chat
 (`<caseId>-<runId>`) through the backend and opens it.
 
+The suite doubles as the **release acceptance gate**: `scripts/release.mjs`
+runs `e2e:ui` before tagging and refuses to release when the environment is
+not prepared (run `e2e:setup` once per machine first) or the run fails —
+see `docs/development.md` → "Releasing".
+
 ## Report
 
 Every run writes a timestamped directory under `e2e/.output/<runId>/`

@@ -7,6 +7,8 @@
  * Usage:
  *   node scripts/release.mjs <major|minor|patch>   # e.g. node scripts/release.mjs patch
  *   node scripts/release.mjs --dry-run <bump>      # print what would happen
+ *   node scripts/release.mjs --skip-e2e <bump>     # skip the E2E acceptance
+ *                                                  # (explicit escape hatch only)
  *
  * Releases happen ONLY from a `release/*` branch (e.g. release/v0.2.1):
  * main is a development branch and may carry unreleased work, so a release
@@ -18,11 +20,15 @@
  *
  * Gates run through the local binaries (node scripts/run-gates.mjs) rather
  * than `pnpm run` so the script works in constrained shells where pnpm's
- * store check cannot open its SQLite database.
+ * store check cannot open its SQLite database. After the gates, the
+ * real-client E2E suite runs as a release acceptance step (see
+ * docs/e2e-testing.md); the environment must be prepared once with
+ * `pnpm run e2e:setup`.
  */
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const [, , ...args] = process.argv;
@@ -75,6 +81,34 @@ if (!dryRun) {
 // Gates exactly as CI runs them, via the local gate runner (direct binaries,
 // no pnpm store dependency — see the header comment).
 run('node scripts/run-gates.mjs');
+
+// Real-client E2E acceptance before every release: the unit/integration
+// gates mock the Feishu wire, so the release must also verify the real
+// long connection + browser client locally (see docs/e2e-testing.md).
+// The environment is prepared once with `pnpm run e2e:setup` (QR scans);
+// afterwards `e2e:ui` is hands-free and idempotent. Failing the E2E run
+// aborts the release. `--skip-e2e` is an explicit escape hatch for cases
+// where the E2E environment cannot be provisioned (e.g. no test account
+// access) — never the default.
+const skipE2E = args.includes('--skip-e2e');
+if (!skipE2E) {
+  const { existsSync } = await import('node:fs');
+  const stateDir = join(repoRoot, 'e2e', '.state');
+  const e2eReady =
+    existsSync(join(stateDir, 'creds.json')) &&
+    existsSync(join(stateDir, 'web-session.json')) &&
+    existsSync(join(stateDir, 'user.json'));
+  if (!e2eReady) {
+    console.error(
+      '\n✗ E2E environment is not ready (missing creds.json / web-session.json / user.json in e2e/.state/).\n' +
+        '  Run `pnpm run e2e:setup` once (QR scans with the test account), then re-run the release.\n' +
+        '  Use `--skip-e2e` only if the E2E environment cannot be provisioned.',
+    );
+    process.exit(1);
+  }
+  console.log('\n── E2E acceptance (real feishu.cn web client) ──');
+  run('pnpm run e2e:ui');
+}
 
 // Tag and push BOTH the release branch and the tag; the release workflow
 // publishes from the tag.
