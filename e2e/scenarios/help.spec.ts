@@ -14,23 +14,22 @@
  * @module e2e/scenarios/help
  */
 
-import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { test } from '@playwright/test';
 import { waitForBotReplyContaining } from '../lib/assert.js';
 import { loadE2eConfig } from '../lib/config.js';
-import { openApp, openChat, sendMessage } from '../lib/feishu.js';
+import { openApp, openChat, sendMessage, snapshot } from '../lib/feishu.js';
 
 const cfg = loadE2eConfig();
 
 test('send /help → slash command descriptions', async ({ page }, testInfo) => {
-  const shotDir = join(cfg.reportDir, 'screenshots');
-  mkdirSync(shotDir, { recursive: true });
-
   await openApp(page, cfg);
   await openChat(page, cfg.chatName, cfg.timeoutMs);
+  // Key evidence point 1: the chat is open, composer visible.
+  await snapshot(page, cfg, 'help-chat-open');
 
   await sendMessage(page, '/help');
+  // Key evidence point 2: the /help message is in the chat.
+  await snapshot(page, cfg, 'help-sent');
 
   // The help block opens with the header and includes at least the /help
   // command's own line — two independent rule-based assertions.
@@ -41,12 +40,8 @@ test('send /help → slash command descriptions', async ({ page }, testInfo) => 
     cfg.timeoutMs,
   );
 
-  const slug = testInfo.title.replace(/\s+/g, '-');
-  await page.screenshot({
-    path: join(shotDir, `${slug}.png`),
-    timeout: 15_000,
-    animations: 'disabled',
-  });
+  // Key evidence point 3: the final bot reply with the command list.
+  await snapshot(page, cfg, 'help-reply');
 
   testInfo.annotations.push({
     type: 'evidence',

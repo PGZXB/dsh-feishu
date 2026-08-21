@@ -12,6 +12,8 @@
  * @module e2e/lib/feishu
  */
 
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Locator, Page } from '@playwright/test';
 import type { E2eConfig } from './config.js';
 
@@ -120,6 +122,23 @@ async function openChatViaSearch(page: Page, name: string): Promise<void> {
     )
     .first();
   await result.click();
+}
+
+/**
+ * Save a key screenshot for the report. Scenarios call this at the moments
+ * that matter to them (chat open, mid-stream, final state) — the labels are
+ * scenario-chosen, so each test case decides its own evidence points.
+ * @param page - the browser page.
+ * @param cfg - resolved E2E configuration (reportDir).
+ * @param label - screenshot file name (`.png` appended; no spaces).
+ * @returns the saved file path.
+ */
+export async function snapshot(page: Page, cfg: E2eConfig, label: string): Promise<string> {
+  const dir = join(cfg.reportDir, 'screenshots');
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, `${label}.png`);
+  await page.screenshot({ path, timeout: 15_000, animations: 'disabled' });
+  return path;
 }
 
 /**

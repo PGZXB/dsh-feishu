@@ -8,7 +8,7 @@
  * - `E2E_APP_ID` / `E2E_APP_SECRET` — the bot app under test (the launcher
  *   also accepts the plugin's own `FEISHU_APP_ID` / `FEISHU_APP_SECRET`)
  * - `E2E_HEADED=1` — run with a visible browser window
- * - `E2E_VIDEO=off|webm|mp4` — video policy (default `webm`)
+ * - `E2E_VIDEO=off|webm|mp4` — video policy (default `mp4`)
  * - `E2E_SCREENSHOTS=off|on|failure` — screenshot policy (default `on`)
  * - `E2E_REPORT_DIR` — report output directory (default `<repo>/_dev/e2e-report`)
  * - `E2E_SESSION_STATE` — browser session state file (default
@@ -69,7 +69,7 @@ function repoDevPath(...leaf: string[]): string {
 
 function parseVideo(value: string | undefined): E2eVideo {
   if (value === 'off' || value === 'webm' || value === 'mp4') return value;
-  if (value === undefined || value === '') return 'webm';
+  if (value === undefined || value === '') return 'mp4';
   throw new Error(`E2E_VIDEO must be off|webm|mp4, got "${value}"`);
 }
 

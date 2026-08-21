@@ -76,7 +76,7 @@ const res = spawnSync(
     '-w', '/app',
     '-e', `E2E_CHAT=${chat}`,
     '-e', 'E2E_EXCHANGE=/exchange',
-    '-e', `E2E_VIDEO=${env.E2E_VIDEO ?? 'webm'}`,
+    '-e', `E2E_VIDEO=${env.E2E_VIDEO ?? 'mp4'}`,
     '-e', `E2E_SCREENSHOTS=${env.E2E_SCREENSHOTS ?? 'on'}`,
     '-e', `E2E_BASE_URL=${env.E2E_BASE_URL ?? 'https://www.feishu.cn/'}`,
     '-e', `E2E_BOT_NAME=${env.E2E_BOT_NAME ?? 'DSH Agent (e2e)'}`,

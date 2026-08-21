@@ -42,7 +42,8 @@
     "check:mergeable": "node scripts/check-mergeable.mjs",
     "e2e:ui": "node scripts/e2e-ui.mjs",
     "e2e:ui:headed": "E2E_HEADED=1 node scripts/e2e-ui.mjs",
-    "e2e:login": "node scripts/e2e-login.mjs"
+    "e2e:login": "node scripts/e2e-login.mjs",
+    "e2e:setup": "node scripts/e2e-setup.mjs"
   },
   "dependencies": {
     "@deepseek-ai/dsh-llm": "^0.1.0-rc.8",
@@ -86,7 +87,6 @@
     "vitest": "^3.2.7",
     "@deepseek-ai/dsh-schedule": "^0.1.0-rc.8",
     "@playwright/test": "1.62.1"
-
   },
   "dsh": {
     "bundle": {

@@ -37,7 +37,7 @@ if (!chat) {
   process.exit(2);
 }
 const exchange = env.E2E_EXCHANGE ?? '/exchange';
-const video = env.E2E_VIDEO ?? 'webm';
+const video = env.E2E_VIDEO ?? 'mp4';
 const reportDir = '/exchange/report';
 const mockPort = env.E2E_MOCK_PORT ?? '19090';
 const dshBin = join(ROOT, 'node_modules', '.bin', 'dsh');
@@ -193,6 +193,28 @@ async function main() {
       console.error('✗ browser login failed');
       process.exit(2);
     }
+  }
+
+  // 4b. Setup mode: after the app + browser session are ready, verify the
+  //     chat exists and stop. The user only ever needs to message the bot
+  //     once (Feishu does not allow programmatic creation of the first
+  //     user↔bot contact); everything else is exported for hands-free runs.
+  if (env.E2E_SETUP === '1') {
+    log('setup-check', 'verifying the chat exists (browser, list polling)');
+    const check = spawnSync(
+      process.execPath,
+      [join(ROOT, 'scripts', 'e2e-check-chat.mjs')],
+      { cwd: ROOT, env: process.env, stdio: 'inherit' },
+    );
+    if (check.status === 0) {
+      console.log('\nE2E_SETUP_READY — environment prepared, later runs are hands-free');
+      process.exit(0);
+    }
+    console.log(
+      '\nE2E_SETUP_NEEDS_CHAT — in the Feishu app, search the bot and send it a message ' +
+        '(creates the chat), then re-run `pnpm run e2e:setup`.',
+    );
+    process.exit(3);
   }
 
   // 5. Mock DeepSeek server.
