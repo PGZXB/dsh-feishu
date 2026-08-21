@@ -6,12 +6,14 @@
  * works with the internal user_id. The backend group creation needs the
  * open_id, so the setup resolves it from a real user↔bot exchange:
  *
- *   1. the browser (using the exported web session) searches for the bot and
- *      sends it a private message — this creates the p2p chat;
- *   2. the app's OWN credentials (im:chat / im:chat.members:read — already
+ *   1. the browser (using the exported web session) opens the global search
+ *      (Ctrl+K), types the bot name, and clicks the bot result card — this
+ *      opens the p2p chat with the bot;
+ *   2. it sends a private message (creating the chat if needed);
+ *   3. the app's OWN credentials (im:chat / im:chat.members:read — already
  *      in the manifest, no extra scope) list that chat and read its member
  *      open ids;
- *   3. the member that is not the bot is the test user → written to user.json.
+ *   4. the member that is not the bot is the test user → written to user.json.
  *
  * This runs exactly once, during `e2e:setup`; test runs never re-send the
  * message (user.json is already exported). All rule-based — DOM/API
@@ -19,7 +21,7 @@
  *
  * Usage: node scripts/e2e-user-id.mjs [--state <web-session.json>] [--out <user.json>]
  * Env: E2E_BOT_NAME (default DSH-E2E-TESTBOT), E2E_APP_ID, E2E_APP_SECRET
- *      (fall back to /state/creds.json).
+ *      (fall back to the state dir's creds.json).
  * Writes `{ "openId": "ou_..." }` to the out file; exits 0 on success.
  */
 
@@ -56,7 +58,7 @@ const credsFile = join(stateDir, 'creds.json');
 const appId = process.env.E2E_APP_ID ?? (existsSync(credsFile) ? JSON.parse(readFileSync(credsFile, 'utf8')).appId : undefined);
 const appSecret = process.env.E2E_APP_SECRET ?? (existsSync(credsFile) ? JSON.parse(readFileSync(credsFile, 'utf8')).appSecret : undefined);
 if (!appId || !appSecret) {
-  console.error('✗ E2E_APP_ID / E2E_APP_SECRET required (or /state/creds.json)');
+  console.error('✗ E2E_APP_ID / E2E_APP_SECRET required (or creds.json in the state dir)');
   process.exit(2);
 }
 
@@ -89,7 +91,7 @@ async function botOpenId(token) {
 /** List the bot's chats; return the p2p chat id (or undefined). */
 async function findP2pChat(token) {
   const res = await fetch(
-    `${OPEN_BASE}/open-apis/im/v1/chats?user_id_type=open_id&page_size=50&sort_type=ByCreateTimeDesc`,
+    `${OPEN_BASE}/open-apis/im/v1/chats?user_id_type=open_id&page_size=50`,
     { headers: { Authorization: `Bearer ${token}` } },
   );
   const body = await res.json();
@@ -138,41 +140,25 @@ for (const origin of s.origins ?? []) {
 await page.goto('https://www.feishu.cn/messenger/', { waitUntil: 'commit', timeout: 45_000 }).catch(() => {});
 await page.waitForTimeout(10_000);
 
-// 1. Search the bot and open its p2p chat (search fallback CREATES the chat
-//    as a side effect on first contact — the one-time setup step).
-console.log(`  [user] opening the bot "${botName}" p2p chat via search`);
-const searchClick = page.getByText('Search', { exact: true }).first();
-if ((await searchClick.count()) > 0) {
-  await searchClick.locator('..').click();
-} else {
-  await page.getByText('(Ctrl+K)', { exact: true }).first().locator('..').click().catch(() => {});
-}
-await page.waitForTimeout(2_000);
-const input = page
-  .locator('[class*="search"] input, input:visible, [contenteditable="true"]:visible')
-  .last();
-await input.fill(botName);
+// 1. Global search (Ctrl+K) → type the bot name → click the bot result card.
+console.log(`  [user] searching for the bot "${botName}" (Ctrl+K)`);
+await page.keyboard.press('Control+k');
 await page.waitForTimeout(2_500);
-// Prefer a result whose text contains the bot name; fall back to the first
-// generic result item.
-const result = page
-  .locator(
-    '[class*="search"] [class*="result"], [class*="SearchResult"] [class*="item"], [class*="contact"] [class*="item"], [class*="menu"] [class*="item"]',
-  )
-  .filter({ hasText: botName })
-  .first();
-const clicked = await result.count().catch(() => 0);
-if (clicked > 0) {
-  await result.click();
-} else {
-  await page
-    .locator(
-      '[class*="search"] [class*="result"], [class*="SearchResult"] [class*="item"], [class*="contact"] [class*="item"], [class*="menu"] [class*="item"]',
-    )
-    .first()
-    .click();
+const searchBox = page.locator('.zone-container.editor-kit-container:visible').first();
+await searchBox.click();
+await searchBox.pressSequentially(botName, { delay: 25 });
+await page.waitForTimeout(3_500);
+
+// The bot appears as a `.bot-result-card` (cursor:pointer) in the search
+// results; clicking it opens the p2p chat. The bot name is unique per setup
+// run (`DSH-E2E-TESTBOT-<stamp>`), so exactly one card carries it.
+const botCard = page.locator('.bot-result-card:visible').filter({ hasText: botName }).first();
+if ((await botCard.count().catch(() => 0)) === 0) {
+  console.error(`✗ no bot result card found for "${botName}" in the search results`);
+  process.exit(2);
 }
-await page.waitForTimeout(4_000);
+await botCard.click();
+await page.waitForTimeout(5_000);
 
 // 2. Send a private message — creates/confirms the p2p chat with the bot.
 const composer = page.locator('.innerdocbody:visible, [class*="editor-kit"]:visible').last();

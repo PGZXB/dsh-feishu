@@ -13,7 +13,7 @@
 - **断言全部规则化。** 所有断言只读渲染后的 DOM（消息文本、按钮、面板）或飞书 Open API。套件绝不调用付费视觉服务——测试必须免费且确定。
 - **`modlens` CLI 仅作开发侧验证。** 编写/调试场景时用它看截图实际内容；它不是任何测试的一部分，且消耗 provider 配额——少用。
 - **每个测试用例一个群聊。** 每个用例运行在自己独立的群聊里，群名 `<caseId>-<runId>`（每次运行全局唯一），通过后台创建——与插件 `/group` 命令底层相同的 `im.v1.chat.create` 调用。用例之间永不共享聊天页面，并行运行不会互相抢消息。
-- **被测 bot 使用专用应用。** 用测试飞书应用（setup 会自动创建，名为 `DSH-E2E-TESTBOT`）和专用测试账号，绝不用生产 bot。
+- **被测 bot 使用专用应用。** 用测试飞书应用（setup 会自动创建，名字带唯一后缀 `DSH-E2E-TESTBOT-<时间戳>`）和专用测试账号，绝不用生产 bot。
 
 ## 架构
 
@@ -66,7 +66,7 @@ setup 依次完成：
 
 1. 缺少 e2e docker 镜像时先构建；
 2. 容器内：复制仓库（只读挂载）、安装 + 构建、把插件装进 profile `e2e-dev`；
-3. **创建 bot 应用** — README quick-setup；用**测试账号**扫 `e2e/.state/setup.log` 里的开放平台二维码（过期自动换新）；应用以 `DSH-E2E-TESTBOT` 创建（可用 `E2E_BOT_NAME` 覆盖），凭据导出到 `e2e/.state/creds.json`（已存在则跳过；设了 `E2E_APP_ID`/`E2E_APP_SECRET` 也跳过）；
+3. **创建 bot 应用** — README quick-setup；用**测试账号**扫 `e2e/.state/setup.log` 里的开放平台二维码（过期自动换新）；应用以**唯一名称** `DSH-E2E-TESTBOT-<YYYYMMDDHHmmss>` 创建（持久化到 `e2e/.state/bot-name`；可用 `E2E_BOT_NAME` 覆盖），确保 setup 的搜索 bot 步骤不会匹配到更早运行留下的同名残留应用；凭据导出到 `e2e/.state/creds.json`（已存在则跳过；设了 `E2E_APP_ID`/`E2E_APP_SECRET` 也跳过）；
 4. **浏览器登录** — 用同一账号扫 `e2e/.state/qr.png`；storageState 导出到 `e2e/.state/web-session.json`（已存在则跳过）；
 5. **测试用户 open_id** — 浏览器给 bot 发一条一次性私聊消息（创建 p2p 聊天），然后用应用自身凭据（manifest 已有的 `im:chat` / `im:chat.members:read`，无需额外 scope）从该聊天的成员里解析出测试用户 open_id，存入 `e2e/.state/user.json`——后台建群需要用它把测试用户拉进群（已存在则跳过）；
 6. **建群探针** — 通过后台创建并删除一个探针群，验证应用能管理群聊。
@@ -81,7 +81,7 @@ pnpm run e2e:ui
 # 选项
 E2E_VIDEO=off            # 不要视频（默认 mp4，webm 源也保留）
 E2E_SCREENSHOTS=failure  # 仅失败时截图（默认 on）
-E2E_BOT_NAME="DSH-E2E-TESTBOT"  # bot 应用名（默认 DSH-E2E-TESTBOT）
+E2E_BOT_NAME="DSH-E2E-TESTBOT-20260821191530"  # bot 应用名（默认：setup 生成的唯一名）
 E2E_APP_ID / E2E_APP_SECRET # 可选：覆盖 bot 应用
 ```
 

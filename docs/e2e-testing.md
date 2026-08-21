@@ -26,8 +26,8 @@ is the third testing layer:
   wraps. Cases never share a chat page, so parallel runs cannot race each
   other's messages.
 - **The bot under test runs against a dedicated app.** Use a test Feishu app
-  (the setup creates one, named `DSH-E2E-TESTBOT`) and the dedicated test
-  account, never the production bot.
+  (the setup creates one with a unique name, `DSH-E2E-TESTBOT-<stamp>`) and
+  the dedicated test account, never the production bot.
 
 ## Architecture
 
@@ -100,10 +100,12 @@ The setup performs, in order:
    builds, installs the plugin into profile `e2e-dev`;
 3. **bot-app setup** — the README quick-setup; scan the open-platform QR at
    `e2e/.state/setup.log` (auto-refreshes on expiry) with the **test
-   account**; the app is created as `DSH-E2E-TESTBOT` (`E2E_BOT_NAME`
-   overrides) and its credentials are exported to `e2e/.state/creds.json`
-   (skipped when the file already exists, or when `E2E_APP_ID` /
-   `E2E_APP_SECRET` are set);
+   account**. The app is created with a **unique name**
+   `DSH-E2E-TESTBOT-<YYYYMMDDHHmmss>` (persisted in
+   `e2e/.state/bot-name`; `E2E_BOT_NAME` overrides) so the setup's
+   search-for-bot step never matches a stale app from an earlier run. The
+   credentials are exported to `e2e/.state/creds.json` (skipped when the
+   file already exists, or when `E2E_APP_ID` / `E2E_APP_SECRET` are set);
 4. **browser login** — scan `e2e/.state/qr.png` with the same
    account; the storageState is exported to
    `e2e/.state/web-session.json` (skipped when it exists);
@@ -127,7 +129,7 @@ pnpm run e2e:ui
 # options
 E2E_VIDEO=off            # no video (default mp4 — webm is also kept)
 E2E_SCREENSHOTS=failure  # screenshots only on failure (default on)
-E2E_BOT_NAME="DSH-E2E-TESTBOT"  # the bot app name (default DSH-E2E-TESTBOT)
+E2E_BOT_NAME="DSH-E2E-TESTBOT-20260821191530"  # the bot app name (default: the setup's unique name)
 E2E_APP_ID / E2E_APP_SECRET # optional override of the bot app
 ```
 

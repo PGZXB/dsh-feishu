@@ -24,7 +24,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -49,6 +49,30 @@ function log(step, msg) {
   console.log(`\n── ${step} ──\n${msg}`);
 }
 
+// The bot app name must be globally unique so the setup's search-for-bot step
+// never matches a stale app from an earlier run. Each setup run derives a
+// fresh name (`DSH-E2E-TESTBOT-<YYYYMMDDHHmmss>`) and persists it into the
+// state dir for the launcher to reuse; E2E_BOT_NAME overrides explicitly.
+function resolveBotName() {
+  const explicit = env.E2E_BOT_NAME;
+  if (explicit) return explicit;
+  const nameFile = join(stateDir, 'bot-name');
+  if (existsSync(nameFile)) {
+    const saved = readFileSync(nameFile, 'utf8').trim();
+    if (saved) return saved;
+  }
+  const stamp = new Date()
+    .toISOString()
+    .replace(/[-:TZ]/g, '')
+    .replace(/\.\d{3}/, '')
+    .slice(0, 14);
+  const fresh = `DSH-E2E-TESTBOT-${stamp}`;
+  writeFileSync(nameFile, `${fresh}\n`, 'utf8');
+  return fresh;
+}
+
+const botName = resolveBotName();
+
 const inspect = spawnSync('docker', ['image', 'inspect', dockerImage], { stdio: 'ignore' });
 if (inspect.status !== 0) {
   log('docker', `image ${dockerImage} missing — building from Dockerfile.e2e`);
@@ -60,6 +84,7 @@ if (inspect.status !== 0) {
 
 log('setup', 'running the one-time E2E environment setup in docker');
 console.log(`state: ${stateDir}`);
+console.log(`bot app name: ${botName}`);
 console.log(
   'Scan the open-platform QR (bot-app setup) at setup.log, then the browser QR at qr.png — both with the TEST account.\n',
 );
@@ -75,7 +100,7 @@ const res = spawnSync(
     '-e', 'E2E_SETUP=1',
     '-e', 'E2E_STATE=/state',
     '-e', 'E2E_OUTPUT=/output',
-    '-e', `E2E_BOT_NAME=${env.E2E_BOT_NAME ?? 'DSH-E2E-TESTBOT'}`,
+    '-e', `E2E_BOT_NAME=${botName}`,
     ...(appId !== undefined ? ['-e', `E2E_APP_ID=${appId}`] : []),
     ...(appSecret !== undefined ? ['-e', `E2E_APP_SECRET=${appSecret}`] : []),
     '-e', 'http_proxy=', '-e', 'https_proxy=', '-e', 'HTTP_PROXY=', '-e', 'HTTPS_PROXY=',

@@ -22,7 +22,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -35,6 +35,13 @@ const outputDir = join(ROOT, 'e2e', '.output');
 const dockerImage = env.E2E_IMAGE ?? 'dsh-e2e-tools';
 const appId = env.E2E_APP_ID ?? env.FEISHU_APP_ID;
 const appSecret = env.E2E_APP_SECRET ?? env.FEISHU_APP_SECRET;
+// The bot app name the setup created (persisted in the state dir); the
+// report embeds it. Explicit E2E_BOT_NAME wins.
+const botName =
+  env.E2E_BOT_NAME ??
+  (existsSync(join(stateDir, 'bot-name'))
+    ? readFileSync(join(stateDir, 'bot-name'), 'utf8').trim()
+    : 'DSH-E2E-TESTBOT');
 
 // The in-container setup tees its QR to this file; pre-create it as the HOST
 // user so the container (a different uid) can append and the host can read
@@ -80,6 +87,7 @@ const res = spawnSync(
     '-e', `E2E_VIDEO=${env.E2E_VIDEO ?? 'mp4'}`,
     '-e', `E2E_SCREENSHOTS=${env.E2E_SCREENSHOTS ?? 'on'}`,
     '-e', `E2E_BASE_URL=${env.E2E_BASE_URL ?? 'https://www.feishu.cn/'}`,
+    '-e', `E2E_BOT_NAME=${botName}`,
     ...(appId !== undefined ? ['-e', `E2E_APP_ID=${appId}`] : []),
     ...(appSecret !== undefined ? ['-e', `E2E_APP_SECRET=${appSecret}`] : []),
     '-e', 'http_proxy=', '-e', 'https_proxy=', '-e', 'HTTP_PROXY=', '-e', 'HTTPS_PROXY=',

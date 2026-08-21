@@ -32,10 +32,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **E2E setup is idempotent and group-based.** Re-running `e2e:setup`
   never re-scans an already-exported login (`creds.json`,
   `web-session.json`, `user.json` in `e2e/.state/`); the bot app is created
-  as `DSH-E2E-TESTBOT` (open-platform QR), and the test user's open_id is
-  resolved once by sending the bot a one-time p2p message and reading the
-  chat's members through the app's existing `im:chat` permissions — no
-  extra scope. A create+delete probe verifies the app can manage groups.
+  with a **unique name** (`DSH-E2E-TESTBOT-<YYYYMMDDHHmmss>`, persisted in
+  `e2e/.state/bot-name`) so the setup's search-for-bot step never matches a
+  stale app from an earlier run (open-platform QR), and the test user's
+  open_id is resolved once by sending the bot a one-time p2p message and
+  reading the chat's members through the app's existing `im:chat`
+  permissions — no extra scope. A create+delete probe verifies the app can
+  manage groups.
   Each test case now runs in its own group chat named `<caseId>-<runId>`
   (unique per run), created through the backend — the same
   `im.v1.chat.create` call the plugin's `/group` wraps — so cases never
