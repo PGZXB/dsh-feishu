@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
  * Scaffold a new feature the feature-development way: create the worktree
- * branch, drop the spec skeleton, the brainstormed-scenario test file, and
- * the features.md planned row — so every feature starts from the same
- * checklist.
+ * branch, drop the spec skeleton, and the brainstormed-scenario test file —
+ * so every feature starts from the same checklist. It does NOT touch
+ * docs/features.md: adding/removing feature-list rows (and flipping 📋 → ✅)
+ * belongs to a separate features-catalog process, not feature development.
  *
  * Usage (run from a clean main worktree):
  *   node .dsh/skills/feature-development/scripts/new-feature.mjs <kebab-case-feature-name> [<short-description>]
@@ -12,10 +13,9 @@
  *   _dev/dsh-feishu-<name>/        worktree on branch feat/<name>
  *   docs/ux-specification.md       appends a "Part: <name>" skeleton
  *   tests/integration/<name>.spec.ts  scenario-matrix skeleton (fails until implemented)
- *   docs/features.md (+ .zh.md)    appends a 📋 planned row
  *
  * The agent then fills the spec, brainstorms the scenario matrix, and
- * implements against it — in that order.
+ * implements against it — in that order. features.md stays untouched.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -49,8 +49,6 @@ run('git', ['worktree', 'add', '-b', branch, worktreeDir, 'origin/main']);
 
 const specFile = join(worktreeDir, 'docs', 'ux-specification.md');
 const testFile = join(worktreeDir, 'tests', 'integration', `${name}.spec.ts`);
-const featuresFile = join(worktreeDir, 'docs', 'features.md');
-const featuresZhFile = join(worktreeDir, 'docs', 'features.zh.md');
 
 // 2. Spec skeleton.
 const specSkeleton = `\n## Part: ${name}\n\n${description ? `> ${description}\n` : ''}\n\n### Intended behavior\n\n<!-- trigger, states, transitions, card/panel shape, failure modes, acceptance checklist -->\n\n- **Trigger:**\n- **States & transitions:**\n- **Card/panel shape:**\n- **Failure modes:**\n- **Acceptance:**\n`;
@@ -74,15 +72,5 @@ describe('integration > ${name}', () => {
 `;
 writeFileSync(testFile, testSkeleton);
 console.log(`✓ scenario-matrix skeleton written to ${testFile}`);
-
-// 4. features.md planned row.
-const appendRow = (file, featureName, desc) => {
-  const text = readFileSync(file, 'utf8');
-  const row = `| ${featureName} | ${desc} | — | 📋 |\n`;
-  writeFileSync(file, text.replace(/\n$/, '') + '\n' + row);
-};
-appendRow(featuresFile, name, description || 'TBD');
-appendRow(featuresZhFile, name, description || 'TBD');
-console.log(`✓ 📋 row appended to docs/features.md (+ .zh.md)`);
 
 console.log(`\nNext (in order): fill the spec → design the state machine → brainstorm & write the integration scenarios → implement → unit tests → re-brainstorm → docs → PR.`);

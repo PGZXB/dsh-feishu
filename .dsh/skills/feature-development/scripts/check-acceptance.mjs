@@ -31,6 +31,62 @@ function pass(msg) {
   console.log(`✓ ${msg}`);
 }
 
+/**
+ * Whether two features-doc versions differ only in ways the feature flow may
+ * edit WITHOUT touching the catalog shape: rows may not be added or removed,
+ * and a feature's NAME (first cell) may not change. Within those constraints
+ * the flow may flip a row's status (📋 → ✅) and rewrite its description / UX
+ * cells (correcting a feature that was scoped wrong). Anything that changes
+ * row count, renames a feature, or flips a status the wrong way fails.
+ */
+function statusOnlyFlip(before, after) {
+  const isTableRow = (line) => line.startsWith('|') && line.endsWith('|');
+  const splitCells = (line) =>
+    line
+      .split('|')
+      .slice(1, -1)
+      .map((cell) => cell.trim());
+
+  const beforeLines = before.split('\n');
+  const afterLines = after.split('\n');
+  // Row count must be identical: adding or removing a feature is a catalog
+  // edit, not a feature-development change (same for non-table lines).
+  if (beforeLines.length !== afterLines.length) return false;
+
+  const beforeRows = new Map();
+  const afterRows = new Map();
+  for (let i = 0; i < beforeLines.length; i += 1) {
+    const b = beforeLines[i];
+    const a = afterLines[i];
+    if (!isTableRow(b) || !isTableRow(a)) {
+      if (b !== a) return false; // intro/header line changed → catalog edit
+      continue;
+    }
+    const bCells = splitCells(b);
+    const aCells = splitCells(a);
+    if (bCells.length < 4 || aCells.length < 4) {
+      if (b !== a) return false;
+      continue;
+    }
+    beforeRows.set(bCells[0] ?? '', bCells);
+    afterRows.set(aCells[0] ?? '', aCells);
+  }
+  if (beforeRows.size !== afterRows.size) return false; // added/removed a row
+
+  for (const [name, bCells] of beforeRows) {
+    const aCells = afterRows.get(name);
+    if (aCells === undefined) return false; // renamed or removed a feature
+    // Name (first cell) must not change — renaming is a catalog edit.
+    if (bCells[0] !== aCells[0]) return false;
+    // Status cell (last) may only stay or flip 📋 → ✅.
+    const bStatus = bCells[bCells.length - 1];
+    const aStatus = aCells[aCells.length - 1];
+    if (bStatus !== aStatus && !(bStatus === '📋' && aStatus === '✅')) return false;
+    // description / UX cells (middle) may change freely (re-scope correction).
+  }
+  return true;
+}
+
 // Branch shape: must be a feature branch, not main.
 const branch = git(['branch', '--show-current']);
 if (branch === 'main' || branch === '') {
@@ -60,11 +116,25 @@ if (changedSrc.length === 0) {
   } else {
     pass(`tests updated (${changedTests.length} file(s))`);
   }
-  // Features doc should be touched when behavior changes.
-  if (!changedDocs.some((f) => f.includes('features'))) {
-    fail('src/ changed but docs/features.md (+ zh) not updated — update the feature row');
+  // Features catalog is a separate process: a behavior change only flips an
+  // existing row's status (📋 → ✅), never adds/removes/rewords a row. Verify
+  // both docs changed and only status columns flipped (mechanically checkable).
+  const featuresChanged = changed.filter(
+    (f) => f === 'docs/features.md' || f === 'docs/features.zh.md',
+  );
+  if (featuresChanged.length === 0) {
+    fail('src/ changed but docs/features.md or docs/features.zh.md not updated — flip the feature row to ✅');
   } else {
-    pass('docs/features.md (+ zh) updated');
+    let ok = true;
+    for (const file of featuresChanged) {
+      const before = git(['show', `${base}:${file}`]);
+      const after = git(['show', `HEAD:${file}`]);
+      if (!statusOnlyFlip(before, after)) {
+        fail(`${file}: catalog shape changed — no row added/removed/renamed; a status flip (📋 → ✅) and description/UX corrections are allowed`);
+        ok = false;
+      }
+    }
+    if (ok) pass('docs/features.md (+ zh) updated: status-only flip');
   }
   // CHANGELOG entry expected.
   if (!changed.includes('CHANGELOG.md')) {

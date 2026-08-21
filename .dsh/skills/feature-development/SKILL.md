@@ -36,7 +36,7 @@ step gates the next; nothing ships without its tests and its docs.
 - [Scenario matrix](references/scenario-matrix.md) — the brainstormed
   integration-test matrix categories and form.
 - `scripts/new-feature.mjs` — scaffolds the worktree, branch, spec skeleton,
-  scenario-matrix test file, and the features.md planned row.
+  and the scenario-matrix test file (it does not touch `docs/features.md`).
 - `scripts/check-acceptance.mjs` — mechanical acceptance check against the
   branch diff (run before the PR).
 
@@ -51,8 +51,10 @@ node .dsh/skills/feature-development/scripts/new-feature.mjs <kebab-name> "<shor
 ```
 
 This creates the worktree `_dev/dsh-feishu-<name>` on `feat/<name>`, appends
-the spec skeleton, the scenario-matrix test skeleton, and the 📋 features.md
-row. All further work happens inside that worktree.
+the spec skeleton and the scenario-matrix test skeleton. All further work
+happens inside that worktree. It does NOT add a `docs/features.md` row —
+a feature's row is already in the catalog (see §7): the flow may only flip it
+to ✅ and/or correct its description/UX, never add/remove/rename a row.
 
 ### 0.5. Grill (design interview)
 
@@ -179,8 +181,15 @@ between rounds.
 ### 7. Docs
 
 1. Update the mapped doc (see `docs/development.md` → "Documentation map"):
-   the feature's `docs/` page, `docs/features.md` row → ✅, and the CHANGELOG
-   `[Unreleased]` entry — all in this change.
+   the feature's `docs/` page and the CHANGELOG `[Unreleased]` entry — all in
+   this change.
+   **`docs/features.md` is a features catalog with a fixed shape: the
+   development flow may flip an existing row's status (📋 → ✅) when it ships
+   the feature the row names, and may correct an existing row's description /
+   UX cell (a feature that was scoped wrong). It must NOT add or remove a row,
+   and must NOT rename a feature (a rename is a catalog edit).** Adding /
+   removing / renaming rows is the catalog process's job, not feature
+   development's. The matched `.zh.md` row updates together per the same rule.
 2. **Bilingual pairs move together.** Every tracked doc has a `*.zh.md`
    sibling; when you touch the English page (features, setup, pitfalls,
    development, ux-specification, architecture), update the Chinese
@@ -272,7 +281,7 @@ never as a subagent deliverable.
 - [ ] All gates green via `pnpm run gates` (lint, typecheck, build, test with `FEISHU_INT_REQUIRED=1` — exit codes checked, no output tails)
 - [ ] `scripts/check-acceptance.mjs` passes (mechanical items: tests, features.md, CHANGELOG, spec, manifest sync, README gate, clean tree)
 - [ ] `pnpm run check:mergeable` passes (CI assumed green locally; `--ci=github` checks the live PR)
-- [ ] `docs/features.md` row updated; CHANGELOG `[Unreleased]` entry added; manifest/feishu-setup synced if scopes changed
+- [ ] `docs/features.md` row flipped to ✅ (or description/UX corrected) for the shipped feature — no row added/removed/renamed; CHANGELOG `[Unreleased]` entry added; manifest/feishu-setup synced if scopes changed
 - [ ] Every touched doc's `*.zh.md` sibling updated in the same change (bilingual pairs stay in sync — the convention check does NOT verify content parity)
 - [ ] README edits (if any) in their own commit, held for maintainer review
 - [ ] Squash-merged through a PR with green CI (or held for review when README is touched)
