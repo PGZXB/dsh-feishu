@@ -89,6 +89,10 @@ FEISHU_DEBUG=1           # 插件自身 debug 追踪（dsh 子进程日志现在
 
 不需要聊天名：每个用例自己通过后台创建群聊（`<caseId>-<runId>`）并打开它。
 
+这套套件同时充当**发版验收门禁**：`scripts/release.mjs` 会在打 tag 前运行
+`e2e:ui`，环境未准备（先在本机跑一次 `e2e:setup`）或运行失败时拒绝发版——见
+`docs/development.md` → "发版步骤"。
+
 ## 报告
 
 每次运行写入 `e2e/.output/<runId>/` 下的一个带时间戳目录（`latest` 软链指向最新）。报告**只有一个入口**——`summary.html`，采用 Playwright HTML 报告的视觉风格（深色侧边栏用例列表 + 状态点 + 浅色主面板），链接到每个用例的自包含页面：
