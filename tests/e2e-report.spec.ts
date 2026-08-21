@@ -54,14 +54,37 @@ describe('e2e run report generator', () => {
 
   beforeEach(() => {
     rmSync(RUN, { recursive: true, force: true });
-    mkdirSync(join(RUN, 'screenshots'), { recursive: true });
-    mkdirSync(join(RUN, 'playwright-output', 'send-help'), { recursive: true });
-    // Scenario snapshots are named `N_<label>.png` at save time (per-page
-    // counter in feishu.ts) — the fixture mirrors that.
-    writeFileSync(join(RUN, 'screenshots', '1_help-reply.png'), 'shot');
-    writeFileSync(join(RUN, 'playwright-output', 'send-help', 'test-finished-1.png'), 'auto');
-    writeFileSync(join(RUN, 'playwright-output', 'send-help', 'video.webm'), 'vid');
-    writeFileSync(join(RUN, 'playwright-output', 'send-help', 'video.mp4'), 'vid');
+    // Scenario snapshots live in a PER-CASE subdir, named `N_<label>.png` at
+    // save time (per-page counter in feishu.ts) — the fixture mirrors that.
+    mkdirSync(join(RUN, 'screenshots', 'send-help-slash-command-descriptions'), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(RUN, 'screenshots', 'send-help-slash-command-descriptions', '1_help-reply.png'),
+      'shot',
+    );
+    // Playwright attachments (per-case, from the JSON): one screenshot and
+    // the video (webm + its mp4 conversion).
+    mkdirSync(join(RUN, 'playwright-output', 'help-send-help-→-slash-command-descriptions'), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(
+        RUN,
+        'playwright-output',
+        'help-send-help-→-slash-command-descriptions',
+        'test-finished-1.png',
+      ),
+      'auto',
+    );
+    writeFileSync(
+      join(RUN, 'playwright-output', 'help-send-help-→-slash-command-descriptions', 'video.webm'),
+      'vid',
+    );
+    writeFileSync(
+      join(RUN, 'playwright-output', 'help-send-help-→-slash-command-descriptions', 'video.mp4'),
+      'vid',
+    );
     writeFileSync(
       join(RUN, 'report.json'),
       JSON.stringify({
@@ -94,7 +117,28 @@ describe('e2e run report generator', () => {
                         ],
                         stdout: [],
                         stderr: [],
-                        attachments: [],
+                        attachments: [
+                          {
+                            name: 'screenshot',
+                            contentType: 'image/png',
+                            path: join(
+                              RUN,
+                              'playwright-output',
+                              'help-send-help-→-slash-command-descriptions',
+                              'test-finished-1.png',
+                            ),
+                          },
+                          {
+                            name: 'video',
+                            contentType: 'video/webm',
+                            path: join(
+                              RUN,
+                              'playwright-output',
+                              'help-send-help-→-slash-command-descriptions',
+                              'video.webm',
+                            ),
+                          },
+                        ],
                       },
                     ],
                   },
@@ -204,6 +248,136 @@ describe('e2e run report generator', () => {
     ) as { status: string; error: { message: string } };
     expect(caseJson.status).toBe('failed');
     expect(caseJson.error.message).toBe('boom failed');
-    expect(readFileSync(join(RUN, 'summary.html'), 'utf8')).toContain('failed');
+    // The failing case's own page renders the error with its location, and
+    // the summary links to it — assert on those, not on the bare word
+    // "failed" (which appears in every summary's CSS/status chips).
+    const boomHtml = readFileSync(join(RUN, 'cases', 'boom', 'report.html'), 'utf8');
+    expect(boomHtml).toContain('boom failed');
+    expect(boomHtml).toContain('e2e/helpers/x.ts:1');
+    const summaryHtml = readFileSync(join(RUN, 'summary.html'), 'utf8');
+    expect(summaryHtml).toContain('cases/boom/report.html');
+  });
+
+  it('keeps the recording when only webm exists (no mp4 conversion)', () => {
+    // Replace the video attachment with a webm-only one (E2E_VIDEO=webm or a
+    // failed ffmpeg conversion) — the recording must not be silently dropped.
+    const report = JSON.parse(readFileSync(join(RUN, 'report.json'), 'utf8')) as {
+      suites: { specs: { tests: { results: { attachments: unknown[] }[] }[] }[] }[];
+    };
+    const firstResult = report.suites?.[0]?.specs?.[0]?.tests?.[0]?.results?.[0];
+    expect(firstResult).toBeDefined();
+    const attachments = firstResult?.attachments ?? [];
+    attachments.splice(0, attachments.length, {
+      name: 'video',
+      contentType: 'video/webm',
+      path: join(
+        RUN,
+        'playwright-output',
+        'help-send-help-→-slash-command-descriptions',
+        'video.webm',
+      ),
+    });
+    writeFileSync(join(RUN, 'report.json'), JSON.stringify(report));
+
+    generateRunReport(RUN, {});
+    const caseJson = JSON.parse(
+      readFileSync(
+        join(RUN, 'cases', 'send-help-slash-command-descriptions', 'report.json'),
+        'utf8',
+      ),
+    ) as { artifacts: { kind: string; path: string }[] };
+    // The webm is copied as video.mp4 (the case dir keeps a single video
+    // file), so the case page still shows a recording.
+    expect(caseJson.artifacts.some((a) => a.kind === 'video' && a.path === 'video.mp4')).toBe(true);
+    expect(
+      readFileSync(
+        join(RUN, 'cases', 'send-help-slash-command-descriptions', 'report.html'),
+        'utf8',
+      ),
+    ).toContain('<video');
+  });
+
+  it('isolates artifacts per case (no cross-case contamination)', () => {
+    // Two cases, each with its own attachment paths — case A's screenshots
+    // and video must not leak into case B's report.
+    const report = JSON.parse(readFileSync(join(RUN, 'report.json'), 'utf8')) as {
+      suites: { specs: { title: string; tests: { status: string; results: unknown[] }[] }[] }[];
+    };
+    const firstSuite = report.suites?.[0];
+    const specA = firstSuite?.specs?.[0];
+    expect(specA).toBeDefined();
+    if (specA === undefined || firstSuite === undefined) return;
+    specA.title = 'send /help → slash command descriptions';
+    if (specA.tests?.[0]) {
+      specA.tests[0].status = 'expected';
+    }
+    firstSuite.specs?.push({
+      title: 'send /model → model picker card',
+      tests: [
+        {
+          status: 'expected',
+          results: [
+            {
+              status: 'expected',
+              duration: 100,
+              startTime: '2026-08-21T00:00:00.000Z',
+              retry: 0,
+              errors: [],
+              annotations: [],
+              stdout: [],
+              stderr: [],
+              attachments: [],
+            },
+          ],
+        },
+      ],
+    });
+    mkdirSync(join(RUN, 'playwright-output', 'help-send-help-→-slash-command-descriptions'), {
+      recursive: true,
+    });
+    mkdirSync(join(RUN, 'playwright-output', 'help-send-model-→-model-picker-card'), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(RUN, 'playwright-output', 'help-send-help-→-slash-command-descriptions', 'caseA.png'),
+      'a',
+    );
+    writeFileSync(
+      join(RUN, 'playwright-output', 'help-send-model-→-model-picker-card', 'caseB.png'),
+      'b',
+    );
+    // Case A carries its own attachment; case B has none.
+    const firstResult = firstSuite?.specs?.[0]?.tests?.[0]?.results?.[0] as
+      | { attachments: unknown[] }
+      | undefined;
+    expect(firstResult).toBeDefined();
+    if (firstResult === undefined) return;
+    firstResult.attachments = [
+      {
+        name: 'screenshot',
+        contentType: 'image/png',
+        path: join(
+          RUN,
+          'playwright-output',
+          'help-send-help-→-slash-command-descriptions',
+          'caseA.png',
+        ),
+      },
+    ];
+    writeFileSync(join(RUN, 'report.json'), JSON.stringify(report));
+
+    generateRunReport(RUN, {});
+    const caseA = JSON.parse(
+      readFileSync(
+        join(RUN, 'cases', 'send-help-slash-command-descriptions', 'report.json'),
+        'utf8',
+      ),
+    ) as { artifacts: { kind: string; path: string }[] };
+    const caseB = JSON.parse(
+      readFileSync(join(RUN, 'cases', 'send-model-model-picker-card', 'report.json'), 'utf8'),
+    ) as { artifacts: { kind: string; path: string }[] };
+    expect(caseA.artifacts.some((a) => a.path === 'screenshots/caseA.png')).toBe(true);
+    expect(caseA.artifacts.some((a) => a.path === 'screenshots/caseB.png')).toBe(false);
+    expect(caseB.artifacts).toEqual([]);
   });
 });

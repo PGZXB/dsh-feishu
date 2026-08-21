@@ -141,22 +141,6 @@ The `FEISHU_TRANSPORT=memory` seam is also handy for manual debugging:
 inject a fake message by writing a JSON file into
 `$FEISHU_MEMORY_DIR/inbox/` while the surface runs.
 
-### Real-client E2E (feishu.cn web)
-
-The E2E suite drives the **actual feishu.cn web client** in a headless
-browser and exercises the bot like a user: open a group chat, send a slash
-command, click card buttons, assert what renders. It runs the real dsh
-process (dedicated bot app, mock LLM) plus a real browser — the only layer
-where the Feishu wire and the client are both real. Run
-`pnpm run e2e:setup` once (dedicated test account; the QR scans are the
-only human steps, and the setup is idempotent — re-running never re-scans
-an already-exported login) — afterwards `pnpm run e2e:ui` is hands-free.
-Each test case creates its own group chat (`<caseId>-<runId>`) through the
-backend (the same `im.v1.chat.create` call `/group` wraps), so cases never
-share a chat page. It is **not** part of CI: it needs a real bot app and a
-browser session. Design, constraints, runbook, and the captured web
-selectors live in `docs/e2e-testing.md`.
-
 #### Scenario suite (two real-process suites, two dsh homes)
 
 `tests/integration/scenarios.spec.ts` is a second real-process suite for
@@ -190,6 +174,23 @@ recipe. CI prepares both profiles.
 | `unknownCommand=passthrough` routes unknown slashes to the model | `unknownCommand=passthrough` |
 | Stop mid-turn swaps the reaction to the stopped emoji | `stop mid-turn swaps the received reaction` |
 | `/export` transcript includes tool rows | `/export after a tool-calling turn` |
+
+
+### Real-client E2E (feishu.cn web)
+
+The E2E suite drives the **actual feishu.cn web client** in a headless
+browser and exercises the bot like a user: open a group chat, send a slash
+command, click card buttons, assert what renders. It runs the real dsh
+process (dedicated bot app, mock LLM) plus a real browser — the only layer
+where the Feishu wire and the client are both real. Run
+`pnpm run e2e:setup` once (dedicated test account; the QR scans are the
+only human steps, and the setup is idempotent — re-running never re-scans
+an already-exported login) — afterwards `pnpm run e2e:ui` is hands-free.
+Each test case creates its own group chat (`<caseId>-<runId>`) through the
+backend (the same `im.v1.chat.create` call `/group` wraps), so cases never
+share a chat page. It is **not** part of CI: it needs a real bot app and a
+browser session. Design, constraints, runbook, and the captured web
+selectors live in `docs/e2e-testing.md`.
 
 ## Verifying the bundle in a real dsh profile
 

@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * Run the standardized report generator (e2e/lib/report.ts, compiled to
+ * Run the standardized report generator (e2e/helpers/report.ts, compiled to
  * e2e/.build/lib/report.js by the container) against a run directory:
  * reads `report.json` (Playwright) and writes the per-case + summary
  * layout (summary.json/html, cases/<id>/report.json/html, screenshots,
  * video.mp4). Runs inside the container after the scenarios.
  *
- * Usage: node scripts/e2e-report.mjs <runDir>
+ * Usage: node e2e/scripts/e2e-report.mjs <runDir>
  */
 
 import { createRequire } from 'node:module';
@@ -17,7 +17,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..');
 const runDir = process.argv[2];
 if (!runDir) {
-  console.error('usage: node scripts/e2e-report.mjs <runDir>');
+  console.error('usage: node e2e/scripts/e2e-report.mjs <runDir>');
   process.exit(2);
 }
 

@@ -9,7 +9,7 @@
  * message items carry `.js-message-item` (`.message-self` /
  * `.message-not-self`), and card buttons are real `<button>` elements.
  *
- * @module e2e/lib/feishu
+ * @module e2e/helpers/feishu
  */
 
 import { mkdirSync } from 'node:fs';
@@ -136,14 +136,21 @@ const shotCounters = new WeakMap<Page, number>();
  * that matter to them (chat open, mid-stream, final state) — the labels are
  * scenario-chosen, so each test case decides its own evidence points. The
  * file is named `N_<label>.png` with `N` counting up per page (per test
- * case), so the report lists the screenshots in the order they were taken.
+ * case), and lives in a PER-CASE subdir (`screenshots/<caseId>/`) so
+ * multiple cases never overwrite each other's evidence.
  * @param page - the browser page.
  * @param cfg - resolved E2E configuration (reportDir).
  * @param label - screenshot label (`.png` appended; no spaces).
+ * @param caseId - the case id (caseIdFromTitle output); scopes the shot dir.
  * @returns the saved file path.
  */
-export async function snapshot(page: Page, cfg: E2eConfig, label: string): Promise<string> {
-  const dir = join(cfg.reportDir, 'screenshots');
+export async function snapshot(
+  page: Page,
+  cfg: E2eConfig,
+  label: string,
+  caseId: string,
+): Promise<string> {
+  const dir = join(cfg.reportDir, 'screenshots', caseId);
   mkdirSync(dir, { recursive: true });
   const n = (shotCounters.get(page) ?? 0) + 1;
   shotCounters.set(page, n);

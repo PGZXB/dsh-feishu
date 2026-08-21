@@ -80,26 +80,21 @@ if (!isAppUrl(page.url())) {
   const deadline = Date.now() + 8 * 60 * 1000;
   let loggedIn = false;
   let lastRefresh = 0;
+  let capturedOnce = false;
   console.log(`⏳ login required — scan ${qrPath} (refreshed every 5 s) with the Feishu app`);
   while (Date.now() < deadline) {
     if (Date.now() - lastRefresh > 5_000) {
       lastRefresh = Date.now();
       // The feishu login QR does NOT auto-rotate: when it expires the page
       // shows a greyed QR with a "Refresh QR Code" overlay until clicked.
-      // Reloading the login page always renders a fresh QR — bulletproof.
-      const stale = await page
-        .evaluate(() => {
-          const box = document.querySelector('[class*="scan-QR-code"], canvas');
-          return box
-            ? /Refresh QR Code|\u5237\u65b0\u4e8c\u7ef4\u7801/.test(box.textContent ?? '')
-            : false;
-        })
-        .catch(() => false);
-      if (stale) {
+      // Reloading the login page always renders a fresh QR — bulletproof,
+      // so reload every cycle instead of guessing when the QR went stale
+      // (the stale-overlay text is not reliably discoverable in the DOM).
+      if (capturedOnce) {
         await page.reload({ waitUntil: 'commit', timeout: 30_000 }).catch(() => {});
         await page.waitForTimeout(6_000);
-        console.log('  [qr] expired — reloaded for a fresh QR');
       }
+      let captured = false;
       for (const sel of [
         '[class*="scan-QR-code"] canvas',
         'canvas',
@@ -110,17 +105,27 @@ if (!isAppUrl(page.url())) {
           const el = page.locator(sel).first();
           if ((await el.count()) > 0) {
             await el.screenshot({ path: qrPath, timeout: 10_000 });
+            captured = true;
             break;
           }
         } catch {}
       }
-      console.log(`  [qr] refreshed ${new Date().toISOString()}`);
+      if (captured) {
+        capturedOnce = true;
+        console.log(`  [qr] refreshed ${new Date().toISOString()}`);
+      }
     }
     if (isAppUrl(page.url())) {
       loggedIn = true;
       break;
     }
     await page.waitForTimeout(1_000);
+  }
+  if (!capturedOnce && !loggedIn) {
+    console.error(
+      '✗ no QR code could be captured on the login page — is the login page rendering?',
+    );
+    process.exit(1);
   }
   if (!loggedIn) {
     console.error('✗ login timed out — no QR scan received');

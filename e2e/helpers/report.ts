@@ -3,7 +3,7 @@
  * a machine-readable manifest next to the Playwright HTML report. The walk is
  * pure (a directory listing) so it is unit-testable without a browser.
  *
- * @module e2e/lib/report
+ * @module e2e/helpers/report
  */
 
 import {
@@ -15,7 +15,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, dirname, join, relative } from 'node:path';
+import { basename, join, relative } from 'node:path';
 
 /** One artifact the run produced. */
 export interface E2eArtifact {
@@ -152,6 +152,8 @@ export interface E2eCase {
   readonly annotations: readonly string[];
   readonly stdout: readonly string[];
   readonly stderr: readonly string[];
+  /** Playwright attachment paths for this case (absolute, from the JSON). */
+  readonly attachmentPaths: readonly string[];
   /** Artifacts copied into the case dir, relative to it. */
   artifacts: { kind: 'screenshot' | 'video'; path: string; size: number }[];
 }
@@ -229,6 +231,9 @@ export function flattenCases(report: PlaywrightReport): E2eCase[] {
             .map((a) => a.description as string),
           stdout: (result?.stdout ?? []).map((c) => c.text ?? ''),
           stderr: (result?.stderr ?? []).map((c) => c.text ?? ''),
+          attachmentPaths: (result?.attachments ?? [])
+            .map((a) => a.path)
+            .filter((p): p is string => p !== undefined && p !== ''),
           artifacts: [],
         });
       }
@@ -239,86 +244,41 @@ export function flattenCases(report: PlaywrightReport): E2eCase[] {
 
 /** Copy a case's attachments + scenario snapshots into its case dir. */
 function populateCaseArtifacts(runDir: string, cases: E2eCase[]): void {
-  // Attachment paths in the Playwright JSON are relative to runDir
-  // (e.g. `playwright-output/<case>/test-finished-1.png`). Collect them per
-  // case by scanning the playwright-output tree, since the JSON does not
-  // tie attachments to cases directly.
-  const outputDir = join(runDir, 'playwright-output');
-  const byDir = new Map<string, { kind: 'screenshot' | 'video'; path: string; size: number }[]>();
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir)) {
-      const full = join(dir, entry);
-      let stat: ReturnType<typeof statSync> | undefined;
-      try {
-        stat = statSync(full);
-      } catch {
-        continue;
-      }
-      if (stat === undefined) continue;
-      if (stat.isDirectory()) {
-        walk(full);
-      } else {
-        const ext = entry.slice(entry.lastIndexOf('.')).toLowerCase();
-        const kind = SCREENSHOT_EXT.has(ext)
-          ? 'screenshot'
-          : VIDEO_EXT.has(ext)
-            ? 'video'
-            : undefined;
-        if (kind === undefined) continue;
-        const parentDir = dirname(full);
-        const list = byDir.get(parentDir) ?? [];
-        list.push({ kind, path: full, size: stat.size });
-        byDir.set(parentDir, list);
-      }
-    }
-  };
-  if (existsSync(outputDir)) walk(outputDir);
-
   for (const c of cases) {
     const caseDir = join(runDir, 'cases', c.caseId);
     mkdirSync(join(caseDir, 'screenshots'), { recursive: true });
     const artifacts: E2eCase['artifacts'] = [];
-    // 1. attachments from the playwright-output tree (video keeps a single
-    //    mp4 — the mp4 is the converted copy of the webm, prefer it and
-    //    skip the duplicate webm).
-    for (const [dir, files] of byDir) {
-      if (!dir.includes(c.caseId) && !c.caseId.includes('')) continue;
-      for (const f of files) {
-        if (f.kind === 'video' && f.path.endsWith('.webm')) continue;
-        const target =
-          f.kind === 'video'
-            ? join(caseDir, 'video.mp4')
-            : join(caseDir, 'screenshots', basename(f.path));
-        try {
-          copyFileSync(f.path, target);
-          artifacts.push({
-            kind: f.kind,
-            path: relative(caseDir, target),
-            size: statSync(target).size,
-          });
-        } catch {
-          // best effort — a missing artifact must not kill the report
-        }
-      }
+    // 1. Playwright attachments (per-case, from the JSON — authoritative).
+    //    Video keeps a single file: prefer mp4 (the ffmpeg-converted copy),
+    //    fall back to webm when no mp4 exists (E2E_VIDEO=webm or a failed
+    //    conversion) so the recording is never silently dropped.
+    const videos = (c.attachmentPaths ?? [])
+      .map((p) => ({ path: p, kind: videoKind(p) }))
+      .filter((a): a is { path: string; kind: 'video' } => a.kind === 'video');
+    const videoPath =
+      videos.find((v) => v.path.toLowerCase().endsWith('.mp4'))?.path ?? videos[0]?.path;
+    if (videoPath !== undefined) {
+      copyArtifact(videoPath, join(caseDir, 'video.mp4'), caseDir, artifacts);
     }
-    // 2. the scenario's own key screenshots (runDir/screenshots/*.png).
-    //    They are named `N_<label>.png` at save time (per-page counter in
-    //    feishu.ts), so sorting by path IS capture order — no renaming here.
-    const shotsDir = join(runDir, 'screenshots');
+    for (const shot of (c.attachmentPaths ?? []).filter(
+      (p) => screenshotKind(p) === 'screenshot',
+    )) {
+      copyArtifact(shot, join(caseDir, 'screenshots', basename(shot)), caseDir, artifacts);
+    }
+    // 2. the scenario's own key screenshots — named `N_<label>.png` at save
+    //    time (per-page counter in feishu.ts) into a per-case subdir, so
+    //    sorting by path IS capture order and cases never collide.
+    const shotsDir = join(runDir, 'screenshots', c.caseId);
     if (existsSync(shotsDir)) {
       for (const entry of readdirSync(shotsDir)) {
-        if (!SCREENSHOT_EXT.has(entry.slice(entry.lastIndexOf('.')).toLowerCase())) continue;
+        if (screenshotKind(entry) !== 'screenshot') continue;
         const target = join(caseDir, 'screenshots', entry);
-        try {
-          copyFileSync(join(shotsDir, entry), target);
-          artifacts.push({
-            kind: 'screenshot',
-            path: relative(caseDir, target),
-            size: statSync(target).size,
-          });
-        } catch {
-          // best effort
-        }
+        copyFileSync(join(shotsDir, entry), target);
+        artifacts.push({
+          kind: 'screenshot',
+          path: relative(caseDir, target),
+          size: statSync(target).size,
+        });
       }
     }
     // 3. Deterministic display order: screenshots first (path embeds the
@@ -329,6 +289,35 @@ function populateCaseArtifacts(runDir: string, cases: E2eCase[]): void {
     });
     c.artifacts.push(...artifacts);
   }
+}
+
+/** Copy a source artifact into the case dir and record it. */
+function copyArtifact(
+  src: string,
+  target: string,
+  caseDir: string,
+  artifacts: E2eCase['artifacts'],
+): void {
+  try {
+    copyFileSync(src, target);
+    artifacts.push({
+      kind: screenshotKind(src) === 'screenshot' ? 'screenshot' : 'video',
+      path: relative(caseDir, target),
+      size: statSync(target).size,
+    });
+  } catch {
+    // best effort — a missing artifact must not kill the report
+  }
+}
+
+function videoKind(path: string): 'video' | undefined {
+  return VIDEO_EXT.has(path.slice(path.lastIndexOf('.')).toLowerCase()) ? 'video' : undefined;
+}
+
+function screenshotKind(path: string): 'screenshot' | undefined {
+  return SCREENSHOT_EXT.has(path.slice(path.lastIndexOf('.')).toLowerCase())
+    ? 'screenshot'
+    : undefined;
 }
 
 function esc(s: string): string {

@@ -113,6 +113,12 @@ FEISHU_INT_REQUIRED=1 pnpm run test   # fail (not skip) when a prerequisite is m
 | 中途停止 turn 会把表情切换为停止表情 | `stop mid-turn swaps the received reaction` |
 | `/export` transcript 包含工具行 | `/export after a tool-calling turn` |
 
+
+### 真实客户端 E2E（feishu.cn 网页版）
+
+E2E 套件在无头浏览器中驱动**真实的 feishu.cn 网页客户端**，像用户一样操作 bot：打开群聊、发送斜杠命令、点击卡片按钮、断言渲染结果。它运行真实的 dsh 进程（专用 bot 应用、mock LLM）加真实浏览器——是唯一同时使用真实飞书通道与真实客户端的测试层。先运行一次 `pnpm run e2e:setup`（专用测试账号；扫码是唯一的人工步骤，且 setup 幂等——重跑不会对已导出的登录重新扫码），之后 `pnpm run e2e:ui` 完全免人工。每个测试用例通过后台创建自己的群聊（`<caseId>-<runId>`，与 `/group` 相同的 `im.v1.chat.create` 调用），用例之间永不共享聊天页面。它**不**属于 CI：需要真实的 bot 应用与浏览器会话。设计、约束、运行手册与捕获到的网页选择器都在 `docs/e2e-testing.md`。
+
+## 运行真实测试 bot
 ## 在真实 dsh profile 中验证 bundle
 
 bundle 必须挂载进一个真实的 dsh profile。请使用隔离的 `DSH_HOME`，这样验证永远不会碰到生产 profile：
@@ -131,11 +137,6 @@ timeout 30 dsh --profile feishu-dev       # boot; expect the "[feishu]" log line
 - 无凭据启动会记录"未配置"通知并注册 `feishu-status`；凭据来自 `appId`/`appSecret` 配置键或 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` 环境变量。
 - 清理：`rm -rf _dev/dsh-home`（或删除 `feishu-dev` profile）。
 
-### 真实客户端 E2E（feishu.cn 网页版）
-
-E2E 套件在无头浏览器中驱动**真实的 feishu.cn 网页客户端**，像用户一样操作 bot：打开群聊、发送斜杠命令、点击卡片按钮、断言渲染结果。它运行真实的 dsh 进程（专用 bot 应用、mock LLM）加真实浏览器——是唯一同时使用真实飞书通道与真实客户端的测试层。先运行一次 `pnpm run e2e:setup`（专用测试账号；扫码是唯一的人工步骤，且 setup 幂等——重跑不会对已导出的登录重新扫码），之后 `pnpm run e2e:ui` 完全免人工。每个测试用例通过后台创建自己的群聊（`<caseId>-<runId>`，与 `/group` 相同的 `im.v1.chat.create` 调用），用例之间永不共享聊天页面。它**不**属于 CI：需要真实的 bot 应用与浏览器会话。设计、约束、运行手册与捕获到的网页选择器都在 `docs/e2e-testing.md`。
-
-## 运行真实测试 bot
 
 需要对着**真实飞书平台**做端到端验证时（某些卡只在真机上出错、时序问题、面板交互），用仓库自带的测试应用凭据启动 bot，而不是集成测试的 mock。checkout 里有一个 git-ignored 的测试 bot 环境：
 

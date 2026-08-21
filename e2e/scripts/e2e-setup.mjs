@@ -51,8 +51,9 @@ function log(step, msg) {
 
 // The bot app name must be globally unique so the setup's search-for-bot step
 // never matches a stale app from an earlier run. Each setup run derives a
-// fresh name (`DSH-E2E-TESTBOT-<YYYYMMDDHHmmss>`) and persists it into the
-// state dir for the launcher to reuse; E2E_BOT_NAME overrides explicitly.
+// fresh name (`DSH-E2E-TESTBOT-<YYYYMMDDHHmmss>`); E2E_BOT_NAME overrides
+// explicitly. The name is persisted to the state dir ONLY after the setup
+// run succeeds — a failed run leaves no poisoned name for the next attempt.
 function resolveBotName() {
   const explicit = env.E2E_BOT_NAME;
   if (explicit) return explicit;
@@ -66,9 +67,11 @@ function resolveBotName() {
     .replace(/[-:TZ]/g, '')
     .replace(/\.\d{3}/, '')
     .slice(0, 14);
-  const fresh = `DSH-E2E-TESTBOT-${stamp}`;
-  writeFileSync(nameFile, `${fresh}\n`, 'utf8');
-  return fresh;
+  return `DSH-E2E-TESTBOT-${stamp}`;
+}
+
+function persistBotName(name) {
+  writeFileSync(join(stateDir, 'bot-name'), `${name}\n`, 'utf8');
 }
 
 const botName = resolveBotName();
@@ -129,7 +132,8 @@ const res = spawnSync(
     'bash',
     '-c',
     'mkdir -p /app && tar --exclude=./node_modules --exclude=./lib --exclude=./_dev ' +
-      '--exclude=./.pnpm-store --exclude=./.git -C /repo -cf - . | tar -C /app -xf - && ' +
+      '--exclude=./.pnpm-store --exclude=./.git --exclude=./e2e/.build ' +
+      '--exclude=./e2e/.state --exclude=./e2e/.output -C /repo -cf - . | tar -C /app -xf - && ' +
       'node /app/e2e/scripts/e2e-container.mjs',
   ],
   { stdio: 'inherit' },
@@ -137,6 +141,8 @@ const res = spawnSync(
 const exit = res.status ?? 1;
 
 if (exit === 0) {
+  // Persist the unique bot name only after the setup actually succeeded.
+  persistBotName(botName);
   console.log('\n✅ E2E setup complete — `pnpm run e2e:ui` now runs hands-free.');
 } else {
   console.log('\n✗ E2E setup failed — see the output above.');

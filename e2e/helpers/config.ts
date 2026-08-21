@@ -18,7 +18,7 @@
  *   `<repo>/e2e/.state/web-session.json`)
  * - `E2E_BASE_URL` — Feishu web base URL (default `https://www.feishu.cn/`)
  *
- * @module e2e/lib/config
+ * @module e2e/helpers/config
  */
 
 import { basename, join } from 'node:path';

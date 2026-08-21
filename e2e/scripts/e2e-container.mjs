@@ -355,10 +355,16 @@ async function main() {
     stdio: ['ignore', 'pipe', 'inherit'],
   });
   children.push(dsh);
+  // The readiness marker is the plugin's `[feishu] bridge ready` line
+  // (src/index.ts) — `[feishu] starting surface` prints at boot before the
+  // long connection is up, so matching it would start scenarios too early.
+  // Accumulate stdout: a single `data` chunk may hold a partial line.
   const ready = await new Promise((resolve) => {
     const timer = setTimeout(() => resolve(false), 90_000);
+    let buffer = '';
     dsh.stdout.on('data', (chunk) => {
-      if (/long connection ready|\[feishu\]/.test(String(chunk))) {
+      buffer += String(chunk);
+      if (buffer.includes('[feishu] bridge ready')) {
         clearTimeout(timer);
         resolve(true);
       }
@@ -425,6 +431,7 @@ async function main() {
   const envForReport = {
     ...process.env,
     E2E_RUN_DIR: reportDir,
+    E2E_APP_ID: creds?.appId ?? '',
     E2E_PLUGIN_VERSION: JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version,
   };
   const gen = spawnSync(
@@ -432,8 +439,11 @@ async function main() {
     [join(ROOT, 'e2e', 'scripts', 'e2e-report.mjs'), reportDir],
     { cwd: ROOT, env: envForReport, stdio: 'inherit' },
   );
-  if (gen.status !== 0)
-    console.warn('  (report generation failed — raw Playwright output is still in reportDir)');
+  if (gen.status !== 0) {
+    // A run with no report is a failed run, not a warning.
+    console.error('✗ report generation failed — raw Playwright output is still in reportDir');
+    exitCode = 2;
+  }
   // `latest` symlink → this run (remove-then-create; rm -f of a dir symlink is fine).
   spawnSync('sh', ['-c', `rm -f ${outputRoot}/latest && ln -s ${runId} ${outputRoot}/latest`], {
     stdio: 'ignore',

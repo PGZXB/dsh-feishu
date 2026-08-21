@@ -1,6 +1,6 @@
 /**
  * Playwright configuration for the real-client E2E suite. All knobs come
- * from the environment via {@link loadE2eConfig} (see `e2e/lib/config.ts`),
+ * from the environment via {@link loadE2eConfig} (see `e2e/helpers/config.ts`),
  * so the same config serves local and docker runs.
  *
  * @module e2e/playwright.config

@@ -68,7 +68,7 @@ setup 依次完成：
 2. 容器内：复制仓库（只读挂载）、安装 + 构建、把插件装进 profile `e2e-dev`；
 3. **创建 bot 应用** — README quick-setup；用**测试账号**扫 `e2e/.state/setup.log` 里的开放平台二维码（过期自动换新）；应用以**唯一名称** `DSH-E2E-TESTBOT-<YYYYMMDDHHmmss>` 创建（持久化到 `e2e/.state/bot-name`；可用 `E2E_BOT_NAME` 覆盖），确保 setup 的搜索 bot 步骤不会匹配到更早运行留下的同名残留应用；凭据导出到 `e2e/.state/creds.json`（已存在则跳过；设了 `E2E_APP_ID`/`E2E_APP_SECRET` 也跳过）；
 4. **浏览器登录** — 用同一账号扫 `e2e/.state/qr.png`；storageState 导出到 `e2e/.state/web-session.json`（已存在则跳过）；
-5. **测试用户 open_id** — 浏览器给 bot 发一条一次性私聊消息（创建 p2p 聊天），然后用应用自身凭据（manifest 已有的 `im:chat` / `im:chat.members:read`，无需额外 scope）从该聊天的成员里解析出测试用户 open_id，存入 `e2e/.state/user.json`——后台建群需要用它把测试用户拉进群（已存在则跳过）；
+5. **测试用户 open_id** — 用 WSClient 长连接（与插件 transport 相同的 SDK）监听 `im.message.receive_v1`，同时浏览器给 bot 发一条一次性私聊消息；事件里的 `sender.sender_id.open_id` 就是测试用户 id → 存入 `e2e/.state/user.json`——后台建群需要用它把测试用户拉进群（已存在则跳过；无需额外 API scope）；
 6. **建群探针** — 通过后台创建并删除一个探针群，验证应用能管理群聊。
 
 退出码：`0` = 就绪（之后的 `e2e:ui` 免人工）；其他 = 失败（看输出）。
@@ -99,39 +99,40 @@ E2E_APP_ID / E2E_APP_SECRET # 可选：覆盖 bot 应用
   cases/<caseId>/
     report.html     单用例自包含页（状态、错误、注解、截图、<video> 录屏、产物、stdout）
     report.json     单用例的详尽 JSON
-    screenshots/    该用例的截图，按拍摄顺序编号（1_<名字>、2_<名字>、…）
-                    ——场景通过 snapshot(page, cfg, label) 自选 + Playwright 自动截图
-    video.mp4       该用例完整录屏（mp4；webm 源保留为 video.webm）
+    screenshots/    该用例的截图：场景自选的按拍摄顺序编号（1_<名字>、2_<名字>、…）
+                    保存时即编号；Playwright 自动截图保留原名
+    video.mp4       该用例完整录屏（单一 mp4——webm 源只保留在原始 playwright-output/ 里）
   report.json       Playwright 原始 JSON（生成器的数据源）
   manifest.json     扁平产物清单（路径 + 类型 + 大小）
 ```
 
-单用例 `report.json` 事无巨细：状态、耗时、开始时间、重试次数、错误消息 + 位置、注解、stdout/stderr、产物，以及运行环境（node/playwright/插件版本、视频/截图策略）。
+单用例 `report.json` 事无巨细：状态、耗时、开始时间、重试次数、错误消息 + 位置、注解、stdout/stderr、产物。运行环境（node/playwright/插件版本、视频/截图策略）在 `summary.json` / `summary.html` 里。
 
 ## 添加场景
 
-1. 新建 `e2e/scenarios/<name>.spec.ts` —— 共享 helper 已覆盖大部分管道，场景只需几行意图。**每个用例先后台创建自己的群聊**（`<caseId>-<runId>`，每次运行唯一）再打开；**关键截图由你在场景里指定**：在重要时刻（聊天打开、流式中、最终态）调用 `snapshot(page, cfg, label)`：
+1. 新建 `e2e/scenarios/<name>.spec.ts` —— 共享 helper 已覆盖大部分管道，场景只需几行意图。**每个用例先后台创建自己的群聊**（`<caseId>-<runId>`，每次运行唯一）再打开；**关键截图由你在场景里指定**：在重要时刻（聊天打开、流式中、最终态）调用 `snapshot(page, cfg, label, caseId)`：
 
    ```ts
    import { test } from '@playwright/test';
-   import { loadE2eConfig } from '../lib/config.js';
-   import { waitForBotReplyContaining } from '../lib/assert.js';
-   import { openApp, openChat, sendMessage, snapshot } from '../lib/feishu.js';
-   import { caseIdFromTitle } from '../lib/report.js';
-   import { createGroup, deleteGroup, groupNameFor } from '../lib/group.js';
+   import { loadE2eConfig } from '../helpers/config.js';
+   import { waitForBotReplyContaining } from '../helpers/assert.js';
+   import { openApp, openChat, sendMessage, snapshot } from '../helpers/feishu.js';
+   import { caseIdFromTitle } from '../helpers/report.js';
+   import { createGroup, deleteGroup, groupNameFor } from '../helpers/group.js';
 
    const cfg = loadE2eConfig();
 
    test('send /model → model picker card', async ({ page }, testInfo) => {
-     const groupName = groupNameFor(caseIdFromTitle(testInfo.title), cfg.runId);
+     const caseId = caseIdFromTitle(testInfo.title);
+     const groupName = groupNameFor(caseId, cfg.runId);
      const { chatId } = await createGroup(cfg, groupName, [cfg.userOpenId!]);
      try {
        await openApp(page, cfg);
        await openChat(page, groupName, cfg.timeoutMs);
-       await snapshot(page, cfg, 'model-chat-open');
+       await snapshot(page, cfg, 'model-chat-open', caseId);
        await sendMessage(page, '/model');
        await waitForBotReplyContaining(page, 'Model', cfg.timeoutMs);
-       await snapshot(page, cfg, 'model-picker');
+       await snapshot(page, cfg, 'model-picker', caseId);
      } finally {
        // 就地解散群聊，避免运行积累聊天
        await deleteGroup(cfg, chatId).catch((error) =>
@@ -153,7 +154,7 @@ E2E_APP_ID / E2E_APP_SECRET # 可选：覆盖 bot 应用
 | `sendMessage(page, text)` | 在聊天输入框输入并发送 |
 | `chatMessages(page)` | 读取已渲染消息 `{text, isSelf}[]` |
 | `clickButton(page, label)` / `clickCardText(page, label)` | 点击卡片按钮 / 卡片文本 |
-| `snapshot(page, cfg, label)` | 保存关键截图到 `report/screenshots/` |
+| `snapshot(page, cfg, label, caseId)` | 保存关键截图到 `report/screenshots/` |
 | `waitForBotReplyContaining(page, text, timeoutMs)` | 等待包含指定文本的 bot 回复（规则化） |
 | `groupNameFor(caseId, runId)` | 唯一群名 `<caseId>-<runId>`，截断至 ≤ 60 字符 |
 | `createGroup(cfg, name, memberOpenIds)` / `deleteGroup(cfg, chatId)` | 后台建群/删群（`im.v1.chat.create` / `im.v1.chat.delete`） |
@@ -172,7 +173,7 @@ E2E_APP_ID / E2E_APP_SECRET # 可选：覆盖 bot 应用
 
 ## 排障
 
-- **「feishu app did not open」** — 浏览器会话过期；重跑 `pnpm run e2e:setup`（一次扫码）刷新。
+- **「feishu app did not open」** — 浏览器会话过期；用 `pnpm run e2e:login` 刷新（或删掉 `e2e/.state/web-session.json` 再重跑 `e2e:setup`——会话存在但已过期时 setup 会跳过，不会重新扫码）。
 - **setup 在建群探针处失败** — 应用无法通过后台创建群聊；检查应用的权限/scope（见 `docs/feishu-setup.md`），并确认 `E2E_USER_OPEN_ID` 解析到的是测试账号。
 - **「setup state missing」** — 先跑 `pnpm run e2e:setup`；运行模式拒绝猜测凭据。
 - **dsh 一直不报 "long connection ready"** — 应用凭据错误，或应用未配置长连接事件模式（见 `docs/feishu-setup.md`）。

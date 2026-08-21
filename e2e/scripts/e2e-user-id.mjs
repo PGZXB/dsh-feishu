@@ -90,11 +90,26 @@ const openIdPromise = new Promise((resolve, reject) => {
   resolveOpenId = resolve;
   rejectOpenId = reject;
 });
-const eventTimeout = setTimeout(() => {
-  rejectOpenId(
-    new Error('no im.message.receive_v1 event within 60 s — did the message reach the bot?'),
-  );
-}, 60_000);
+// The event must arrive after the WS is actually connected; the browser flow
+// below waits for `readyPromise`, and the 60 s deadline starts then (not at
+// script start, when the WS may still be handshaking).
+let eventTimeout;
+function armEventTimeout() {
+  eventTimeout = setTimeout(() => {
+    rejectOpenId(
+      new Error('no im.message.receive_v1 event within 60 s — did the message reach the bot?'),
+    );
+  }, 60_000);
+}
+let resolveReady;
+let rejectReady;
+const readyPromise = new Promise((resolve, reject) => {
+  resolveReady = resolve;
+  rejectReady = reject;
+});
+const readyTimer = setTimeout(() => {
+  rejectReady(new Error('WSClient did not become ready within 30 s'));
+}, 30_000);
 
 const dispatcher = new EventDispatcher({}).register({
   'im.message.receive_v1': (data) => {
@@ -112,8 +127,16 @@ const ws = new WSClient({
   appSecret,
   autoReconnect: true,
   handshakeTimeoutMs: 15_000,
-  onReady: () => console.log('  [user] long connection ready — send the message now'),
-  onError: (error) => console.log(`  [user] long connection error: ${error.message}`),
+  onReady: () => {
+    clearTimeout(readyTimer);
+    console.log('  [user] long connection ready — send the message now');
+    resolveReady();
+  },
+  onError: (error) => {
+    clearTimeout(readyTimer);
+    rejectReady(new Error(`WSClient error: ${error.message}`));
+    rejectOpenId(new Error(`WSClient error: ${error.message}`));
+  },
 });
 
 // ── 2. Browser: open the bot's p2p chat and send the message ──────────────
@@ -140,40 +163,46 @@ for (const origin of s.origins ?? []) {
 }
 
 await ws.start({ eventDispatcher: dispatcher });
-await page
-  .goto('https://www.feishu.cn/messenger/', { waitUntil: 'commit', timeout: 45_000 })
-  .catch(() => {});
-await page.waitForTimeout(10_000);
+// Wait for the long connection to be live BEFORE sending the message — a
+// message sent before the WS is listening is lost forever.
+await readyPromise;
+armEventTimeout();
 
-// Global search (Ctrl+K) → type the bot name → click the bot result card.
-console.log(`  [user] searching for the bot "${botName}" (Ctrl+K)`);
-await page.keyboard.press('Control+k');
-await page.waitForTimeout(2_500);
-const searchBox = page.locator('.zone-container.editor-kit-container:visible').first();
-await searchBox.click();
-await searchBox.pressSequentially(botName, { delay: 25 });
-await page.waitForTimeout(3_500);
+try {
+  await page
+    .goto('https://www.feishu.cn/messenger/', { waitUntil: 'commit', timeout: 45_000 })
+    .catch(() => {});
+  await page.waitForTimeout(10_000);
 
-// The bot appears as a `.bot-result-card` (cursor:pointer) in the search
-// results; clicking it opens the p2p chat. The bot name is unique per setup
-// run, so exactly one card carries it.
-const botCard = page.locator('.bot-result-card:visible').filter({ hasText: botName }).first();
-if ((await botCard.count().catch(() => 0)) === 0) {
-  console.error(`✗ no bot result card found for "${botName}" in the search results`);
-  ws.close();
-  process.exit(2);
+  // Global search (Ctrl+K) → type the bot name → click the bot result card.
+  console.log(`  [user] searching for the bot "${botName}" (Ctrl+K)`);
+  await page.keyboard.press('Control+k');
+  await page.waitForTimeout(2_500);
+  const searchBox = page.locator('.zone-container.editor-kit-container:visible').first();
+  await searchBox.click();
+  await searchBox.pressSequentially(botName, { delay: 25 });
+  await page.waitForTimeout(3_500);
+
+  // The bot appears as a `.bot-result-card` (cursor:pointer) in the search
+  // results; clicking it opens the p2p chat. The bot name is unique per
+  // setup run, so exactly one card carries it.
+  const botCard = page.locator('.bot-result-card:visible').filter({ hasText: botName }).first();
+  if ((await botCard.count().catch(() => 0)) === 0) {
+    throw new Error(`no bot result card found for "${botName}" in the search results`);
+  }
+  await botCard.click();
+  await page.waitForTimeout(5_000);
+
+  // Send a private message — the incoming event carries the sender open_id.
+  const composer = page.locator('.innerdocbody:visible, [class*="editor-kit"]:visible').last();
+  await composer.click();
+  await composer.fill('e2e setup probe — one-time user resolution');
+  await composer.press('Enter');
+  await page.waitForTimeout(2_000);
+  console.log('  [user] p2p message sent, waiting for the event…');
+} finally {
+  await context.close().catch(() => {});
 }
-await botCard.click();
-await page.waitForTimeout(5_000);
-
-// Send a private message — the incoming event carries the sender open_id.
-const composer = page.locator('.innerdocbody:visible, [class*="editor-kit"]:visible').last();
-await composer.click();
-await composer.fill('e2e setup probe — one-time user resolution');
-await composer.press('Enter');
-await page.waitForTimeout(2_000);
-await context.close();
-console.log('  [user] p2p message sent, waiting for the event…');
 
 // ── 3. Resolve the open_id from the event ─────────────────────────────────
 let openId;
@@ -185,6 +214,7 @@ try {
   process.exit(1);
 }
 ws.close();
+clearTimeout(eventTimeout);
 
 if (typeof openId !== 'string' || !/^ou_/.test(openId)) {
   console.error(`✗ invalid open_id resolved: ${JSON.stringify(openId)}`);

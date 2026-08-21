@@ -29,7 +29,8 @@ test('send /help → slash command descriptions', async ({ page }, testInfo) => 
   // Backend group creation (the same call /group wraps): each case owns a
   // uniquely-named group, so parallel runs never share a chat page. The
   // group is disbanded in `finally` — every run cleans up after itself.
-  const groupName = groupNameFor(caseIdFromTitle(testInfo.title), cfg.runId);
+  const caseId = caseIdFromTitle(testInfo.title);
+  const groupName = groupNameFor(caseId, cfg.runId);
   if (cfg.userOpenId === undefined) {
     throw new Error('E2E_USER_OPEN_ID is required (run `pnpm run e2e:setup` first)');
   }
@@ -38,11 +39,11 @@ test('send /help → slash command descriptions', async ({ page }, testInfo) => 
     await openApp(page, cfg);
     await openChat(page, groupName, cfg.timeoutMs);
     // Key evidence point 1: the group chat is open, composer visible.
-    await snapshot(page, cfg, 'help-chat-open');
+    await snapshot(page, cfg, 'help-chat-open', caseId);
 
     await sendMessage(page, '/help');
     // Key evidence point 2: the /help message is in the chat.
-    await snapshot(page, cfg, 'help-sent');
+    await snapshot(page, cfg, 'help-sent', caseId);
 
     // The help block opens with the header and includes at least the /help
     // command's own line — two independent rule-based assertions.
@@ -54,7 +55,7 @@ test('send /help → slash command descriptions', async ({ page }, testInfo) => 
     );
 
     // Key evidence point 3: the final bot reply with the command list.
-    await snapshot(page, cfg, 'help-reply');
+    await snapshot(page, cfg, 'help-reply', caseId);
 
     testInfo.annotations.push({
       type: 'evidence',

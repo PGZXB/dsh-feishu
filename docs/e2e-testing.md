@@ -111,12 +111,12 @@ The setup performs, in order:
 4. **browser login** — scan `e2e/.state/qr.png` with the same
    account; the storageState is exported to
    `e2e/.state/web-session.json` (skipped when it exists);
-5. **test-user open_id** — the browser sends the bot a one-time private
-   message (creating the p2p chat), then the app's own credentials (the
-   manifest's `im:chat` / `im:chat.members:read`, no extra scope) resolve
-   the test user's open_id from that chat's members into
+5. **test-user open_id** — a WSClient long connection (the same SDK the
+   plugin's transport uses) listens for `im.message.receive_v1` while the
+   browser sends the bot a one-time private message; the event's
+   `sender.sender_id.open_id` is the test user's id → written to
    `e2e/.state/user.json` — the backend group creation invites this user
-   (skipped when it exists);
+   (skipped when it exists; no extra API scope needed);
 6. **group probe** — creates and deletes a probe group through the backend
    to verify the app can manage group chats.
 
@@ -155,18 +155,19 @@ one self-contained page per case:
     report.html     one case, self-contained (status, error, annotations,
                     screenshots, <video> recording, artifacts, stdout)
     report.json     one case, everything we know about it
-    screenshots/    the case's screenshots, numbered in capture order
-                    (1_<name>, 2_<name>, …) — scenario-chosen via
-                    snapshot(page, cfg, label) + Playwright captures
-    video.mp4       the case's full recording (mp4; webm kept as video.webm)
+    screenshots/    the case's screenshots: scenario-chosen ones are numbered
+                    in capture order (1_<name>, 2_<name>, …) at save time;
+                    Playwright captures keep their own names
+    video.mp4       the case's full recording (a single mp4 — the webm
+                    source is kept only in the raw playwright-output/)
   report.json       Playwright's raw JSON (the generator's source of truth)
   manifest.json     flat artifact list (path + kind + size)
 ```
 
 The per-case `report.json` is exhaustive: status, duration, start time,
-retry count, error message + location, annotations, stdout/stderr,
-artifacts, plus the run environment (node/playwright/plugin versions,
-video/screenshot policy).
+retry count, error message + location, annotations, stdout/stderr, and the
+case's artifacts. The run environment (node/playwright/plugin versions,
+video/screenshot policy) lives in `summary.json` / `summary.html`.
 
 ## Adding a scenario
 
@@ -174,29 +175,30 @@ video/screenshot policy).
    plumbing, so a scenario is a few lines of intent. **Every case creates
    its own backend group** (`<caseId>-<runId>`, unique per run) and opens
    it; **choose the key screenshots yourself** with
-   `snapshot(page, cfg, label)` at the moments that matter (chat open,
-   mid-stream, final state):
+   `snapshot(page, cfg, label, caseId)` at the moments that matter (chat
+   open, mid-stream, final state):
 
    ```ts
    import { test } from '@playwright/test';
-   import { loadE2eConfig } from '../lib/config.js';
-   import { waitForBotReplyContaining } from '../lib/assert.js';
-   import { openApp, openChat, sendMessage, snapshot } from '../lib/feishu.js';
-   import { caseIdFromTitle } from '../lib/report.js';
-   import { createGroup, deleteGroup, groupNameFor } from '../lib/group.js';
+   import { loadE2eConfig } from '../helpers/config.js';
+   import { waitForBotReplyContaining } from '../helpers/assert.js';
+   import { openApp, openChat, sendMessage, snapshot } from '../helpers/feishu.js';
+   import { caseIdFromTitle } from '../helpers/report.js';
+   import { createGroup, deleteGroup, groupNameFor } from '../helpers/group.js';
 
    const cfg = loadE2eConfig();
 
    test('send /model → model picker card', async ({ page }, testInfo) => {
-     const groupName = groupNameFor(caseIdFromTitle(testInfo.title), cfg.runId);
+     const caseId = caseIdFromTitle(testInfo.title);
+     const groupName = groupNameFor(caseId, cfg.runId);
      const { chatId } = await createGroup(cfg, groupName, [cfg.userOpenId!]);
      try {
        await openApp(page, cfg);
        await openChat(page, groupName, cfg.timeoutMs);
-       await snapshot(page, cfg, 'model-chat-open');
+       await snapshot(page, cfg, 'model-chat-open', caseId);
        await sendMessage(page, '/model');
        await waitForBotReplyContaining(page, 'Model', cfg.timeoutMs);
-       await snapshot(page, cfg, 'model-picker');
+       await snapshot(page, cfg, 'model-picker', caseId);
      } finally {
        // Disband the group so runs do not accumulate chats.
        await deleteGroup(cfg, chatId).catch((error) =>
@@ -221,7 +223,7 @@ video/screenshot policy).
 | `sendMessage(page, text)` | type into the chat composer and send |
 | `chatMessages(page)` | read the rendered messages `{text, isSelf}[]` |
 | `clickButton(page, label)` / `clickCardText(page, label)` | click a card button / card text |
-| `snapshot(page, cfg, label)` | save a key screenshot into `report/screenshots/` |
+| `snapshot(page, cfg, label, caseId)` | save a key screenshot into `report/screenshots/<caseId>/` |
 | `waitForBotReplyContaining(page, text, timeoutMs)` | wait for a bot reply containing text (rule-based) |
 | `groupNameFor(caseId, runId)` | unique group name `<caseId>-<runId>`, truncated to ≤ 60 chars |
 | `createGroup(cfg, name, memberOpenIds)` / `deleteGroup(cfg, chatId)` | backend group create/delete (`im.v1.chat.create` / `im.v1.chat.delete`) |
@@ -243,7 +245,9 @@ helper together.
 ## Troubleshooting
 
 - **"feishu app did not open"** — the browser session expired; re-run
-  `pnpm run e2e:setup` (one QR scan) to refresh it.
+  `pnpm run e2e:login` to refresh it (or delete `e2e/.state/web-session.json`
+  and re-run `pnpm run e2e:setup` — a present-but-expired session is skipped,
+  so plain `e2e:setup` re-runs would not re-scan).
 - **setup fails at the group probe** — the app cannot create group chats
   through the backend; check the app's permissions/scopes (see
   `docs/feishu-setup.md`) and that `E2E_USER_OPEN_ID` resolved to the test

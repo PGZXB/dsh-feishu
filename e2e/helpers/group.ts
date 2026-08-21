@@ -9,7 +9,7 @@
  * Pure HTTP + pure string helpers — no browser — so the name logic and the
  * request construction are unit-testable.
  *
- * @module e2e/lib/group
+ * @module e2e/helpers/group
  */
 
 /** Feishu Open Platform base URL (matches the plugin's apiBase default). */
@@ -72,8 +72,9 @@ async function tenantAccessToken(cfg: E2eCredentials, fetchImpl: typeof fetch): 
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ app_id: cfg.appId, app_secret: cfg.appSecret }),
+    signal: AbortSignal.timeout(15_000),
   });
-  const body = (await res.json()) as TenantTokenResponse;
+  const body = (await readJson(res, 'auth.v3.tenant_access_token.internal')) as TenantTokenResponse;
   if (body.code !== 0 || body.tenant_access_token === undefined) {
     throw new FeishuApiError(
       'auth.v3.tenant_access_token.internal',
@@ -119,8 +120,9 @@ export async function createGroup(
       // disband the group afterwards. `/group` sets owner = first member;
       // the E2E harness deliberately differs for self-cleanup.
     }),
+    signal: AbortSignal.timeout(15_000),
   });
-  const body = (await res.json()) as CreateChatResponse;
+  const body = (await readJson(res, 'im.v1.chat.create')) as CreateChatResponse;
   const chatId = body.data?.chat_id;
   if (body.code !== 0 || chatId === undefined) {
     throw new FeishuApiError('im.v1.chat.create', body.code ?? -1, body.msg ?? 'unknown');
@@ -144,9 +146,19 @@ export async function deleteGroup(
   const res = await fetchImpl(`${OPEN_BASE}/open-apis/im/v1/chats/${chatId}`, {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(15_000),
   });
-  const body = (await res.json()) as { code?: number; msg?: string };
+  const body = (await readJson(res, 'im.v1.chat.delete')) as { code?: number; msg?: string };
   if (body.code !== 0) {
     throw new FeishuApiError('im.v1.chat.delete', body.code ?? -1, body.msg ?? 'unknown');
+  }
+}
+
+/** Parse a response body as JSON, surfacing non-JSON responses as API errors. */
+async function readJson(res: Response, api: string): Promise<unknown> {
+  try {
+    return await res.json();
+  } catch {
+    throw new FeishuApiError(api, -1, `non-JSON response (HTTP ${res.status})`);
   }
 }

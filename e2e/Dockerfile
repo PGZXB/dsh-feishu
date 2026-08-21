@@ -2,7 +2,7 @@
 # bundled one only encodes VP8) and pnpm (the README quick-setup flow runs
 # `pnpm run setup:feishu` inside this image).
 #
-# Build once:  docker build -f Dockerfile.e2e -t dsh-e2e-tools .
+# Build once:  docker build -f e2e/Dockerfile -t dsh-e2e-tools .
 # The launcher (`pnpm run e2e:ui`) builds it automatically when missing.
 FROM mcr.microsoft.com/playwright:v1.62.1-jammy
 

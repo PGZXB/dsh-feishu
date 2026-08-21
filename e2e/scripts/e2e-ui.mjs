@@ -119,7 +119,8 @@ const res = spawnSync(
     'bash',
     '-c',
     'mkdir -p /app && tar --exclude=./node_modules --exclude=./lib --exclude=./_dev ' +
-      '--exclude=.pnpm-store --exclude=.git -C /repo -cf - . | tar -C /app -xf - && ' +
+      '--exclude=.pnpm-store --exclude=.git --exclude=./e2e/.build ' +
+      '--exclude=./e2e/.state --exclude=./e2e/.output -C /repo -cf - . | tar -C /app -xf - && ' +
       'node /app/e2e/scripts/e2e-container.mjs',
   ],
   { stdio: 'inherit' },
@@ -127,5 +128,7 @@ const res = spawnSync(
 const exit = res.status ?? 1;
 
 console.log(`\nE2E finished (exit ${exit})`);
-console.log(`report: ${join(outputDir, 'latest', 'summary.html')}`);
+if (exit === 0) {
+  console.log(`report: ${join(outputDir, 'latest', 'summary.html')}`);
+}
 process.exit(exit);

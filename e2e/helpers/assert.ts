@@ -3,7 +3,7 @@
  * rendered DOM only. No vision calls — assertions must stay free and
  * deterministic (see `docs/e2e-testing.md` → "Constraints").
  *
- * @module e2e/lib/assert
+ * @module e2e/helpers/assert
  */
 
 import type { Page } from '@playwright/test';
