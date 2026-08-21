@@ -23,7 +23,7 @@ Feature list and TODO tracker for dsh-feishu. ✅ = shipped, 📋 = planned
 | Agent preset selection | Pick an agent preset (e.g. PTC mode) when choosing a working directory | Mode dropdown on the `/repo` / `/cd` picker card; preset binds to the new session | 📋 |
 | Subagent manager | Tree view of subagents (parent→child, status, tokens, duration), open or cancel one | Panel tree view | 📋 |
 | Settings panel | View models/providers, manage API keys, review default cwd/preset | Panel settings view | 📋 |
-| Turn produced files | Files a turn produced surface at the end of the turn | Chips row at the card bottom; tap a chip to receive the file | 📋 |
+| Turn produced files | Files a turn produced surface at the end of the turn | Chips row at the card bottom; tap a chip to receive the file | ✅ |
 | Message queue | Messages sent while a turn runs queue visibly; edit / delete / steer them | Collapsed "N queued" row on the streaming card; expand to edit/delete/steer | 📋 |
 | Model retry line | Model auto-retries surface instead of staying silent | Card status line "retrying (2/3) · 3s", expand for delay/reason | 📋 |
 | Session stats line | Durable per-session usage: turns, steps, LLM/tool time, TTFT, tok/s, cache hit, tokens | One small line at the card bottom, refreshed per turn; details in `/status` | 📋 |
@@ -32,3 +32,4 @@ Feature list and TODO tracker for dsh-feishu. ✅ = shipped, 📋 = planned
 | inbound-wait-instruction | Bare file/image messages register as pending — a receipt card posts and the agent waits for the user's instruction before working | 📎 File received receipt (counts pending files); follow-up text drains them into one turn | ✅ |
 | inbound-rich-text | Feishu rich-text (post) and video messages are no longer dropped: a post is serialized into ordered rich text + attachments (formatting and intra-bubble order preserved), a video is a plain file | Rich-text-with-text posts turn immediately; attachment-only posts / videos register as pending | ✅ |
 | outbound-files-images | agent sends files/images to Feishu via a send_file tool | — | 📋 |
+| turn-produced-files | list a turn's produced files as clickable chips on the streaming card; tapping a chip sends it to the chat | — | ✅ |

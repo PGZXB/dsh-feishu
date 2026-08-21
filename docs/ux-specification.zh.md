@@ -593,3 +593,83 @@ print(1)
   的有序占位符序列化是我们自己的设计，保留用户要求的气泡内顺序。
 - pending 路由复用兄弟特性 inbound-wait-instruction part（跟进文字排空；
   附件消息绕过群 mention gate，因为飞书无法从附件里 @）。
+
+## Part: turn-produced-files
+
+> turn 结束后，流式卡列出 agent 产出的文件（write/edit 变更）为可点击 chips；
+> 点一个 chip 把该文件以原生飞书图片/文件消息发给聊天。镜像 DSH web
+> 的「Turn produced files」行（相同路径，路径级一致）。
+
+### 预期行为
+
+**为什么是路径级一致、不是渲染意图一致** — DSH web 从工具结果卡的渲染意图
+（`card === 'diff'` 或 `generic + edit` → `locations[].path`）派生产出文件，
+由浏览器端的 `client-runtime` 从每个工具的 `presentCall`/`presentResult` 构建。
+该渲染意图数据不在宿主会话事件流里 — surface（插件）看不到 `card`/`locations`。
+宿主能看到 `tool/result` 的 `meta`（工具私有展示载荷）与关联的 `tool/call`
+行。因此 surface 组合这两个宿主可见来源，复现同一组产出路径（write/edit
+变更）——路径级一致，与 web 行同路径。
+
+**宿主侧的变更信号** — fs write/edit 工具在 `tool/result` 上持久化一个
+`meta.diffs` KEY：update/overwrite 是非空 `{path, oldText, newText}[]`，
+新建文件 CREATE 是空列表（没有 before 镜像可 diff）。read 带窗口/摘要 meta
+（无 `diffs` key），delete 与纯 terminal 工具不带任何 meta —— 所以
+`meta.diffs` KEY（哪怕空数组）即变更信号，正是 web 的渲染意图规则
+（「read 只是看，delete 是移除，terminal 是运行」）。
+
+**触发** — `tool/result` 事件的 `meta` 带 `diffs` 数组 key。非空 `diffs` 取
+第一条的 `path`（变更工具一次改一个文件；行即该文件）。空 `diffs`（新建）
+路径不在 meta —— 从关联的 `tool/call` 参数的 `file_path` 派生（fs write/edit
+工具在此命名目标，匹配 web 的 `presentCall.locations`）。无关联 `tool/call`
+行且 `diffs` 为空 → 不加任何路径（绝不出现坏 chip）。
+
+**状态** — `ChatCardState` 增 `producedPaths: string[]`（权威的 turn 内产出文件
+路径，去重，按到达顺序）。新 turn 开始（`turn/start`）时重置，随 `tool/result`
+事件填充。`CardSnapshot`/单一渲染路径（`syncCard`）携带它。
+
+**卡/面板形态** — 流式卡的最终状态（done / stopped / error）在最后一条
+tool/message 行下渲染 `📎 Produced` 行：每个产出路径一个按钮（label =
+basename）。点一个 chip 通过既有 outbound transport 把文件发给聊天
+（图片扩展名 → `sendImage`，否则 `sendFile` — #29 `send_file` 基建）。
+chip 是卡片动作（`value.kind: 'send-produced'`、`value.path`）；它不改卡片
+状态（只发送 + 一条 debug 日志），卡片保持终态。只发送文件消息 — 不额外
+发回执卡（chips 行本身就是提示）。
+
+**排序/清理** — `producedPaths` 是 turn 内作用域：`turn/start` 重置，
+`turn/end` 冻结 chips 行（卡片随它定稿）。后续 turn 的变更替换上一份列表。
+路径相对 chat 固定的 cwd（正是工具 `meta.diffs[].path` 携带的），因此相对
+`cwd` 解析即可复现文件。
+
+**失败模式**：
+- `meta` 缺失 / `diffs` 空：什么都不加（read、delete、terminal —— 正确的排除）。
+- `meta.diffs` 存在但畸形（无 path）：跳过并 debug 日志（绝不出现坏 chip）。
+- 点 chip 时文件已丢失（turn 与点击之间删了）：发送响亮失败（工具错误浮出），
+  无部分发送，卡片不变。
+- 点不支持的类型的 chip：`sendFile` 兜底（资源 API 服务任意字节，含音频/视频）。
+- 无产出路径：不渲染 `📎 Produced` 行（卡片同今日）。
+
+**验收清单**：
+- [ ] `tool/result` 带非空 `meta.diffs` 把第一条 path 加入
+      `ChatCardState.producedPaths`（单测）。
+- [ ] `tool/result` 带空 `meta.diffs`（新建文件）把关联 `tool/call` 参数的
+      `file_path` 加入 `producedPaths`（单测）。
+- [ ] `tool/result` 来自 read（meta 无 `diffs` key）不加路径（单测）。
+- [ ] `turn/start` 重置 `producedPaths`；`turn/end` 保留累计列表用于最终 chips
+      行（单测）。
+- [ ] 最终卡每个产出路径渲染一个 `📎 Produced` chip（label = basename）
+      （单测 + 集成）。
+- [ ] 点 chip 把文件发给聊天（图片路径 → 图片消息，其他 → 文件消息）（集成）。
+- [ ] 点 chip 不改卡片状态（卡片保持终态）（单测）。
+- [ ] 无产出路径 → 无 `📎 Produced` 行（单测）。
+- [ ] 畸形 `meta.diffs` / 空 `meta.diffs` 且无关联 `file_path` 跳过并 debug 日志
+      （单测）。
+
+### Reference
+
+- DSH web `packages/client/ui-deliverables/src/client/turn-deliverables.ts`：
+  `producedPaths(view)` 只对 `card === 'diff'` 或 `generic + edit` 返回
+  `locations[].path` — 本 part 在路径级镜像的渲染意图规则（按其头部说明仅客户端，
+  因此宿主按 `meta` 复刻）。
+- `@deepseek-ai/dsh-tool-fs` write/edit 工具：`presentationMeta` 输出
+  `{diffs}`（新建 create 为 `[]`），`presentCall` 的 `locations`
+  `[{path: file_path}]` — 两个宿主信号来源。

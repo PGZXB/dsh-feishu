@@ -1205,3 +1205,108 @@ turn's tokens). No new panel views, no buttons.
 - The surface's existing `transport.sendFile(chatId, fileName, content)`
   (`src/transport.ts`) already uploads + posts a file; `send_file` extends it
   to images and to reading real workspace bytes (not just a string).
+
+## Part: turn-produced-files
+
+> After a turn ends, the streaming card lists the files the agent produced
+> (write/edit mutations) as clickable chips; tapping a chip sends that file
+> to the chat as a native Feishu image/file message. Mirrors the DSH web
+> "Turn produced files" row (same paths, path-level parity).
+
+### Intended behavior
+
+**Why path-level parity, not render-intent parity** — the DSH web UI derives
+produced files from the tool-result card's render intent
+(`card === 'diff'` or `generic + edit` → `locations[].path`), built by the
+browser-only `client-runtime` from each tool's `presentCall`/`presentResult`.
+That render-intent data is NOT in the host session event stream — the
+surface (a plugin) cannot see `card`/`locations`. The host CAN see
+`tool/result`'s `meta` (the tool's private presentation payload) and the
+correlated `tool/call` row. So the surface reproduces the SAME *set of
+produced paths* (write/edit mutations) by combining both host-visible
+sources — path-level parity, same paths the web row lists.
+
+**Host-visible mutation signal** — the fs write/edit mutation tools persist a
+`meta.diffs` KEY on `tool/result`: a non-empty `{path, oldText, newText}[]`
+for an update/overwrite, an empty list for a new-file CREATE (there is no
+before-image to diff). Reads carry a window/snippet meta (NO `diffs` key),
+deletes and plain terminal tools carry none — so the presence of a `meta.diffs`
+KEY (even an empty array) is the mutation signal, exactly the web's
+render-intent rule ("a read looked, a delete removed, a terminal ran").
+
+**Trigger** — a `tool/result` session event whose `meta` has a `diffs` array
+key. For a non-empty `diffs`, the FIRST entry's `path` is taken (a mutation
+tool touches one file; the row is the file). For an empty `diffs` (a create),
+the path is not in meta, so it is derived from the correlated `tool/call`
+arguments' `file_path` (the fs write/edit tools name the target there,
+matching the web's `presentCall.locations`). No correlated `tool/call` row
+and an empty `diffs` → nothing added (never a broken chip).
+
+**State** — `ChatCardState` gains `producedPaths: string[]` (the authoritative
+turn-scoped produced-file paths, deduped, in arrival order). It is reset when
+a new turn starts (`turn/start`) and filled as `tool/result` events arrive.
+`CardSnapshot`/the one render path (`syncCard`) carry it.
+
+**Card/panel shape** — the streaming card's FINAL state (done / stopped /
+error) renders a `📎 Produced` row under the last tool/message row: one
+button per produced path (label = basename). Tapping a chip sends that file
+to the chat via the existing outbound transport (`sendImage` for image
+extensions, `sendFile` otherwise — the #29 `send_file` foundation). The chip
+is a card action (`value.kind: 'send-produced'`, `value.path`); it does NOT
+mutate card state (only sends + a debug log), and the card stays in its
+terminal state. Sends a file message only — no extra receipt card (the chips
+row IS the affordance).
+
+**Ordering/cleanup** — `producedPaths` is turn-scoped: `turn/start` resets it,
+`turn/end` freezes the chip row (the card finalizes with it). A subsequent
+turn's mutations replace the previous list. Paths are relative to the chat's
+pinned cwd (what the tools' `meta.diffs[].path` carry), so resolving against
+`cwd` reproduces the file.
+
+**Failure modes**:
+- `meta` absent / `diffs` empty: nothing added (reads, deletes, terminals —
+  correct exclusion).
+- `meta.diffs` present but malformed (no path): skipped with a debug log
+  (never a broken chip).
+- Chip click while the file is gone (deleted between turn and click): the
+  send fails loudly (tool error surfaced), no partial send, card unchanged.
+- Chip click on an unsupported type: `sendFile` handles it (the resource API
+  serves arbitrary bytes incl. audio/video).
+- No produced paths: no `📎 Produced` row renders (the card looks as today).
+
+**Acceptance checklist**:
+- [ ] A `tool/result` with a non-empty `meta.diffs` adds the first path to
+      `ChatCardState.producedPaths` (unit).
+- [ ] A `tool/result` with an EMPTY `meta.diffs` (a new-file create) adds the
+      path from the correlated `tool/call` arguments' `file_path` (unit).
+- [ ] A `tool/result` from a read (meta without a `diffs` key) does NOT add a
+      path (unit).
+- [ ] `turn/start` resets `producedPaths`; `turn/end` keeps the accumulated
+      list for the final chip row (unit).
+- [ ] The final card renders one `📎 Produced` chip per produced path
+      (label = basename) (unit + integration).
+- [ ] Tapping a chip sends the file to the chat (image path → image message,
+      other → file message) (integration).
+- [ ] A chip click never mutates card state (the card stays terminal) (unit).
+- [ ] No produced paths → no `📎 Produced` row (unit).
+- [ ] Malformed `meta.diffs` / an empty `meta.diffs` without a correlating
+      `file_path` skips with a debug log (unit).
+
+### Reference
+
+- DSH web `packages/client/ui-deliverables/src/client/turn-deliverables.ts`:
+  `producedPaths(view)` returns `locations[].path` only for
+  `card === 'diff'` or `generic + edit` — the render-intent rule this part
+  mirrors at path level (client-only per its header, so the host replicates
+  the path set from `meta.diffs`).
+- dsh agent-loop `packages/core/agent-loop/src/tool-calls.ts`:
+  `session.append('tool/result', { ..., meta })` — `meta` is the tool's
+  private presentation payload persisted on the session event, carrying the
+  fs mutation diffs (write/edit) the surface reads.
+- fs tools `packages/fs/tool-fs/src/write.ts` / `edit.ts`: presentCall /
+  presentResult return `{ card:'diff', locations:[{path}] }`; `result.meta`
+  carries `diffs` (write/edit). read.ts persists a window/snippet meta (NOT
+  diffs) — the exclusion signal.
+- Surface `src/cards/StreamingCardController.ts` (ChatCardState, `snapshot`,
+  `syncCard`) — the single authoritative state + render path this feature
+  extends; the `#29` outbound `sendImage`/`sendFile` transport is reused.

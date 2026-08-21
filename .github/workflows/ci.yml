@@ -67,6 +67,10 @@ jobs:
         env:
           DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-outbound
         run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
+      - name: Prepare integration-test profile (turn-produced-files)
+        env:
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-turn-produced-files
+        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
 
       # The scenario suite boots its own dsh home too.
       - name: Prepare scenario integration-test profile

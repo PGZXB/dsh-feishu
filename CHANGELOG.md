@@ -87,6 +87,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   image/file message, and shows a `📤 Sent` receipt card. Feature-detects
   the `tools` service (absent → loud log, tool not registered). Depends on
   `@deepseek-ai/dsh-tools` (new runtime dep).
+- **Turn produced files (`turn-produced-files` chips).** After a turn ends,
+  the streaming card lists the files the agent produced (write/edit
+  mutations) as clickable `📎 Produced` chips (label = basename) under the
+  last tool/message row; tapping a chip sends that file to the chat via
+  `sendImage` (image extension) or `sendFile` (other) — no separate receipt
+  card. Path-level parity with the DSH web "Turn produced files" row: the
+  host derives the mutation path from `tool/result` `meta.diffs` (the fs
+  write/edit tools' presentation payload, present even as an empty array for
+  a new-file CREATE), falling back to the correlated `tool/call` arguments'
+  `file_path` when `diffs` is empty. Reads (no `diffs` key), deletes and
+  terminals are excluded. Paths are turn-scoped, deduped, and resolved
+  against the chat's pinned cwd.
 - **Bare attachment messages wait for the user's instruction
   (inbound-wait-instruction).** A file/image message without text no longer
   starts a turn by itself: the bytes land in the workspace, a NEW receipt
