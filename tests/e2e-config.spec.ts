@@ -11,7 +11,7 @@ describe('e2e config', () => {
     const cfg = loadE2eConfig({ E2E_CHAT: 'Test Bot' });
     expect(cfg.chatName).toBe('Test Bot');
     expect(cfg.headless).toBe(true);
-    expect(cfg.video).toBe('webm');
+    expect(cfg.video).toBe('mp4');
     expect(cfg.screenshots).toBe('on');
     expect(cfg.baseUrl).toBe('https://www.feishu.cn/');
     expect(cfg.timeoutMs).toBe(30_000);
