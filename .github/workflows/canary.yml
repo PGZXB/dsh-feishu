@@ -58,12 +58,25 @@ jobs:
         run: pnpm run build
 
       # Same integration profile preparation as ci.yml; DSH_BIN is the
-      # freshly installed newest CLI.
-      - name: Prepare integration-test profile
+      # freshly installed newest CLI. Each integration suite gets its OWN
+      # dsh home (parallel suites racing session-map.json writes — see
+      # ci.yml).
+      - name: Prepare integration-test profiles
         env:
-          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-attachments
         run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
-
+      - name: Prepare integration-test profile (rich-text)
+        env:
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-rich-text
+        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
+      - name: Prepare integration-test profile (wait-instruction)
+        env:
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-wait-instruction
+        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
+      - name: Prepare integration-test profile (real-composition)
+        env:
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-real
+        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
       - name: Prepare scenario integration-test profile
         env:
           DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-scenarios
