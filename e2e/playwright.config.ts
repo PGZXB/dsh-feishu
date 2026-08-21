@@ -21,11 +21,7 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   outputDir: join(cfg.reportDir, 'playwright-output'),
-  reporter: [
-    ['line'],
-    ['html', { outputFolder: join(cfg.reportDir, 'html'), open: 'never' }],
-    ['json', { outputFile: join(cfg.reportDir, 'report.json') }],
-  ],
+  reporter: [['line'], ['json', { outputFile: join(cfg.reportDir, 'report.json') }]],
   use: {
     baseURL: cfg.baseUrl,
     viewport: { width: 1440, height: 900 },

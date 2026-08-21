@@ -56,16 +56,16 @@ export async function openApp(page: Page, cfg: E2eConfig): Promise<void> {
 /**
  * Open a chat by the name shown in the chat list. The list preview and the
  * opened chat both show the name; clicking the first visible match opens the
- * conversation (waits until message items render). When no list match exists
- * (a brand-new bot has no chat yet), fall back to the search box
- * (Ctrl+K / the search modal): typing the name and picking the first result
- * CREATES the p2p chat as a side effect.
+ * conversation (waits until message items OR the composer render — a
+ * brand-new group created via the backend has no messages yet, only the
+ * composer). When no list match exists, fall back to the search box
+ * (Ctrl+K / the search modal): typing the name and picking the first result.
  * @param page - the browser page.
  * @param name - the chat name to open.
  * @param timeoutMs - how long to wait for the chat to render.
  */
 export async function openChat(page: Page, name: string, timeoutMs: number): Promise<void> {
-  // The chat list is lazy-loaded — the freshly-created bot chat can take a
+  // The chat list is lazy-loaded — a freshly-created group chat can take a
   // while to appear. Poll for the list item (up to timeoutMs) before
   // clicking, so the search fallback only runs when the chat truly does not
   // exist.
@@ -91,10 +91,12 @@ export async function openChat(page: Page, name: string, timeoutMs: number): Pro
       await listMatch.click();
     }
   }
-  // The chat pane is open when its messages render (the fresh chat carries
-  // the user's first message). A message item is unambiguous — the search
-  // modal never renders one.
-  await page.locator('.js-message-item').first().waitFor({ state: 'visible', timeout: timeoutMs });
+  // The chat pane is open when its messages render OR the composer is
+  // visible — a brand-new group has no messages, only the composer. The
+  // search modal never renders a composer, so `.innerdocbody` is
+  // unambiguous.
+  const chatOpen = page.locator('.js-message-item:visible, .innerdocbody:visible').first();
+  await chatOpen.waitFor({ state: 'visible', timeout: timeoutMs });
 }
 
 /** Search for `name` via the messenger search and click the first result. */

@@ -3,13 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { loadE2eConfig } from '../e2e/lib/config.js';
 
 describe('e2e config', () => {
-  it('requires E2E_CHAT', () => {
-    expect(() => loadE2eConfig({})).toThrow(/E2E_CHAT is required/);
-  });
-
   it('applies defaults', () => {
-    const cfg = loadE2eConfig({ E2E_CHAT: 'Test Bot' });
-    expect(cfg.chatName).toBe('Test Bot');
+    const cfg = loadE2eConfig({});
     expect(cfg.headless).toBe(true);
     expect(cfg.video).toBe('mp4');
     expect(cfg.screenshots).toBe('on');
@@ -18,42 +13,49 @@ describe('e2e config', () => {
     expect(cfg.reportDir).toBe(join(process.cwd(), 'e2e', '.output', 'latest'));
     expect(cfg.sessionState).toBe(join(process.cwd(), 'e2e', '.state', 'web-session.json'));
     expect(cfg.appId).toBeUndefined();
+    expect(cfg.userOpenId).toBeUndefined();
   });
 
   it('reads explicit values and app-credential fallbacks', () => {
     const cfg = loadE2eConfig({
-      E2E_CHAT: 'Bot',
       E2E_HEADED: '1',
       E2E_VIDEO: 'mp4',
       E2E_SCREENSHOTS: 'failure',
-      E2E_REPORT_DIR: '/tmp/r',
+      E2E_REPORT_DIR: '/tmp/runs/2026-08-21T08-00-00-000Z',
       E2E_SESSION_STATE: '/tmp/s.json',
       E2E_TIMEOUT_MS: '5000',
+      E2E_RUN_ID: '2026-08-21T08-00-00-000Z',
+      E2E_USER_OPEN_ID: 'ou_testuser',
       E2E_APP_ID: 'cli_x',
       E2E_APP_SECRET: 'secret',
     });
     expect(cfg.headless).toBe(false);
     expect(cfg.video).toBe('mp4');
     expect(cfg.screenshots).toBe('failure');
-    expect(cfg.reportDir).toBe('/tmp/r');
+    expect(cfg.reportDir).toBe('/tmp/runs/2026-08-21T08-00-00-000Z');
     expect(cfg.timeoutMs).toBe(5_000);
+    expect(cfg.runId).toBe('2026-08-21T08-00-00-000Z');
+    expect(cfg.userOpenId).toBe('ou_testuser');
     expect(cfg.appId).toBe('cli_x');
   });
 
+  it('derives the run id from the report dir basename', () => {
+    const cfg = loadE2eConfig({ E2E_REPORT_DIR: '/tmp/runs/2026-08-21T08-00-00-000Z' });
+    expect(cfg.runId).toBe('2026-08-21T08-00-00-000Z');
+  });
+
   it('falls back to FEISHU_APP_ID / FEISHU_APP_SECRET', () => {
-    const cfg = loadE2eConfig({ E2E_CHAT: 'Bot', FEISHU_APP_ID: 'cli_f', FEISHU_APP_SECRET: 's' });
+    const cfg = loadE2eConfig({ FEISHU_APP_ID: 'cli_f', FEISHU_APP_SECRET: 's' });
     expect(cfg.appId).toBe('cli_f');
     expect(cfg.appSecret).toBe('s');
   });
 
   it('rejects malformed E2E_VIDEO / E2E_SCREENSHOTS / E2E_TIMEOUT_MS', () => {
-    expect(() => loadE2eConfig({ E2E_CHAT: 'B', E2E_VIDEO: 'gif' })).toThrow(
-      /E2E_VIDEO must be off\|webm\|mp4/,
-    );
-    expect(() => loadE2eConfig({ E2E_CHAT: 'B', E2E_SCREENSHOTS: 'always' })).toThrow(
+    expect(() => loadE2eConfig({ E2E_VIDEO: 'gif' })).toThrow(/E2E_VIDEO must be off\|webm\|mp4/);
+    expect(() => loadE2eConfig({ E2E_SCREENSHOTS: 'always' })).toThrow(
       /E2E_SCREENSHOTS must be off\|on\|failure/,
     );
-    expect(() => loadE2eConfig({ E2E_CHAT: 'B', E2E_TIMEOUT_MS: 'abc' })).toThrow(
+    expect(() => loadE2eConfig({ E2E_TIMEOUT_MS: 'abc' })).toThrow(
       /E2E_TIMEOUT_MS must be a positive number/,
     );
   });

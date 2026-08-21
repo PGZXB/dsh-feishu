@@ -328,8 +328,84 @@ function esc(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
-/** Build the self-contained per-case HTML. */
+// ── HTML theme ─────────────────────────────────────────────────────────────
+// The report mimics the Playwright HTML report's visual language: a dark
+// sidebar listing the cases with status dots, a light main panel, and status
+// chips colored per outcome. Everything is self-contained (inline CSS), so
+// the pages open from the file system with no server.
+
+const STATUS_COLORS: Record<string, string> = {
+  passed: '#2da44e',
+  failed: '#cf222e',
+  skipped: '#6e7781',
+  flaky: '#bf8700',
+};
+
+const REPORT_CSS = `
+:root{color-scheme:light}
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;color:#24292f;background:#f6f8fa}
+a{color:#0969da;text-decoration:none}
+a:hover{text-decoration:underline}
+.shell{display:flex;min-height:100vh}
+.sidebar{flex:0 0 300px;background:#1d1f25;color:#e6edf3;padding:1.25rem 0;overflow-y:auto}
+.sidebar h1{font-size:1rem;margin:0 1.25rem 0.5rem;font-weight:600}
+.sidebar .sub{font-size:.75rem;color:#8b949e;margin:0 1.25rem 1rem}
+.case-list{list-style:none;margin:0;padding:0}
+.case-list a{display:flex;align-items:center;gap:.5rem;padding:.5rem 1.25rem;color:#e6edf3;border-left:3px solid transparent}
+.case-list a:hover{background:#262a33;text-decoration:none}
+.case-list .dot{width:10px;height:10px;border-radius:50%;flex:0 0 auto}
+.case-list .case-title{flex:1;font-size:.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.case-list .dur{font-size:.7rem;color:#8b949e}
+.case-list a.current{border-left-color:#58a6ff;background:#262a33}
+.main{flex:1;padding:2rem 2.5rem;max-width:1100px}
+h1.page{font-size:1.5rem;margin:0 0 .25rem}
+.status-banner{display:flex;gap:1rem;margin:1rem 0 1.5rem;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:.4rem;padding:.35rem .7rem;border-radius:2rem;font-size:.8rem;font-weight:600;color:#fff}
+.chip.passed{background:#2da44e}.chip.failed{background:#cf222e}.chip.skipped{background:#6e7781}.chip.flaky{background:#bf8700}
+.status{display:inline-flex;align-items:center;gap:.35rem;font-weight:600;font-size:.8rem;text-transform:uppercase;letter-spacing:.02em}
+.status::before{content:'';width:9px;height:9px;border-radius:50%;background:currentColor}
+.meta{color:#57606a;font-size:.85rem;margin:.25rem 0 1.5rem}
+.card{background:#fff;border:1px solid #d0d7de;border-radius:8px;padding:1.25rem;margin-bottom:1.25rem}
+.card h2{font-size:1rem;margin:0 0 .75rem}
+table{border-collapse:collapse;width:100%;font-size:.85rem}
+td,th{border-bottom:1px solid #d0d7de;padding:.45rem .6rem;text-align:left;vertical-align:top}
+th{font-weight:600;color:#57606a}
+tr:last-child td{border-bottom:none}
+pre{background:#f6f8fa;border:1px solid #d0d7de;border-radius:6px;padding:.8rem;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.8rem;line-height:1.5}
+pre.error{border-left:4px solid #cf222e;background:#fff5f5}
+pre.stdout{white-space:pre-wrap}
+figure{margin:0 0 1rem}
+figure img{max-width:100%;border:1px solid #d0d7de;border-radius:6px}
+figcaption{font-size:.75rem;color:#57606a;margin-top:.3rem;font-family:ui-monospace,Menlo,Consolas,monospace}
+video{max-width:100%;border:1px solid #d0d7de;border-radius:6px}
+ul.annotations{padding-left:1.25rem;font-size:.85rem}
+ul.annotations li{margin-bottom:.4rem}
+.back{display:inline-block;margin-bottom:1rem;font-size:.85rem}
+`;
+
+function statusStyle(status: string): string {
+  const color = STATUS_COLORS[status] ?? '#6e7781';
+  return `color:${color}`;
+}
+
+function pageShell(title: string, sidebar: string, main: string): string {
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>${esc(title)}</title>
+<style>${REPORT_CSS}</style></head><body>
+<div class="shell">
+  <aside class="sidebar">${sidebar}</aside>
+  <main class="main">${main}</main>
+</div>
+</body></html>`;
+}
+
+/** Build the self-contained per-case HTML (Playwright-report style). */
 export function caseHtml(c: E2eCase): string {
+  const sidebar = `
+<h1>${esc(c.title)}</h1>
+<p class="sub">case ${esc(c.caseId)}</p>
+<ul class="case-list"><li><a href="../summary.html">← back to run summary</a></li></ul>`;
   const shots = c.artifacts
     .filter((a) => a.kind === 'screenshot')
     .map(
@@ -340,71 +416,67 @@ export function caseHtml(c: E2eCase): string {
   const video = c.artifacts.find((a) => a.kind === 'video');
   const videoTag = video
     ? `<video controls src="${esc(video.path)}"></video>`
-    : '<p>(no recording)</p>';
+    : '<p class="meta">(no recording)</p>';
   const error = c.error
     ? `<pre class="error">${esc(c.error.message)}${c.error.location ? `\n\n  at ${esc(c.error.location)}` : ''}</pre>`
     : '';
   const annotations = c.annotations.map((a) => `<li>${esc(a)}</li>`).join('');
   const stdout = c.stdout.length > 0 ? `<pre class="stdout">${esc(c.stdout.join('\n'))}</pre>` : '';
-  return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"/><title>${esc(c.title)}</title>
-<style>
-body{font-family:system-ui,sans-serif;margin:2rem;color:#222;line-height:1.5}
-.status{font-weight:700;padding:.2rem .6rem;border-radius:4px;color:#fff}
-.passed{background:#16a34a}.failed{background:#dc2626}.skipped{background:#64748b}.flaky{background:#d97706}
-pre{background:#f4f4f5;padding:1rem;overflow:auto;border-radius:6px;font-size:.85rem}
-pre.error{border-left:4px solid #dc2626}
-img{max-width:100%;border:1px solid #e4e4e7;border-radius:6px}
-video{max-width:100%;border:1px solid #e4e4e7;border-radius:6px}
-table{border-collapse:collapse;margin:1rem 0}td,th{border:1px solid #e4e4e7;padding:.4rem .7rem;text-align:left}
-a{color:#2563eb}
-</style></head><body>
-<h1>${esc(c.title)}</h1>
-<p>Case <code>${esc(c.caseId)}</code> · <span class="status ${esc(c.status)}">${esc(c.status)}</span> · ${c.durationMs} ms · started ${esc(c.startedAt)}</p>
+  const main = `
+<a class="back" href="../summary.html">← back to run summary</a>
+<h1 class="page">${esc(c.title)}</h1>
+<p class="meta"><span class="status" style="${statusStyle(c.status)}">${esc(c.status)}</span> · ${c.durationMs} ms · started ${esc(c.startedAt)}${c.retry > 0 ? ` · retry ${c.retry}` : ''}</p>
 ${error}
-<h2>Annotations</h2>
-${annotations ? `<ul>${annotations}</ul>` : '<p>(none)</p>'}
-<h2>Screenshots</h2>
-${shots || '<p>(none)</p>'}
-<h2>Recording</h2>
+<div class="card"><h2>Annotations</h2>
+${annotations ? `<ul class="annotations">${annotations}</ul>` : '<p class="meta">(none)</p>'}
+</div>
+<div class="card"><h2>Screenshots</h2>
+${shots || '<p class="meta">(none)</p>'}
+</div>
+<div class="card"><h2>Recording</h2>
 ${videoTag}
-<h2>Artifacts</h2>
-<table><tr><th>kind</th><th>path</th><th>size</th></tr>${c.artifacts.map((a) => `<tr><td>${a.kind}</td><td>${esc(a.path)}</td><td>${a.size}</td></tr>`).join('')}</table>
-${stdout ? `<h2>stdout</h2>${stdout}` : ''}
-<p><a href="../summary.html">← back to summary</a></p>
-</body></html>`;
+</div>
+<div class="card"><h2>Artifacts</h2>
+<table><tr><th>kind</th><th>path</th><th>size</th></tr>${c.artifacts.map((a) => `<tr><td>${esc(a.kind)}</td><td>${esc(a.path)}</td><td>${a.size}</td></tr>`).join('')}</table>
+</div>
+${stdout ? `<div class="card"><h2>stdout</h2>${stdout}</div>` : ''}`;
+  return pageShell(c.title, sidebar, main);
 }
 
-/** Build the summary HTML with per-case links. */
+/** Build the summary HTML with per-case links (single entry point). */
 export function summaryHtml(summary: E2eRunSummary): string {
   const rows = summary.cases
     .map(
       (c) =>
-        `<tr><td><span class="status ${esc(c.status)}">${esc(c.status)}</span></td>` +
-        `<td><a href="cases/${esc(c.caseId)}/report.html">${esc(c.title)}</a></td>` +
-        `<td>${c.durationMs} ms</td></tr>`,
+        `<li><a href="cases/${esc(c.caseId)}/report.html"><span class="dot" style="background:${STATUS_COLORS[c.status] ?? '#6e7781'}"></span><span class="case-title">${esc(c.title)}</span><span class="dur">${c.durationMs} ms</span></a></li>`,
     )
     .join('\n');
   const env = Object.entries(summary.environment)
     .map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`)
     .join('');
-  return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"/><title>E2E run ${esc(summary.runId)}</title>
-<style>
-body{font-family:system-ui,sans-serif;margin:2rem;color:#222;line-height:1.5}
-.status{font-weight:700;padding:.2rem .6rem;border-radius:4px;color:#fff}
-.passed{background:#16a34a}.failed{background:#dc2626}.skipped{background:#64748b}.flaky{background:#d97706}
-table{border-collapse:collapse;margin:1rem 0}td,th{border:1px solid #e4e4e7;padding:.4rem .7rem;text-align:left}
-a{color:#2563eb}
-</style></head><body>
+  const chips = [
+    { key: 'passed', label: 'passed' },
+    { key: 'failed', label: 'failed' },
+    { key: 'skipped', label: 'skipped' },
+    { key: 'flaky', label: 'flaky' },
+  ]
+    .map(
+      ({ key, label }) =>
+        `<span class="chip ${key}">${summary[key as keyof E2eRunSummary]} ${label}</span>`,
+    )
+    .join('');
+  const sidebar = `
 <h1>E2E run ${esc(summary.runId)}</h1>
-<p>Generated ${esc(summary.generatedAt)} · ${summary.total} cases: <span class="status passed">${summary.passed} passed</span> <span class="status failed">${summary.failed} failed</span> <span class="status skipped">${summary.skipped} skipped</span> <span class="status flaky">${summary.flaky} flaky</span></p>
-<h2>Cases</h2>
-<table><tr><th>status</th><th>case (click for the full report)</th><th>duration</th></tr>
-${rows}</table>
-<h2>Environment</h2>
+<p class="sub">generated ${esc(summary.generatedAt)}</p>
+<ul class="case-list">${rows}</ul>`;
+  const main = `
+<h1 class="page">Run ${esc(summary.runId)}</h1>
+<p class="meta">Generated ${esc(summary.generatedAt)} · ${summary.total} case${summary.total === 1 ? '' : 's'}</p>
+<div class="status-banner">${chips}</div>
+<div class="card"><h2>Environment</h2>
 <table>${env}</table>
-</body></html>`;
+</div>`;
+  return pageShell(`E2E run ${summary.runId}`, sidebar, main);
 }
 
 /**

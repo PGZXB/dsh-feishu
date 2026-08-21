@@ -3,43 +3,52 @@
  * In-container E2E orchestration. The repo is mounted READ-ONLY at /repo and
  * copied to the container-local /app; every build artifact (node_modules,
  * lib, the pnpm store, the dsh home) stays in the container and vanishes
- * with it. Two small host mounts carry data out:
+ * with it. Two small host mounts carry data out and back:
  *
- *   /state  (host e2e/.state)   — sessions/credentials/QR files:
- *     setup.log, console-session.json, creds.json, web-session.json
- *   /output (host e2e/.output)  — one timestamped dir per run with the
+ *   /state  (host e2e/.state)  — the exported one-time setup state:
+ *     console-session.json (open-platform login, from setup:feishu)
+ *     creds.json            (appId/appSecret of the bot under test)
+ *     web-session.json      (feishu web login — the test account)
+ *     user.json             (the test user's open_id, extracted from the
+ *                            web session for backend group creation)
+ *     setup.log, qr.png     (QR scan support files)
+ *   /output (host e2e/.output) — one timestamped dir per run with the
  *     standardized report: summary.html/json, cases/<id>/report.html/json,
  *     screenshots, video.mp4; `latest` symlinks to the newest run
  *
- * Flow (the README install-from-source flow, inside the container):
- *   pnpm install → build → setup:feishu --new --force-login (one QR scan,
- *   TEST-account console login; reuses /state/console-session.json when
- *   present) → browser login (TEST account; reuses web-session.json) →
- *   mock LLM + dsh (profile e2e-dev) → Playwright scenarios → mp4 → manifest.
+ * Modes:
+ *   E2E_SETUP=1  one-time environment setup, idempotent: every piece of
+ *     state that already exists in /state is SKIPPED (no QR scans when the
+ *     logins are already exported). Creates the bot app (open-platform QR
+ *     scan), performs the web login (QR scan), extracts the user open_id,
+ *     then probes group creation+deletion as an end-to-end check.
+ *   otherwise    a test run: imports the setup state (creds, session,
+ *     user open_id) into their designated places and runs the scenarios.
  *
- * Env: E2E_CHAT, E2E_STATE, E2E_OUTPUT, E2E_VIDEO, E2E_SCREENSHOTS, E2E_BASE_URL,
+ * Flow (test run):
+ *   pnpm install → build → mock LLM + dsh (profile e2e-dev, app creds from
+ *   /state/creds.json) → Playwright scenarios (each case creates its own
+ *   backend group) → mp4 → single-entry report (summary.html).
+ *
+ * Env: E2E_STATE, E2E_OUTPUT, E2E_VIDEO, E2E_SCREENSHOTS, E2E_BASE_URL,
  * E2E_MOCK_PORT, E2E_BOT_NAME, E2E_APP_ID/E2E_APP_SECRET (override).
  */
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = '/app'; // container-local copy of the repo
 const env = process.env;
 
-const chat = env.E2E_CHAT;
-if (!chat) {
-  console.error('✗ E2E_CHAT is required (the chat to open), e.g. E2E_CHAT="DSH Agent (e2e)"');
-  process.exit(2);
-}
 const state = env.E2E_STATE ?? '/state';
 const outputRoot = env.E2E_OUTPUT ?? '/output';
 const video = env.E2E_VIDEO ?? 'mp4';
 // The run directory: a timestamped dir under the output root; `latest`
-// symlinks to it.
+// symlinks to it. Every per-case group name embeds this runId, so group
+// names are globally unique per run.
 const runId = new Date().toISOString().replace(/[:.]/g, '-');
 const reportDir = join(outputRoot, runId);
 const mockPort = env.E2E_MOCK_PORT ?? '19090';
@@ -49,6 +58,7 @@ const profileDir = join(e2eHome, 'profiles', 'e2e-dev');
 const consoleSession = join(state, 'console-session.json');
 const webSession = join(state, 'web-session.json');
 const credsFile = join(state, 'creds.json');
+const userFile = join(state, 'user.json');
 const setupLog = join(state, 'setup.log');
 
 for (const k of ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'all_proxy', 'ALL_PROXY']) {
@@ -61,7 +71,7 @@ process.env.CI = 'true';
 process.env.XDG_CONFIG_HOME = '/tmp/e2e-xdg';
 
 const children = [];
-let playwrightExit = 1;
+let exitCode = 1;
 const SETUP_ATTEMPTS = 4;
 
 function cleanup() {
@@ -103,6 +113,32 @@ function teeSpawn(command, args, opts, logPath) {
   });
 }
 
+function loadJson(path) {
+  return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : undefined;
+}
+
+/** Read app credentials: env override first, then the exported creds.json. */
+function readCreds() {
+  const envCreds = Boolean(process.env.E2E_APP_ID && process.env.E2E_APP_SECRET);
+  return envCreds
+    ? { appId: process.env.E2E_APP_ID, appSecret: process.env.E2E_APP_SECRET }
+    : loadJson(credsFile);
+}
+
+/** Compile the e2e suite to e2e/.build/ (Playwright needs .js imports). */
+function compileE2e() {
+  log('playwright', 'compiling the e2e suite (container-local)');
+  const tsc = spawnSync(join(ROOT, 'node_modules', '.bin', 'tsc'), ['-p', 'e2e/tsconfig.build.json'], {
+    cwd: ROOT,
+    env: process.env,
+    stdio: 'inherit',
+  });
+  if (tsc.status !== 0) {
+    console.error('✗ e2e tsc build failed');
+    process.exit(2);
+  }
+}
+
 async function main() {
   mkdirSync(reportDir, { recursive: true });
 
@@ -118,7 +154,7 @@ async function main() {
     if (res.status !== 0) process.exit(2);
   }
 
-  // 2. Profile prep (once).
+  // 2. Profile prep (once per container; the dsh home is container-local).
   if (!existsSync(join(profileDir, 'package.json'))) {
     log('profile', 'installing the plugin into profile e2e-dev');
     const res = spawnSync(dshBin, ['plugin', '--profile', 'e2e-dev', 'add', `link:${ROOT}`], {
@@ -128,25 +164,17 @@ async function main() {
     if (res.status !== 0) process.exit(2);
   }
 
-  // 3. Bot-app setup: --force-login ignores any cached console session, so
-  //    the QR is always scanned with the account the user chooses (the
-  //    dedicated test account). The console session + app credentials are
-  //    exported to /state for reuse.
-  const envCreds = Boolean(process.env.E2E_APP_ID && process.env.E2E_APP_SECRET);
-  const creds = envCreds
-    ? { appId: process.env.E2E_APP_ID, appSecret: process.env.E2E_APP_SECRET }
-    : existsSync(credsFile)
-      ? JSON.parse(readFileSync(credsFile, 'utf8'))
-      : undefined;
+  // 3. Bot-app setup (idempotent): creds already exported -> skip entirely.
+  //    Otherwise create the app via setup:feishu; a cached open-platform
+  //    session skips the QR scan (--force-login only on a fresh session).
+  let creds = readCreds();
   if (creds) {
     console.log(`  [setup] using app ${creds.appId} from ${credsFile}`);
   } else {
-    // pnpm is installed globally in the image (Dockerfile.e2e), not in the
-    // repo's node_modules.
-    const pnpmBin = 'pnpm';
+    const needsLogin = !existsSync(consoleSession);
     log(
       'setup',
-      'creating the bot app (console QR login — scan with the TEST account).\n' +
+      'creating the bot app (open-platform QR login — scan with the TEST account).\n' +
         `    scan the LATEST QR at ${setupLog} with the Feishu app (auto-refreshes; up to ${SETUP_ATTEMPTS} attempts)`,
     );
     let code = 1;
@@ -154,12 +182,13 @@ async function main() {
       writeFileSync(setupLog, '', 'utf8');
       console.log(`  [setup] attempt ${attempt}/${SETUP_ATTEMPTS}`);
       code = await teeSpawn(
-        pnpmBin,
+        'pnpm',
         [
           'run', 'setup:feishu', '--',
-          '--new', '--force-login', '--profile', 'e2e-dev',
+          '--new', '--profile', 'e2e-dev',
           '--dsh-home', e2eHome,
-          '--app-name', env.E2E_BOT_NAME ?? 'DSH Agent (e2e)',
+          '--app-name', env.E2E_BOT_NAME ?? 'DSH-E2E-TESTBOT',
+          ...(needsLogin ? ['--force-login'] : []),
         ],
         { env: { ...process.env, DSH_HOME: e2eHome, DSH_FEISHU_SESSION: consoleSession }, cwd: ROOT },
         setupLog,
@@ -179,14 +208,18 @@ async function main() {
       console.log(`  [setup] credentials exported to ${credsFile}`);
       process.env.E2E_APP_ID = id[1];
       process.env.E2E_APP_SECRET = secret[1];
+      creds = { appId: id[1], appSecret: secret[1] };
+    } else {
+      console.error('✗ setup:feishu succeeded but wrote no appId/appSecret to the profile');
+      process.exit(2);
     }
   }
 
-  // 4. Browser session (scan with the same account; reused from the
-  //    /state). The console session does NOT authenticate the web app, so
-  //    this is a separate one-time QR login.
+  // 4. Browser session (idempotent): reuse the exported web login; only scan
+  //    when it is missing. The console session does NOT authenticate the web
+  //    app, so this is a separate one-time QR login.
   if (!existsSync(webSession)) {
-    log('session', 'browser login required — scan with the account you choose');
+    log('session', 'browser login required — scan with the TEST account');
     const res = spawnSync(
       process.execPath,
       [join(ROOT, 'scripts', 'e2e-login.mjs'), '--state', webSession],
@@ -196,31 +229,67 @@ async function main() {
       console.error('✗ browser login failed');
       process.exit(2);
     }
+  } else {
+    console.log('  [setup] reusing the exported web session');
   }
 
-  // 4b. Setup mode: after the app + browser session are ready, verify the
-  //     chat exists and stop. The user only ever needs to message the bot
-  //     once (Feishu does not allow programmatic creation of the first
-  //     user↔bot contact); everything else is exported for hands-free runs.
-  if (env.E2E_SETUP === '1') {
-    log('setup-check', 'verifying the chat exists (browser, list polling)');
-    const check = spawnSync(
+  // 5. Test-user open_id (idempotent): extracted from the web session once;
+  //    the backend group creation invites this user.
+  if (!existsSync(userFile)) {
+    log('user', 'extracting the test user open_id from the web session');
+    const res = spawnSync(
       process.execPath,
-      [join(ROOT, 'scripts', 'e2e-check-chat.mjs')],
+      [join(ROOT, 'scripts', 'e2e-user-id.mjs'), '--state', webSession, '--out', userFile],
       { cwd: ROOT, env: process.env, stdio: 'inherit' },
     );
-    if (check.status === 0) {
-      console.log('\nE2E_SETUP_READY — environment prepared, later runs are hands-free');
-      process.exit(0);
+    if (res.status !== 0) {
+      console.error('✗ could not extract the test user open_id');
+      process.exit(2);
     }
-    console.log(
-      '\nE2E_SETUP_NEEDS_CHAT — in the Feishu app, search the bot and send it a message ' +
-        '(creates the chat), then re-run `pnpm run e2e:setup`.',
+  } else {
+    console.log('  [setup] reusing the exported test user open_id');
+  }
+  const user = loadJson(userFile);
+  const userOpenId = user?.openId;
+
+  // 6. Setup mode: verify group creation+deletion end-to-end, then stop.
+  if (env.E2E_SETUP === '1') {
+    compileE2e();
+    log('setup-check', 'probing backend group creation (create + delete)');
+    const probe = spawnSync(
+      process.execPath,
+      [join(ROOT, 'scripts', 'e2e-check-group.mjs'), '--run-id', runId],
+      {
+        cwd: ROOT,
+        env: {
+          ...process.env,
+          E2E_APP_ID: creds?.appId ?? '',
+          E2E_APP_SECRET: creds?.appSecret ?? '',
+          E2E_USER_OPEN_ID: userOpenId ?? '',
+        },
+        stdio: 'inherit',
+      },
     );
-    process.exit(3);
+    if (probe.status !== 0) {
+      console.error('✗ group probe failed — the app cannot create groups yet');
+      process.exit(2);
+    }
+    console.log('\nE2E_SETUP_READY — environment prepared, later runs are hands-free');
+    exitCode = 0;
+    return;
   }
 
-  // 5. Mock DeepSeek server.
+  // 7. Test run: every piece of state must already exist (run e2e:setup).
+  if (!creds || !userOpenId) {
+    console.error('✗ setup state missing (creds or user open_id) — run `pnpm run e2e:setup` first');
+    process.exit(2);
+  }
+  if (!existsSync(webSession)) {
+    console.error('✗ web session missing — run `pnpm run e2e:setup` first');
+    process.exit(2);
+  }
+
+  // 8. Mock DeepSeek server.
   log('mock llm', `starting mock DeepSeek server on 127.0.0.1:${mockPort}`);
   const mock = spawn(process.execPath, [join(ROOT, 'scripts', 'e2e-mock-llm.mjs')], {
     env: { ...process.env, E2E_MOCK_PORT: mockPort },
@@ -237,16 +306,14 @@ async function main() {
     });
   });
 
-  // 6. Boot dsh with the bot app.
-  const appId = env.E2E_APP_ID ?? creds?.appId;
-  const appSecret = env.E2E_APP_SECRET ?? creds?.appSecret;
-  log('dsh', `starting dsh --profile e2e-dev (app ${appId})`);
+  // 9. Boot dsh with the bot app.
+  log('dsh', `starting dsh --profile e2e-dev (app ${creds.appId})`);
   const dsh = spawn(dshBin, ['--profile', 'e2e-dev'], {
     env: {
       ...process.env,
       DSH_HOME: e2eHome,
-      ...(appId !== undefined ? { FEISHU_APP_ID: appId } : {}),
-      ...(appSecret !== undefined ? { FEISHU_APP_SECRET: appSecret } : {}),
+      FEISHU_APP_ID: creds.appId,
+      FEISHU_APP_SECRET: creds.appSecret,
       DEEPSEEK_BASE_URL: `http://127.0.0.1:${mockPort}`,
       FEISHU_DEBUG: process.env.FEISHU_DEBUG ?? '',
     },
@@ -268,39 +335,30 @@ async function main() {
   }
   console.log('  dsh feishu connection ready');
 
-  // 7. Playwright scenarios (report + session live in /output + /state). The
-  //    e2e suite is compiled to .build/ first — Playwright does not resolve
-  //    NodeNext `.js`-suffixed imports against `.ts` sources.
-  log('playwright', 'compiling the e2e suite (container-local)');
-  const tsc = spawnSync(join(ROOT, 'node_modules', '.bin', 'tsc'), ['-p', 'e2e/tsconfig.build.json'], {
-    cwd: ROOT,
-    env: process.env,
-    stdio: 'inherit',
-  });
-  if (tsc.status !== 0) {
-    console.error('✗ e2e tsc build failed');
-    process.exit(2);
-  }
-  log('playwright', `running scenarios (chat "${chat}")`);
+  // 10. Playwright scenarios: each case creates its own backend group named
+  //     `<caseId>-<runId>` and opens it — no shared chat, no UI creation.
+  compileE2e();
+  log('playwright', `running scenarios (run ${runId})`);
   const pw = join(ROOT, 'node_modules', '.bin', 'playwright');
   const res = spawnSync(pw, ['test', '--config', 'e2e/.build/playwright.config.js'], {
     cwd: ROOT,
     env: {
       ...process.env,
-      E2E_CHAT: chat,
+      E2E_RUN_ID: runId,
       E2E_VIDEO: video,
       E2E_SCREENSHOTS: env.E2E_SCREENSHOTS ?? 'on',
       E2E_REPORT_DIR: reportDir,
       E2E_SESSION_STATE: webSession,
       E2E_BASE_URL: env.E2E_BASE_URL ?? 'https://www.feishu.cn/',
-      E2E_APP_ID: appId ?? '',
-      E2E_APP_SECRET: appSecret ?? '',
+      E2E_APP_ID: creds.appId,
+      E2E_APP_SECRET: creds.appSecret,
+      E2E_USER_OPEN_ID: userOpenId,
     },
     stdio: 'inherit',
   });
-  playwrightExit = res.status ?? 1;
+  exitCode = res.status ?? 1;
 
-  // 8. mp4 conversion.
+  // 11. mp4 conversion.
   if (video === 'mp4') {
     const webms = collectFiles(reportDir, '.webm');
     for (const webm of webms) {
@@ -315,14 +373,13 @@ async function main() {
     }
   }
 
-  // 9. Standardized run report: per-case JSON/HTML + summary JSON/HTML.
-  log('report', `generating the standardized report in ${reportDir}`);
+  // 12. Single-entry run report: summary.html (Playwright-style) linking
+  //     into cases/<id>/report.html, plus the JSON artifacts.
+  log('report', `generating the run report in ${reportDir}`);
   const envForReport = {
     ...process.env,
     E2E_RUN_DIR: reportDir,
-    E2E_PLUGIN_VERSION: readFileSync(join(ROOT, 'package.json'), 'utf8').includes('"version"')
-      ? JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
-      : 'unknown',
+    E2E_PLUGIN_VERSION: JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version,
   };
   const gen = spawnSync(
     process.execPath,
@@ -333,35 +390,6 @@ async function main() {
   // `latest` symlink → this run (remove-then-create; rm -f of a dir symlink is fine).
   spawnSync('sh', ['-c', `rm -f ${outputRoot}/latest && ln -s ${runId} ${outputRoot}/latest`], { stdio: 'ignore' });
   log('report', `run report: ${join(reportDir, 'summary.html')} (latest -> ${runId})`);
-}
-
-const SCREENSHOT_EXT = new Set(['.png', '.jpg', '.jpeg']);
-const VIDEO_EXT = new Set(['.webm', '.mp4']);
-
-function collectArtifacts(dir) {
-  if (!existsSync(dir)) return [];
-  const out = [];
-  const walk = (d) => {
-    for (const entry of readdirSync(d)) {
-      const full = join(d, entry);
-      let stat;
-      try {
-        stat = statSync(full);
-      } catch {
-        continue;
-      }
-      if (stat.isDirectory()) {
-        if (entry === 'html') continue;
-        walk(full);
-      } else {
-        const ext = entry.slice(entry.lastIndexOf('.')).toLowerCase();
-        const kind = SCREENSHOT_EXT.has(ext) ? 'screenshot' : VIDEO_EXT.has(ext) ? 'video' : undefined;
-        if (kind !== undefined) out.push({ kind, path: relative(dir, full), size: stat.size });
-      }
-    }
-  };
-  walk(dir);
-  return out.sort((a, b) => (a.path < b.path ? -1 : 1));
 }
 
 function collectFiles(dir, ext) {
@@ -387,10 +415,10 @@ function collectFiles(dir, ext) {
 main()
   .catch((err) => {
     console.error(`✗ e2e failed: ${err.message}`);
-    playwrightExit = 2;
+    exitCode = 2;
   })
   .finally(() => {
     cleanup();
-    console.log(`\nE2E finished (exit ${playwrightExit})`);
-    process.exit(playwrightExit);
+    console.log(`\nE2E finished (exit ${exitCode})`);
+    process.exit(exitCode);
   });

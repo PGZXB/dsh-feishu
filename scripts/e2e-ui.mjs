@@ -2,17 +2,19 @@
 /**
  * E2E launcher (host side). The repo is mounted READ-ONLY into the container
  * and copied to the container's own filesystem there — build artifacts never
- * touch the host. Two small git-ignored dirs (e2e/.state, e2e/.output) carry the QR codes the user
- * scans, the sessions/credentials for reuse, and the final report.
+ * touch the host. Two small git-ignored dirs carry data out and back:
  *
- *   1. validates env (E2E_CHAT)
- *   2. prepares the state dir (e2e/.state) + a writable setup.log
- *   3. builds the e2e docker image when missing
- *   4. runs the container orchestration and propagates its exit code
+ *   e2e/.state   — the one-time setup state (console session, app creds,
+ *                  web session, test-user open_id) exported by e2e:setup
+ *   e2e/.output  — one timestamped dir per run with the single-entry report
+ *                  (summary.html → cases/<id>/report.html), `latest` symlink
+ *
+ *   1. prepares the state dir (e2e/.state) + a writable setup.log
+ *   2. builds the e2e docker image when missing
+ *   3. runs the container orchestration and propagates its exit code
  *
  * Env:
- *   E2E_CHAT          (required) the bot chat to open
- *   E2E_VIDEO         off|webm|mp4   (default webm)
+ *   E2E_VIDEO         off|webm|mp4   (default mp4)
  *   E2E_SCREENSHOTS   off|on|failure (default on)
  *   E2E_STATE / E2E_OUTPUT  state (sessions/QRs) and run-output dirs
  *   E2E_APP_ID / E2E_APP_SECRET  optional override of the bot app
@@ -28,11 +30,6 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
 
 const env = process.env;
-const chat = env.E2E_CHAT;
-if (!chat) {
-  console.error('✗ E2E_CHAT is required (the chat to open), e.g. E2E_CHAT="DSH Agent (e2e)"');
-  process.exit(2);
-}
 const stateDir = join(ROOT, 'e2e', '.state');
 const outputDir = join(ROOT, 'e2e', '.output');
 const dockerImage = env.E2E_IMAGE ?? 'dsh-e2e-tools';
@@ -66,7 +63,7 @@ if (inspect.status !== 0) {
 }
 
 log('docker', `running the E2E stack in image ${dockerImage}`);
-log('state', `sessions/QRs: ${stateDir}`);
+log('state', `setup state: ${stateDir}`);
 log('output', `run reports: ${outputDir}`);
 
 const res = spawnSync(
@@ -78,13 +75,11 @@ const res = spawnSync(
     '-v', `${stateDir}:/state`,
     '-v', `${outputDir}:/output`,
     '-w', '/app',
-    '-e', `E2E_CHAT=${chat}`,
     '-e', 'E2E_STATE=/state',
     '-e', 'E2E_OUTPUT=/output',
     '-e', `E2E_VIDEO=${env.E2E_VIDEO ?? 'mp4'}`,
     '-e', `E2E_SCREENSHOTS=${env.E2E_SCREENSHOTS ?? 'on'}`,
     '-e', `E2E_BASE_URL=${env.E2E_BASE_URL ?? 'https://www.feishu.cn/'}`,
-    '-e', `E2E_BOT_NAME=${env.E2E_BOT_NAME ?? 'DSH Agent (e2e)'}`,
     ...(appId !== undefined ? ['-e', `E2E_APP_ID=${appId}`] : []),
     ...(appSecret !== undefined ? ['-e', `E2E_APP_SECRET=${appSecret}`] : []),
     '-e', 'http_proxy=', '-e', 'https_proxy=', '-e', 'HTTP_PROXY=', '-e', 'HTTPS_PROXY=',
@@ -100,5 +95,5 @@ const res = spawnSync(
 const exit = res.status ?? 1;
 
 console.log(`\nE2E finished (exit ${exit})`);
-console.log(`report: ${join(exchange, 'report', 'html', 'index.html')}`);
+console.log(`report: ${join(outputDir, 'latest', 'summary.html')}`);
 process.exit(exit);

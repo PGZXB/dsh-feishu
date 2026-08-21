@@ -1,15 +1,17 @@
 /**
- * Anchor E2E scenario: send `/help` in the bot chat and verify the bot
- * replies with the slash-command descriptions.
+ * Anchor E2E scenario: send `/help` in the bot's group chat and verify the
+ * bot replies with the slash-command descriptions.
+ *
+ * Each case runs in its OWN group chat (name `<caseId>-<runId>`, unique per
+ * run), created through the backend — the same `im.v1.chat.create` call the
+ * plugin's `/group` command wraps — so cases never share a chat page. The
+ * browser only opens the already-created group.
  *
  * The `/help` handler (src/commands/surface.ts) answers with a block that
  * starts `dsh-feishu commands:` and lists every registered command as
  * `/name — description` — so the assertions are rule-based text checks on
  * the rendered chat, with zero dependency on the LLM (the command resolves
  * locally in the plugin).
- *
- * The chat is opened through the messenger UI (search fallback creates the
- * p2p chat on first contact).
  *
  * @module e2e/scenarios/help
  */
@@ -18,13 +20,23 @@ import { test } from '@playwright/test';
 import { waitForBotReplyContaining } from '../lib/assert.js';
 import { loadE2eConfig } from '../lib/config.js';
 import { openApp, openChat, sendMessage, snapshot } from '../lib/feishu.js';
+import { createGroup, groupNameFor } from '../lib/group.js';
+import { caseIdFromTitle } from '../lib/report.js';
 
 const cfg = loadE2eConfig();
 
 test('send /help → slash command descriptions', async ({ page }, testInfo) => {
+  // Backend group creation (the same call /group wraps): each case owns a
+  // uniquely-named group, so parallel runs never share a chat page.
+  const groupName = groupNameFor(caseIdFromTitle(testInfo.title), cfg.runId);
+  if (cfg.userOpenId === undefined) {
+    throw new Error('E2E_USER_OPEN_ID is required (run `pnpm run e2e:setup` first)');
+  }
+  await createGroup(cfg, groupName, [cfg.userOpenId]);
+
   await openApp(page, cfg);
-  await openChat(page, cfg.chatName, cfg.timeoutMs);
-  // Key evidence point 1: the chat is open, composer visible.
+  await openChat(page, groupName, cfg.timeoutMs);
+  // Key evidence point 1: the group chat is open, composer visible.
   await snapshot(page, cfg, 'help-chat-open');
 
   await sendMessage(page, '/help');
@@ -45,6 +57,6 @@ test('send /help → slash command descriptions', async ({ page }, testInfo) => 
 
   testInfo.annotations.push({
     type: 'evidence',
-    description: `bot reply (first 300 chars): ${reply.text.slice(0, 300)}`,
+    description: `group: ${groupName} | bot reply (first 300 chars): ${reply.text.slice(0, 300)}`,
   });
 });

@@ -33,7 +33,6 @@ const environment = {
   node: process.version,
   playwright: playwrightVersion,
   plugin: process.env.E2E_PLUGIN_VERSION ?? 'unknown',
-  chat: process.env.E2E_CHAT ?? '',
   botName: process.env.E2E_BOT_NAME ?? '',
   video: process.env.E2E_VIDEO ?? '',
   screenshots: process.env.E2E_SCREENSHOTS ?? '',
