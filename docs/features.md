@@ -18,7 +18,7 @@ Feature list and TODO tracker for dsh-feishu. ✅ = shipped, 📋 = planned
 | Session-log export | `/export` sends the chat's session log as a downloadable file message | File message with markdown transcript | ✅ |
 | Diagnostics | `/feishu-status` shows a diagnostic card (connection state, sessions, last inbound) | Read-only status card, usable mid-turn | ✅ |
 | Inbound attachments | Images/files the user sends are saved to the workspace as plain files and the agent reads them by path; a bare file/image message registers as pending — a receipt card posts and the agent waits for your instruction | 📎 File received receipt (counts pending files); follow-up text makes the agent work on them | ✅ |
-| Outbound files/images | Agent-produced images/files send as native Feishu image/file messages | Tap to view original / download | 📋 |
+| Outbound files/images | The agent can send a workspace file/image to the chat via a `send_file` tool it calls itself | Native Feishu image/file message + 📤 Sent receipt card | ✅ |
 | Session hard delete | Remove a session from the active list (archive + hide, restorable from the archived list) | Session-detail card Delete + confirm view | 📋 |
 | Agent preset selection | Pick an agent preset (e.g. PTC mode) when choosing a working directory | Mode dropdown on the `/repo` / `/cd` picker card; preset binds to the new session | 📋 |
 | Subagent manager | Tree view of subagents (parent→child, status, tokens, duration), open or cancel one | Panel tree view | 📋 |
@@ -31,3 +31,4 @@ Feature list and TODO tracker for dsh-feishu. ✅ = shipped, 📋 = planned
 | session-rename-archive | Session rename/archive via dsh sessionTitle + workspaceRegistry (web-visible) | — | 📋 |
 | inbound-wait-instruction | Bare file/image messages register as pending — a receipt card posts and the agent waits for the user's instruction before working | 📎 File received receipt (counts pending files); follow-up text drains them into one turn | ✅ |
 | inbound-rich-text | Feishu rich-text (post) and video messages are no longer dropped: a post is serialized into ordered rich text + attachments (formatting and intra-bubble order preserved), a video is a plain file | Rich-text-with-text posts turn immediately; attachment-only posts / videos register as pending | ✅ |
+| outbound-files-images | agent sends files/images to Feishu via a send_file tool | — | 📋 |
