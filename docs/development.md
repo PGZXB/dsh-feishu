@@ -147,9 +147,11 @@ The E2E suite drives the **actual feishu.cn web client** in a headless
 browser and exercises the bot like a user: open a chat, send a slash
 command, click card buttons, assert what renders. It runs the real dsh
 process (dedicated bot app, mock LLM) plus a real browser — the only layer
-where the Feishu wire and the client are both real. It is on-demand
-(`pnpm run e2e:ui`) and is **not** part of CI: it needs a real bot app and a
-one-time QR login. Design, constraints, runbook, and the captured web
+where the Feishu wire and the client are both real. Run
+`pnpm run e2e:setup` once (dedicated test account; the QR scans are the
+only human steps) — afterwards `pnpm run e2e:ui` is hands-free. It is
+**not** part of CI: it needs a real bot app and a browser session. Design,
+constraints, runbook, and the captured web
 selectors live in `docs/e2e-testing.md`.
 
 #### Scenario suite (two real-process suites, two dsh homes)
