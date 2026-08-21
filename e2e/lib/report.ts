@@ -342,7 +342,7 @@ export function caseHtml(c: E2eCase): string {
     ? `<video controls src="${esc(video.path)}"></video>`
     : '<p>(no recording)</p>';
   const error = c.error
-    ? `<pre class="error">${esc(c.error.message)}${c.error.location ? '\n\n  at ' + esc(c.error.location) : ''}</pre>`
+    ? `<pre class="error">${esc(c.error.message)}${c.error.location ? `\n\n  at ${esc(c.error.location)}` : ''}</pre>`
     : '';
   const annotations = c.annotations.map((a) => `<li>${esc(a)}</li>`).join('');
   const stdout = c.stdout.length > 0 ? `<pre class="stdout">${esc(c.stdout.join('\n'))}</pre>` : '';
@@ -363,14 +363,14 @@ a{color:#2563eb}
 <p>Case <code>${esc(c.caseId)}</code> · <span class="status ${esc(c.status)}">${esc(c.status)}</span> · ${c.durationMs} ms · started ${esc(c.startedAt)}</p>
 ${error}
 <h2>Annotations</h2>
-${annotations ? '<ul>' + annotations + '</ul>' : '<p>(none)</p>'}
+${annotations ? `<ul>${annotations}</ul>` : '<p>(none)</p>'}
 <h2>Screenshots</h2>
 ${shots || '<p>(none)</p>'}
 <h2>Recording</h2>
 ${videoTag}
 <h2>Artifacts</h2>
 <table><tr><th>kind</th><th>path</th><th>size</th></tr>${c.artifacts.map((a) => `<tr><td>${a.kind}</td><td>${esc(a.path)}</td><td>${a.size}</td></tr>`).join('')}</table>
-${stdout ? '<h2>stdout</h2>' + stdout : ''}
+${stdout ? `<h2>stdout</h2>${stdout}` : ''}
 <p><a href="../summary.html">← back to summary</a></p>
 </body></html>`;
 }

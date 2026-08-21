@@ -37,7 +37,7 @@ const dockerImage = env.E2E_IMAGE ?? 'dsh-e2e-tools';
 const appId = env.E2E_APP_ID ?? env.FEISHU_APP_ID;
 const appSecret = env.E2E_APP_SECRET ?? env.FEISHU_APP_SECRET;
 
-// Pre-create the exchange + setup log as the HOST user (the container maps
+// Pre-create the state dir + setup log as the HOST user (the container maps
 // to a different uid and appends to it).
 const setupLog = join(stateDir, 'setup.log');
 mkdirSync(stateDir, { recursive: true, mode: 0o777 });

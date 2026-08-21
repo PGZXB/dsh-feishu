@@ -2,7 +2,7 @@
 /**
  * E2E launcher (host side). The repo is mounted READ-ONLY into the container
  * and copied to the container's own filesystem there — build artifacts never
- * touch the host. A small host "exchange" dir carries the QR codes the user
+ * touch the host. Two small git-ignored dirs (e2e/.state, e2e/.output) carry the QR codes the user
  * scans, the sessions/credentials for reuse, and the final report.
  *
  *   1. validates env (E2E_CHAT)

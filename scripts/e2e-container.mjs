@@ -131,7 +131,7 @@ async function main() {
   // 3. Bot-app setup: --force-login ignores any cached console session, so
   //    the QR is always scanned with the account the user chooses (the
   //    dedicated test account). The console session + app credentials are
-  //    exported to the exchange for reuse.
+  //    exported to /state for reuse.
   const envCreds = Boolean(process.env.E2E_APP_ID && process.env.E2E_APP_SECRET);
   const creds = envCreds
     ? { appId: process.env.E2E_APP_ID, appSecret: process.env.E2E_APP_SECRET }
@@ -183,7 +183,7 @@ async function main() {
   }
 
   // 4. Browser session (scan with the same account; reused from the
-  //    exchange). The console session does NOT authenticate the web app, so
+  //    /state). The console session does NOT authenticate the web app, so
   //    this is a separate one-time QR login.
   if (!existsSync(webSession)) {
     log('session', 'browser login required — scan with the account you choose');
@@ -268,7 +268,7 @@ async function main() {
   }
   console.log('  dsh feishu connection ready');
 
-  // 7. Playwright scenarios (report + session live in the exchange). The
+  // 7. Playwright scenarios (report + session live in /output + /state). The
   //    e2e suite is compiled to .build/ first — Playwright does not resolve
   //    NodeNext `.js`-suffixed imports against `.ts` sources.
   log('playwright', 'compiling the e2e suite (container-local)');
