@@ -23,7 +23,7 @@ dsh-feishu 的功能列表与 TODO 追踪表。✅ = 已实现，📋 = 计划�
 | agent 预设选择 | 选择工作目录时一并选 agent 预设（如 PTC mode） | `/repo` / `/cd` 选择卡加 Mode 下拉；预设绑定新会话 | 📋 |
 | 子代理管理 | 子代理树形视图（父→子、状态、token、时长），打开或取消 | 面板树形视图 | 📋 |
 | 设置面板 | 查看模型/provider、管理 API key、查看默认 cwd/preset | 面板设置视图 | 📋 |
-| turn 产出文件 | turn 产出的文件在 turn 结束时呈现 | 卡底部 chips 行；点 chip 收到文件 | 📋 |
+| turn 产出文件 | turn 产出的文件在 turn 结束时呈现 | 卡底部 chips 行；点 chip 收到文件 | ✅ |
 | 消息队列 | turn 运行期间发送的消息排队可见；可编辑/删除/插话 | 流式卡底部『排队中 N 条』折叠行；展开编辑/删除/steer | 📋 |
 | 模型重试行 | 模型自动重试不再静默 | 卡内状态行『重试中 (2/3) · 3s』，展开看延迟/原因 | 📋 |
 | 会话统计行 | 持久化的会话用量：轮数、步数、LLM/工具时长、TTFT、tok/s、缓存命中、token | 卡底部一行小字，随 turn 刷新；详情在 `/status` | 📋 |
@@ -32,3 +32,4 @@ dsh-feishu 的功能列表与 TODO 追踪表。✅ = 已实现，📋 = 计划�
 | inbound-wait-instruction | 裸文件/图片消息登记为 pending——发回执卡并等用户指令后才开始工作 | 📎 File received 回执（计数 pending 文件）；补发文字把它们带进一个 turn | ✅ |
 | inbound-rich-text | 飞书富文本（post）和视频消息不再被丢弃：post 序列化为有序富文本 + 附件（保留格式与气泡内顺序），视频按普通文件处理 | 带文字的富文本立即 turn；纯附件 post / 视频登记为 pending | ✅ |
 | outbound-files-images | agent sends files/images to Feishu via a send_file tool | — | 📋 |
+| turn-produced-files | list a turn's produced files as clickable chips on the streaming card; tapping a chip sends it to the chat | — | ✅ |

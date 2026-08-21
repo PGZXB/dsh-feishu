@@ -101,7 +101,8 @@ unless the prerequisites are met:
   the bundle" section below). Deliberately independent of the ambient
   `DSH_HOME` so the test never touches another dsh home. **Each integration
   suite uses its OWN home** (`dsh-home-attachments`, `dsh-home-rich-text`,
-  `dsh-home-wait-instruction`, `dsh-home-real`, `dsh-home-scenarios`):
+  `dsh-home-wait-instruction`, `dsh-home-real`, `dsh-home-scenarios`,
+  `dsh-home-outbound`, `dsh-home-turn-produced-files`):
   vitest runs the suites in parallel, and sharing one
   `_dev/dsh-home/feishu/session-map.json` made concurrent dsh processes
   race their writes and silently drop one suite's chat→session binding
