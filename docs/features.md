@@ -1,6 +1,6 @@
 # Feature List
 
-Feature list and TODO tracker for dsh-feishu. ✅ = shipped, 📋 = planned
+Feature list for dsh-feishu. ✅ = shipped, 📋 = planned
 (in roadmap order). Update this table when a feature lands.
 
 | Feature | What it does | UX | Status |
@@ -12,12 +12,14 @@ Feature list and TODO tracker for dsh-feishu. ✅ = shipped, 📋 = planned
 | Commands (20) | 15 surface commands + 5 web-equivalent wrappers; unknown slash commands pass through to dsh | Slash commands + panel buttons share one handler; working-state gate allows only safe commands mid-turn | ✅ |
 | One-QR quick setup | `dsh-feishu-setup`: one Feishu QR scan creates/configures the app (bot, scopes, version, credentials) and writes the profile | Terminal-guided QR login with bot branding (name/avatar/description) prompts | ✅ |
 | Groups & mentions | `/group` creates a group; mention modes (always/never/ambient); approvals/questions @ the requester | Group chat with bot, proactive @mentions on notices | ✅ |
-| Reaction ack | Received message → GoGoGo emoji; turn end → DONE/WARN | Two-stage reaction, configurable, can be disabled | ✅ |
+| Reaction ack | Received message → GoGoGo emoji; turn end → DONE/ERROR | Two-stage reaction, configurable, can be disabled | ✅ |
 | Scheduled reminders | The agent can schedule reminders via dsh-schedule; `/schedule` lists them | ⏰ Reminder card when a scheduled prompt fires | ✅ |
 | Allowlists | `allowedChats` / `allowedUsers` gate who can talk to the bot | Env/config-driven, applied to messages and card actions | ✅ |
 | Session-log export | `/export` sends the chat's session log as a downloadable file message | File message with markdown transcript | ✅ |
 | Diagnostics | `/feishu-status` shows a diagnostic card (connection state, sessions, last inbound) | Read-only status card, usable mid-turn | ✅ |
 | Inbound attachments | Images/files the user sends are saved to the workspace as plain files and the agent reads them by path; a bare file/image message registers as pending — a receipt card posts and the agent waits for your instruction | 📎 File received receipt (counts pending files); follow-up text makes the agent work on them | ✅ |
+| Inbound wait-instruction | A bare file/image message does not start a turn by itself — the bytes land in the workspace, a NEW receipt card posts per file, and the agent waits for the next text message to drain the pending list into one turn | 📎 File received receipt (counts pending files); follow-up text drains them into one turn | ✅ |
+| Inbound rich-text | Feishu rich-text (post) and video messages are no longer dropped: a post is serialized into ordered rich text + attachments (formatting and intra-bubble order preserved), a video is a plain file | Rich-text-with-text posts turn immediately; attachment-only posts / videos register as pending | ✅ |
 | Outbound files/images | The agent can send a workspace file/image to the chat via a `send_file` tool it calls itself | Native Feishu image/file message + 📤 Sent receipt card | ✅ |
 | Session hard delete | Remove a session from the active list (archive + hide, restorable from the archived list) | Session-detail card Delete + confirm view | 📋 |
 | Agent preset selection | Pick an agent preset (e.g. PTC mode) when choosing a working directory | Mode dropdown on the `/repo` / `/cd` picker card; preset binds to the new session | 📋 |
@@ -28,8 +30,3 @@ Feature list and TODO tracker for dsh-feishu. ✅ = shipped, 📋 = planned
 | Model retry line | Model auto-retries surface instead of staying silent | Card status line "retrying (2/3) · 3s", expand for delay/reason | 📋 |
 | Session stats line | Durable per-session usage: turns, steps, LLM/tool time, TTFT, tok/s, cache hit, tokens | One small line at the card bottom, refreshed per turn; details in `/status` | 📋 |
 | Context occupancy | Current session's context-window usage | Percent on the card bottom, refreshed per turn; details (used/capacity, breakdown) in `/status` | 📋 |
-| session-rename-archive | Session rename/archive via dsh sessionTitle + workspaceRegistry (web-visible) | — | 📋 |
-| inbound-wait-instruction | Bare file/image messages register as pending — a receipt card posts and the agent waits for the user's instruction before working | 📎 File received receipt (counts pending files); follow-up text drains them into one turn | ✅ |
-| inbound-rich-text | Feishu rich-text (post) and video messages are no longer dropped: a post is serialized into ordered rich text + attachments (formatting and intra-bubble order preserved), a video is a plain file | Rich-text-with-text posts turn immediately; attachment-only posts / videos register as pending | ✅ |
-| outbound-files-images | agent sends files/images to Feishu via a send_file tool | — | 📋 |
-| turn-produced-files | list a turn's produced files as clickable chips on the streaming card; tapping a chip sends it to the chat | — | ✅ |
