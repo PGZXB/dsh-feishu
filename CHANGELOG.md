@@ -66,6 +66,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   card posts; download/save failures notice loudly and never wedge the
   chat. Reuses the existing `im:resource` scope. (Feishu images are plain
   files to the agent — there is no image content block / visual-input path.)
+- **Outbound files/images (`send_file` tool).** The agent can deliver a
+  workspace file or image to the Feishu chat by calling a `send_file` tool
+  it invokes itself — dsh has no host-level "agent produced a file" event,
+  so instead of guessing from `tool/result`/fs observation the surface
+  registers a first-class tool (`path` required + optional `description`).
+  It resolves the path against the chat's pinned cwd, reads the bytes,
+  classifies image vs file by extension + magic bytes, uploads via
+  `im.v1.image.create` / `im.v1.file.create`, posts a native Feishu
+  image/file message, and shows a `📤 Sent` receipt card. Feature-detects
+  the `tools` service (absent → loud log, tool not registered). Depends on
+  `@deepseek-ai/dsh-tools` (new runtime dep).
 - **Bare attachment messages wait for the user's instruction
   (inbound-wait-instruction).** A file/image message without text no longer
   starts a turn by itself: the bytes land in the workspace, a NEW receipt

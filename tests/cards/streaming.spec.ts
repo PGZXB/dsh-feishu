@@ -40,7 +40,8 @@ class RecordingTransport implements FeishuTransport {
     return { chatId: `oc_group_${name}` };
   }
   async sendText(_chatId: string, _text: string): Promise<void> {}
-  async sendFile(_chatId: string, _fileName: string, _content: string): Promise<void> {}
+  async sendFile(_chatId: string, _fileName: string, _content: Uint8Array): Promise<void> {}
+  async sendImage(_chatId: string, _fileName: string, _bytes: Uint8Array): Promise<void> {}
   async addReaction(_messageId: string, _emojiType: string): Promise<string | undefined> {
     return undefined;
   }

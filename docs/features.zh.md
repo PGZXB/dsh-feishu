@@ -18,7 +18,7 @@ dsh-feishu 的功能列表与 TODO 追踪表。✅ = 已实现，📋 = 计划�
 | 会话日志导出 | `/export` 把聊天的会话日志作为可下载文件消息发送 | 带 markdown 转录的文件消息 | ✅ |
 | 诊断 | `/feishu-status` 显示诊断卡（连接状态、会话数、最后入站） | 只读状态卡，运行中可用 | ✅ |
 | 入站附件 | 用户发来的图片/文件保存到工作区作为普通文件，agent 按路径读取；裸文件/图片消息登记为 pending——发回执卡并等你的指令 | 📎 File received 回执（计数 pending 文件）；补发文字让 agent 处理 | ✅ |
-| 出站文件/图片 | agent 产出的图片/文件以飞书原生 image/file 消息发送 | 点开看原图/下载 | 📋 |
+| 出站文件/图片 | agent 可通过它自己调用的 `send_file` 工具把工作区文件/图片发送到聊天 | 飞书原生 image/file 消息 + 📤 Sent 回执卡 | ✅ |
 | 会话删除 | 从活跃列表删除会话（归档 + 隐藏，可从归档列表恢复） | 会话详情卡 Delete + 确认视图 | 📋 |
 | agent 预设选择 | 选择工作目录时一并选 agent 预设（如 PTC mode） | `/repo` / `/cd` 选择卡加 Mode 下拉；预设绑定新会话 | 📋 |
 | 子代理管理 | 子代理树形视图（父→子、状态、token、时长），打开或取消 | 面板树形视图 | 📋 |
@@ -31,3 +31,4 @@ dsh-feishu 的功能列表与 TODO 追踪表。✅ = 已实现，📋 = 计划�
 | session-rename-archive | Session rename/archive via dsh sessionTitle + workspaceRegistry (web-visible) | — | 📋 |
 | inbound-wait-instruction | 裸文件/图片消息登记为 pending——发回执卡并等用户指令后才开始工作 | 📎 File received 回执（计数 pending 文件）；补发文字把它们带进一个 turn | ✅ |
 | inbound-rich-text | 飞书富文本（post）和视频消息不再被丢弃：post 序列化为有序富文本 + 附件（保留格式与气泡内顺序），视频按普通文件处理 | 带文字的富文本立即 turn；纯附件 post / 视频登记为 pending | ✅ |
+| outbound-files-images | agent sends files/images to Feishu via a send_file tool | — | 📋 |

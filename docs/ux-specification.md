@@ -1089,3 +1089,119 @@ card like any text message; attachment-only posts / videos use the existing
 - The pending routing reuses the sibling inbound-wait-instruction part
   (drained by the follow-up text; attachment messages bypass the group
   mention gate because Feishu cannot @ from an attachment).
+
+## Part: outbound-files-images
+
+> The agent can send a file or image to the Feishu chat by calling an
+> explicit `send_file` tool: it names a workspace path (and optionally a
+> description), the surface uploads the bytes through the message-resource
+> API and posts a native Feishu image/file message, then reports the send
+> back to the agent and shows a small receipt card.
+
+### Intended behavior
+
+**Why active, not passive** — dsh has no host-level "agent produced a file"
+event (the web UI's "Turn produced files" is a client-side derivation from
+tool cards' `locations`, invisible to a plugin; see the sibling feature
+`turn-produced-files`). Rather than guess from `tool/result` or fs
+observation, the surface injects a first-class **`send_file` tool** that the
+agent calls deliberately when it wants to deliver a file/image to the user.
+Active tool invocation is deterministic and self-describing — the agent
+knows what it produced and why it sends it, so no heuristics or false
+positives.
+
+**Trigger** — an agent calls the `send_file` tool during a turn:
+`send_file(path, description?)`.
+
+- `path` (string, required): the workspace-relative path of the file/image to
+  send, resolved against the chat's pinned working directory (`cwd`).
+- `description` (string, optional): why the agent is sending it; shown on the
+  receipt card and returned to the agent as the tool's result context.
+
+**Tool registration** — via dsh's tool runtime: `ctx.get('tools')?.register(defineTool({...}))`
+(the feature-detect pattern, mirroring `ctx.commands` / `ctx.watch`). The
+registration is in the GLOBAL scope, so every agent can call it. The tool
+definition follows the reference `tool-fs` `write` tool:
+`ctx.tools.register(defineTool({ name, description, parameters, output, execute }))`.
+`@deepseek-ai/dsh-tools` is added as a runtime dependency (it exports the
+`defineTool` helper — a runtime function, not a type-only import).
+
+**Execution** — `execute(args, exec: ToolRunContext)` runs in the host
+process (the same one running the surface):
+
+1. resolve `cwd = exec.agent.session.header.cwd` (the chat's pinned working
+   directory) and `chatId = sessionMap.chatFor(exec.agent.session.id)`.
+2. read the file at `join(cwd, path)`; a missing/unreadable file is a tool
+   error (loud, no upload).
+3. **classify** the type by extension + magic bytes (reuse `sniffExtension`):
+   a known image container (png / jpg / gif / webp) → an image message via
+   `im.v1.image.create`; any other type → a file message via
+   `im.v1.file.create` (already supports binary). Upload the bytes, then
+   `createMessage(chatId, 'image'|'file', ...)`.
+4. on success, post a small `📤 Sent` receipt card: the file name, the
+   optional description, and the target chat.
+5. return a structured value to the agent (the sent file name + the message
+   the user sees), so the agent can acknowledge.
+
+**No chips / auto-collection** — this part is the *transport + tool*
+foundation only. The "show each turn's produced files as clickable chips"
+UX is the sibling feature `turn-produced-files` and is deliberately out of
+scope here.
+
+**Card/panel shape** — the `📤 Sent` receipt card (a plain markdown card,
+like the inbound-file receipt) is posted by the tool AFTER the upload
+succeeds, independent of the streaming card (which keeps rendering the
+turn's tokens). No new panel views, no buttons.
+
+**Failure modes**:
+- `tools` service absent (host did not mount it): feature-detect — the
+  surface logs loudly and does not register `send_file`, so the agent never
+  sees it (never a broken tool). The turn still runs normally.
+- Path missing / unreadable / outside cwd: tool error — `{ isError: true }`,
+  a loud log, and a clear message to the agent (no partial upload).
+- Upload fails (`im.v1.image.create` / `im.v1.file.create` error, auth): tool
+  error with the API message; the agent is told it did not send.
+- Unsupported file type (no known classifier): falls back to a `file` message
+  (the resource API serves arbitrary file bytes); `type=file` covers audio
+  and video too.
+- Oversized file: the platform's limit is surfaced as a tool error.
+
+**Acceptance checklist**:
+- [ ] `send_file` is registered and visible to the agent's tool schema
+      (integration: the agent's request body carries the `send_file` tool).
+- [ ] Agent calls `send_file({ path, description })` → a native image message
+      posts for an image path (png/jpg/gif/webp) and the bytes match
+      (unit + integration).
+- [ ] Agent calls `send_file` with a non-image path → a native file message
+      posts and the bytes match (unit + integration).
+- [ ] A `📤 Sent` receipt card posts with the file name and description
+      (unit).
+- [ ] The tool returns a structured value to the agent (name + confirmation)
+      (unit).
+- [ ] Missing/unreadable path → tool error, no upload, no receipt card
+      (unit).
+- [ ] `tools` service absent → `send_file` not registered, loud log, turn
+      still runs (unit).
+- [ ] No chips / auto-collection in this part (deferred to
+      `turn-produced-files`) — regression guard.
+
+### Reference
+
+- dsh tool runtime `ctx.tools` (`@deepseek-ai/dsh-tools`): `register(defineTool({...}))`
+  — `ToolDefinition` = `ToolSchema` + `output { schema, render }` +
+  `execute(args, exec)`; `exec.agent.session.header.cwd` gives the chat's
+  working directory, `exec.agent.session.id` the session. Reference
+  `packages/fs/tool-fs/src/write.ts` (`ctx.tools.register(defineTool(...))`
+  + `execute`).
+- Feishu message-resource API: `im.v1.image.create` uploads an image
+  (`image_type` + bytes) → `createMessage('image')`; `im.v1.file.create`
+  uploads a file (`file_type: 'stream'` + `file_name` + bytes) →
+  `createMessage('file')`. `type=file` on the resource API serves files,
+  audio, AND video. Existing scope `im:resource` is reused (no new scope).
+- botmux's `uploadImage`/`uploadFile` (`src/im/lark/client.ts`) are the
+  transport reference for the upload paths; botmux only forwards user-pasted
+  attachments (create-session banner), not agent-produced ones — there is no
+  agent-produce signal to copy (see sidecar research).
+- The surface's existing `transport.sendFile(chatId, fileName, content)`
+  (`src/transport.ts`) already uploads + posts a file; `send_file` extends it
+  to images and to reading real workspace bytes (not just a string).

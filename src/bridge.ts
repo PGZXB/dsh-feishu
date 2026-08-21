@@ -1034,7 +1034,7 @@ export class Bridge {
       const log = await this.options.readSession(sessionId);
       const transcript = buildSessionExport(log.events);
       const fileName = `session-${sessionId}.md`;
-      await this.options.transport.sendFile(chatId, fileName, transcript);
+      await this.options.transport.sendFile(chatId, fileName, new TextEncoder().encode(transcript));
       return { kind: 'success', text: `Exported ${log.events.length} events to ${fileName}.` };
     } catch (error: unknown) {
       this.options.logger.warn(`session export failed: ${String(error)}`);

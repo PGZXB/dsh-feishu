@@ -72,14 +72,15 @@ describe('MemoryTransport', () => {
   it('records file sends in the outbox (/export seam)', async () => {
     const transport = new MemoryTransport({ dir: SCRATCH });
     await transport.start();
-    await transport.sendFile('oc_chat', 'session-x.md', '# log');
+    await transport.sendFile('oc_chat', 'session-x.md', new TextEncoder().encode('# log'));
     const records = transport.outbox();
     expect(records[0]).toMatchObject({
       kind: 'file',
       chatId: 'oc_chat',
       fileName: 'session-x.md',
-      content: '# log',
     });
+    // `content` holds the raw bytes as a number array (binary-safe seam).
+    expect(Buffer.from(records[0]?.content ?? []).toString('utf8')).toBe('# log');
   });
 
   it('records card sends and patches in order', async () => {

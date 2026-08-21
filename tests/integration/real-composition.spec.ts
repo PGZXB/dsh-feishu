@@ -2622,10 +2622,12 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
       );
       const file = readOutbox().find((r) => r.kind === 'file');
       expect(file?.fileName).toMatch(/^session-.*\.md$/);
-      // The transcript carries the user turn and the assistant answer.
-      expect(file?.content ?? '').toContain('## user');
-      expect(file?.content ?? '').toContain('produce exportable content');
-      expect(file?.content ?? '').toContain('Exportable answer.');
+      // The transcript carries the user turn and the assistant answer. The
+      // outbox file `content` is a byte array now (binary-safe seam).
+      const transcript = Buffer.from(file?.content ?? []).toString('utf8');
+      expect(transcript).toContain('## user');
+      expect(transcript).toContain('produce exportable content');
+      expect(transcript).toContain('Exportable answer.');
       await waitFor(
         'the export confirmation text',
         () => readOutbox().some((r) => r.kind === 'text' && r.text?.includes('Exported')),

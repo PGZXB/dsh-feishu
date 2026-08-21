@@ -52,7 +52,9 @@ class RecordingTransport implements FeishuTransport {
   async sendText(chatId: string, text: string): Promise<void> {
     this.sentTexts.push({ chatId, text });
   }
-  async sendFile(_chatId: string, _fileName: string, _content: string): Promise<void> {}
+  async sendFile(_chatId: string, _fileName: string, _content: Uint8Array): Promise<void> {}
+  async sendImage(_chatId: string, _fileName: string, _bytes: Uint8Array): Promise<void> {}
+
   async addReaction(messageId: string, emojiType: string): Promise<string | undefined> {
     const reactionId = `rx-${++this.reactionSeq}`;
     this.reactions.push({ messageId, emojiType, action: 'add', reactionId });

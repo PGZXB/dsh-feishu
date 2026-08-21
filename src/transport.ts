@@ -437,10 +437,12 @@ export class LarkTransport implements FeishuTransport {
   }
 
   /** Upload a file and deliver it as a file message (`/export`). */
-  async sendFile(chatId: string, fileName: string, content: string): Promise<void> {
-    this.logger?.debug(`transport sendFile -> ${chatId}: ${fileName} (${content.length} chars)`);
+  async sendFile(chatId: string, fileName: string, content: Uint8Array): Promise<void> {
+    this.logger?.debug(
+      `transport sendFile -> ${chatId}: ${fileName} (${content.byteLength} bytes)`,
+    );
     const uploaded = await this.client.im.v1.file.create({
-      data: { file_type: 'stream', file_name: fileName, file: Buffer.from(content, 'utf8') },
+      data: { file_type: 'stream', file_name: fileName, file: Buffer.from(content) },
     });
     // im.v1.file.create returns the data directly (`{file_key} | null`).
     const fileKey = uploaded === null ? undefined : uploaded.file_key;
@@ -448,6 +450,20 @@ export class LarkTransport implements FeishuTransport {
       throw new FeishuApiError('im.v1.file.create', -1, 'response carried no file_key');
     }
     await this.createMessage(chatId, 'file', JSON.stringify({ file_key: fileKey }));
+  }
+
+  /** Upload an image (im.v1.image.create) and post it as an image message. */
+  async sendImage(chatId: string, fileName: string, bytes: Uint8Array): Promise<void> {
+    this.logger?.debug(`transport sendImage -> ${chatId}: ${fileName} (${bytes.byteLength} bytes)`);
+    const uploaded = await this.client.im.v1.image.create({
+      data: { image_type: 'message', image: Buffer.from(bytes) },
+    });
+    // im.v1.image.create returns the image_key directly.
+    const imageKey = uploaded === null ? undefined : uploaded.image_key;
+    if (imageKey === undefined) {
+      throw new FeishuApiError('im.v1.image.create', -1, 'response carried no image_key');
+    }
+    await this.createMessage(chatId, 'image', JSON.stringify({ image_key: imageKey }));
   }
 
   /** Add an emoji reaction to a message (two-stage ack). */

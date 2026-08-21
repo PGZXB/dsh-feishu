@@ -430,7 +430,11 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
         const log = await options.readSession(sessionId);
         const transcript = buildSessionExport(log.events);
         const fileName = `session-${sessionId}.md`;
-        await options.transport.sendFile(invocation.chatId, fileName, transcript);
+        await options.transport.sendFile(
+          invocation.chatId,
+          fileName,
+          new TextEncoder().encode(transcript),
+        );
         return {
           kind: 'success',
           text: `Exported ${log.events.length} events to ${fileName}.`,

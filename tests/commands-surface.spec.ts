@@ -19,7 +19,7 @@ import { SessionMap } from '../src/session-map.js';
 /** A minimal transport fake (only what the commands touch). */
 class FakeTransport implements FeishuTransport {
   readonly createdGroups: Array<{ name: string; memberOpenIds: readonly string[] }> = [];
-  readonly sentFiles: Array<{ chatId: string; fileName: string; content: string }> = [];
+  readonly sentFiles: Array<{ chatId: string; fileName: string; content: Uint8Array }> = [];
   readonly sentCards: Array<{ chatId: string; card: CardJson }> = [];
 
   async start(): Promise<void> {}
@@ -37,9 +37,10 @@ class FakeTransport implements FeishuTransport {
     return { chatId: `oc_group_${name}` };
   }
   async sendText(_chatId: string, _text: string): Promise<void> {}
-  async sendFile(chatId: string, fileName: string, content: string): Promise<void> {
+  async sendFile(chatId: string, fileName: string, content: Uint8Array): Promise<void> {
     this.sentFiles.push({ chatId, fileName, content });
   }
+  async sendImage(_chatId: string, _fileName: string, _bytes: Uint8Array): Promise<void> {}
   async addReaction(_messageId: string, _emojiType: string): Promise<string | undefined> {
     return undefined;
   }

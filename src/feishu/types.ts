@@ -241,12 +241,19 @@ export interface FeishuTransport {
   /** Send a plain text message to a chat. */
   sendText(chatId: string, text: string): Promise<void>;
   /**
-   * Upload `content` as a file message (im.v1.file.create → file_key →
+   * Upload bytes as a file message (im.v1.file.create → file_key →
    * im.v1.message.create with msg_type 'file'). Used by /export to deliver
-   * the session log as a downloadable file — the Feishu equivalent of the
-   * web's browser-download /export.
+   * the session log and by the `send_file` tool to send arbitrary workspace
+   * files (binary-safe — the bytes go through i.m.v1.file.create as-is).
    */
-  sendFile(chatId: string, fileName: string, content: string): Promise<void>;
+  sendFile(chatId: string, fileName: string, content: Uint8Array): Promise<void>;
+  /**
+   * Upload an image (im.v1.image.create → image_key → im.v1.message.create
+   * with msg_type 'image'). Used by the `send_file` tool to send an image
+   * the agent produced. `bytes` must be a known image format (png/jpg/gif/
+   * webp); `imageType` is the Feishu image_type (e.g. 'message').
+   */
+  sendImage(chatId: string, fileName: string, bytes: Uint8Array): Promise<void>;
   /**
    * Add an emoji reaction to a message (two-stage ack: 👀 on receive,
    * swapped to ✅/⚠️ on turn end). Resolves with the reaction id so the

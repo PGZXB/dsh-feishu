@@ -49,6 +49,7 @@ import type { CommandResult } from './commands.js';
 import { consoleExporter } from './console-exporter.js';
 import type { FeishuTransport } from './feishu/types.js';
 import { createMemoryTransport } from './memory-transport.js';
+import { registerSendFileTool } from './outbound.js';
 import type { SessionExportEvent } from './session-export.js';
 import { SessionMap } from './session-map.js';
 import { createLarkTransport } from './transport.js';
@@ -595,6 +596,20 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
     bridge.dispose();
     sessionMap.persist();
   });
+  // Outbound files/images: give the agent a `send_file` tool so it can
+  // deliver a workspace file/image to the chat. Feature-detect `tools`
+  // (a dsh-base service) — absent, the surface logs and the agent never
+  // sees the tool (never a broken tool). register() returns a disposer;
+  // register it as an effect so it tears down with the bundle.
+  const disposeSendFile = registerSendFileTool(ctx, {
+    transport,
+    sessionMap,
+    appId: credentials.appId,
+    logger,
+  });
+  if (disposeSendFile !== undefined) {
+    ctx.effect(() => () => disposeSendFile());
+  }
   promoteAmbientApiKey(ctx, config);
   void transport
     .start()

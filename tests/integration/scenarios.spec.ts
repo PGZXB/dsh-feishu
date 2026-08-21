@@ -333,7 +333,7 @@ describe.skipIf(!integrationReady)('scenario integration (real process)', () => 
         60_000,
       );
       const file = [...readOutbox()].reverse().find((r) => r.kind === 'file');
-      const transcript = file?.content ?? '';
+      const transcript = Buffer.from(file?.content ?? []).toString('utf8');
       expect(transcript).toContain('first message');
       expect(transcript).toContain('First answer.');
       expect(transcript).toContain('second message');
@@ -1215,7 +1215,7 @@ describe.skipIf(!integrationReady)('scenario integration (real process)', () => 
         60_000,
       );
       const file = [...readOutbox()].reverse().find((r) => r.kind === 'file');
-      const transcript = file?.content ?? '';
+      const transcript = Buffer.from(file?.content ?? []).toString('utf8');
       expect(transcript).toContain('## tool');
       expect(transcript).toContain('echo tool-output');
       expect(transcript).toContain('Tool transcript answer.');
