@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **More E2E smoke scenarios for the real-client suite.** The E2E suite
+  now covers the local-resolving surface commands (no LLM round-trip), each
+  in its own backend group that is disbanded afterwards: `/status`,
+  `/feishu-status` (the real long-connection check), `/schedule` (no-session
+  notice), `/panel` (control-panel card + a button that resolves to the
+  stop-turn command), `/repo` (project picker card) and bare `/model` (model
+  picker card). Added shared scenario scaffolding (`e2e/helpers/scenario.ts`)
+  and helpers `waitForCardContaining` / `clickCardButton`. See
+  `docs/e2e-testing.md` → "Scenarios".
+
 - **dsh family bumped to `0.1.0-rc.8`.** `@deepseek-ai/dsh` is pinned
   exactly in devDependencies; the rest of the `@deepseek-ai/*` surface
   moves to `^0.1.0-rc.8` (dev, peer, AND runtime deps — the runtime

@@ -226,7 +226,14 @@ describe('e2e run report generator', () => {
                         duration: 10,
                         startTime: '2026-08-21T00:00:00.000Z',
                         retry: 0,
-                        errors: [{ message: 'boom failed', location: 'e2e/helpers/x.ts:1' }],
+                        errors: [
+                          {
+                            message: 'boom failed',
+                            // Real Playwright error.location is an OBJECT; the
+                            // generator normalizes it to "file:line".
+                            location: { file: 'e2e/helpers/x.ts', line: 1, column: 19 },
+                          },
+                        ],
                         annotations: [],
                         stdout: [],
                         stderr: [],

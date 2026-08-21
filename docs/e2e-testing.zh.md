@@ -51,8 +51,25 @@ pnpm run e2e:ui     →  e2e/scripts/e2e-ui.mjs（宿主启动器）
 - **e2e/helpers/feishu.ts** — feishu.cn 网页 helper（打开应用/聊天、发消息、读聊天、点按钮、截图）。
 - **e2e/helpers/group.ts** — 后台建群/删群（`im.v1.chat.create` / `im.v1.chat.delete`，与 `/group` 同一底层调用）+ 唯一群名构造器。
 - **e2e/helpers/assert.ts** — 规则化聊天断言。
+- **e2e/helpers/scenario.ts** — 每个场景共用的群聊生命周期（后台建群 → 打开 → 截图 → `finally` 解散）。
 - **e2e/scenarios/*.spec.ts** — 每个场景一个文件。
 - **e2e/Dockerfile** — 运行镜像：Playwright 官方镜像 + 完整 ffmpeg（自带版只支持 VP8；转 mp4 需要 H.264）。
+
+### 场景
+
+本套件覆盖**本地解析**的 surface 命令（不经过 LLM 往返），因此每个断言都是确定的。每个场景在独立的后台群里运行，结束后解散。
+
+| 场景 | 断言 |
+| --- | --- |
+| `help.spec.ts` | `/help` → `dsh-feishu commands:` 块 |
+| `status.spec.ts` | `/status` → 本地 `chat:` / `mention mode:` 文本 |
+| `feishu-status.spec.ts` | `/feishu-status` → 诊断卡（`connection:`）——真实长连接验证点 |
+| `schedule.spec.ts` | 新群的 `/schedule` → `no session yet` 通知 |
+| `panel.spec.ts` | `/panel` → 控制面板卡（含命令按钮）；点 `Stop turn` 解析为 stop-turn 命令 |
+| `repo-picker.spec.ts` | `/repo` → 项目选择面板卡（`Pick a project`） |
+| `model-picker.spec.ts` | 裸 `/model` → 模型选择面板卡（`Choose a model`） |
+
+更深的 picker 选择（选项目/模型）以及需要真实会话/目录/白名单的交互仍留在集成套件——E2E 层证明卡片渲染、面板按钮能触发，而不证明选择逻辑。
 
 ## Setup（一次性，之后免人工）
 
@@ -121,29 +138,23 @@ FEISHU_DEBUG=1           # 插件自身 debug 追踪（dsh 子进程日志现在
    ```ts
    import { test } from '@playwright/test';
    import { loadE2eConfig } from '../helpers/config.js';
-   import { waitForBotReplyContaining } from '../helpers/assert.js';
-   import { openApp, openChat, sendMessage, snapshot } from '../helpers/feishu.js';
+   import { waitForCardContaining } from '../helpers/assert.js';
+   import { sendMessage, snapshot } from '../helpers/feishu.js';
    import { caseIdFromTitle } from '../helpers/report.js';
-   import { createGroup, deleteGroup, groupNameFor } from '../helpers/group.js';
+   import { disbandGroup, openCaseGroup, scenarioDebug } from '../helpers/scenario.js';
 
    const cfg = loadE2eConfig();
+   const debug = scenarioDebug(process.env.E2E_DEBUG === '1');
 
    test('send /model → model picker card', async ({ page }, testInfo) => {
      const caseId = caseIdFromTitle(testInfo.title);
-     const groupName = groupNameFor(caseId, cfg.runId);
-     const { chatId } = await createGroup(cfg, groupName, [cfg.userOpenId!]);
+     const { groupName, chatId } = await openCaseGroup(page, cfg, caseId, cfg.timeoutMs, debug);
      try {
-       await openApp(page, cfg);
-       await openChat(page, groupName, cfg.timeoutMs);
-       await snapshot(page, cfg, 'model-chat-open', caseId);
        await sendMessage(page, '/model');
-       await waitForBotReplyContaining(page, 'Model', cfg.timeoutMs);
+       await waitForCardContaining(page, 'Choose a model', cfg.timeoutMs);
        await snapshot(page, cfg, 'model-picker', caseId);
      } finally {
-       // 就地解散群聊，避免运行积累聊天
-       await deleteGroup(cfg, chatId).catch((error) =>
-         console.warn(`[cleanup] could not disband ${groupName}: ${error.message}`),
-       );
+       await disbandGroup(cfg, groupName, chatId, debug);
      }
    });
    ```
@@ -160,8 +171,12 @@ FEISHU_DEBUG=1           # 插件自身 debug 追踪（dsh 子进程日志现在
 | `sendMessage(page, text)` | 在聊天输入框输入并发送 |
 | `chatMessages(page)` | 读取已渲染消息 `{text, isSelf}[]` |
 | `clickButton(page, label)` / `clickCardText(page, label)` | 点击卡片按钮 / 卡片文本 |
-| `snapshot(page, cfg, label, caseId)` | 保存关键截图到 `report/screenshots/` |
+| `clickCardButton(page, label)` | 点击最后一张 bot 卡内的按钮（面板动作） |
+| `snapshot(page, cfg, label, caseId)` | 保存关键截图到 `report/screenshots/<caseId>/` |
 | `waitForBotReplyContaining(page, text, timeoutMs)` | 等待包含指定文本的 bot 回复（规则化） |
+| `waitForCardContaining(page, text, timeoutMs)` | 等待渲染出的卡片包含文本（规则化） |
+| `openCaseGroup(page, cfg, caseId, timeoutMs, debug)` | 创建每用例的后台群并打开其聊天 |
+| `disbandGroup(cfg, groupName, chatId, debug)` | 尽力而为的群清理 |
 | `groupNameFor(caseId, runId)` | 唯一群名 `<caseId>-<runId>`，截断至 ≤ 60 字符 |
 | `createGroup(cfg, name, memberOpenIds)` / `deleteGroup(cfg, chatId)` | 后台建群/删群（`im.v1.chat.create` / `im.v1.chat.delete`） |
 
@@ -174,7 +189,8 @@ FEISHU_DEBUG=1           # 插件自身 debug 追踪（dsh 子进程日志现在
 | 应用外壳 URL | 路径匹配 `/(messenger\|home\|space\|contact\|drive)/`（任意租户子域） |
 | 聊天消息项 | `.js-message-item`；`.message-self` 标记自己发的 |
 | 聊天输入框（composer） | `.innerdocbody` / `.zone-container.editor-kit-container`（可见） |
-| 卡片按钮 | `<button>` 元素；按可访问名称匹配 |
+| 卡片按钮 | 最后一个 `.js-message-item:not(.message-self)` 内的 `<button>`；按可访问名称匹配 |
+| 选择器（picker） | 飞书卡片 `select_static` 下拉（或编号按钮）；卡片 markdown 标题是确定性锚点（`Pick a project` / `Choose a model`） |
 | 登录二维码 | accounts 登录页 `[class*="scan-QR-code"]` 内的 `canvas`（会过期——登录 helper 会 reload 换新） |
 
 ## 排障

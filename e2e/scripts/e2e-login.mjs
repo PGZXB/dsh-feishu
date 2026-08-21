@@ -59,6 +59,22 @@ function debug(...args) {
 }
 debug('login', `state=${stateFile} headed=${headed} baseUrl=${baseUrl}`);
 
+/** True when the login page reports the QR as expired (so we reload). */
+async function isQrExpired(page) {
+  try {
+    return await page.evaluate(() => {
+      const re = /refresh|expired|过期|失效|已过期|刷新二维码/i;
+      const text = document.body.innerText;
+      // The login page body is short; only treat as expired when the QR area
+      // itself shows a renewal prompt (not the whole page chrome).
+      const qrBox = document.querySelector('[class*="scan-QR-code"], canvas');
+      return qrBox ? re.test(qrBox.textContent ?? '') || re.test(text.slice(0, 200)) : false;
+    });
+  } catch {
+    return false;
+  }
+}
+
 const isAppUrl = (u) => /\/(messenger|home|space|contact|drive)([/?#]|$)/.test(u);
 
 mkdirSync(dirname(stateFile), { recursive: true });
@@ -88,19 +104,23 @@ if (!isAppUrl(page.url())) {
   let loggedIn = false;
   let lastRefresh = 0;
   let capturedOnce = false;
-  console.log(`⏳ login required — scan ${qrPath} (refreshed every 5 s) with the Feishu app`);
+  console.log(`⏳ login required — scan ${qrPath} with the Feishu app`);
   while (Date.now() < deadline) {
     if (Date.now() - lastRefresh > 5_000) {
       lastRefresh = Date.now();
-      // The feishu login QR does NOT auto-rotate: when it expires the page
-      // shows a greyed QR with a "Refresh QR Code" overlay until clicked.
-      // Reloading the login page always renders a fresh QR — bulletproof,
-      // so reload every cycle instead of guessing when the QR went stale
-      // (the stale-overlay text is not reliably discoverable in the DOM).
-      if (capturedOnce) {
+      // The login QR does NOT auto-rotate and is valid for a few minutes, so
+      // we must NOT reload every cycle — reloading swaps the QR out from
+      // under the user mid-scan, so their scan never confirms (a 5s reload
+      // race). Only reload when the page clearly reports the QR as expired
+      // (its text changes) or when no QR element can be captured at all.
+      const expired = await isQrExpired(page);
+      if (expired || !capturedOnce) {
         await page.reload({ waitUntil: 'commit', timeout: 30_000 }).catch(() => {});
         await page.waitForTimeout(6_000);
-        debug('qr', 'reloaded for a fresh QR');
+        debug(
+          'qr',
+          expired ? 'QR expired — reloaded for a fresh one' : 'first capture — loaded login page',
+        );
       }
       let captured = false;
       for (const sel of [
