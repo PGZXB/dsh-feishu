@@ -39,3 +39,6 @@ pnpm-debug.log*
 
 # Compiled e2e suite (container-local build output)
 e2e/.build/
+
+# Polluted container-created node_modules kept for manual cleanup
+node_modules-*/
