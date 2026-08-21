@@ -72,9 +72,13 @@ class RecordingTransport implements FeishuTransport {
   async sendText(chatId: string, text: string): Promise<void> {
     this.sentTexts.push({ chatId, text });
   }
-  sentFiles: Array<{ chatId: string; fileName: string; content: string }> = [];
-  async sendFile(chatId: string, fileName: string, content: string): Promise<void> {
+  sentFiles: Array<{ chatId: string; fileName: string; content: Uint8Array }> = [];
+  async sendFile(chatId: string, fileName: string, content: Uint8Array): Promise<void> {
     this.sentFiles.push({ chatId, fileName, content });
+  }
+  sentImages: Array<{ chatId: string; fileName: string; bytes: Uint8Array }> = [];
+  async sendImage(chatId: string, fileName: string, bytes: Uint8Array): Promise<void> {
+    this.sentImages.push({ chatId, fileName, bytes });
   }
   connectionState?: () => 'ready' | 'reconnecting' | 'error';
   reactions: Array<{
@@ -4144,8 +4148,9 @@ describe('/export command', () => {
     expect(h.transport.sentFiles).toHaveLength(1);
     const file = h.transport.sentFiles[0];
     expect(file?.fileName).toBe('session-feishu-session-1.md');
-    expect(file?.content).toContain('## user');
-    expect(file?.content).toContain('hi');
+    const content = Buffer.from(file?.content ?? []).toString('utf8');
+    expect(content).toContain('## user');
+    expect(content).toContain('hi');
     expect(h.transport.sentTexts.some((t) => t.text.includes('Exported 3 events'))).toBe(true);
   });
 
@@ -4183,7 +4188,9 @@ describe('/export command', () => {
     h.sessionMap.set('oc_chat', 'feishu-session-1');
     await h.bridge.handleMessage(message({ text: '/export' }));
     expect(h.transport.sentFiles).toHaveLength(1);
-    expect(h.transport.sentFiles[0]?.content).toContain('no content');
+    expect(Buffer.from(h.transport.sentFiles[0]?.content ?? []).toString('utf8')).toContain(
+      'no content',
+    );
     expect(h.transport.sentTexts.some((t) => t.text.includes('Exported 0 events'))).toBe(true);
   });
 });

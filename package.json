@@ -47,26 +47,27 @@
   },
   "dependencies": {
     "@deepseek-ai/dsh-llm": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-storage": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-storage-domain": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-storage-json": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-workspace": "^0.1.0-rc.8",
     "@deepseek-ai/schemastery": "^3.18.1",
     "@larksuiteoapi/node-sdk": "^1.73.0",
+    "axios": "^1.7.0",
     "js-yaml": "^5.2.3",
     "markdown-it": "^15.0.0",
-    "qrcode-terminal": "^0.12.0",
-    "axios": "^1.7.0",
-    "@deepseek-ai/dsh-storage": "^0.1.0-rc.8",
-    "@deepseek-ai/dsh-storage-json": "^0.1.0-rc.8",
-    "@deepseek-ai/dsh-storage-domain": "^0.1.0-rc.8",
-    "@deepseek-ai/dsh-workspace": "^0.1.0-rc.8"
+    "qrcode-terminal": "^0.12.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-agent": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-commands": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-credentials": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-schedule": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-session": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-user-approval": "^0.1.0-rc.8",
-    "@deepseek-ai/dsh-user-questions": "^0.1.0-rc.8",
-    "@deepseek-ai/dsh-schedule": "^0.1.0-rc.8"
+    "@deepseek-ai/dsh-user-questions": "^0.1.0-rc.8"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.7",
@@ -76,17 +77,17 @@
     "@deepseek-ai/dsh-commands": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-credentials": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-llm": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-schedule": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-session": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-user-approval": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-user-questions": "^0.1.0-rc.8",
+    "@playwright/test": "1.62.1",
     "@types/js-yaml": "^4.0.9",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^22.15.0",
     "@types/qrcode-terminal": "^0.12.2",
     "typescript": "^5.9.3",
-    "vitest": "^3.2.7",
-    "@deepseek-ai/dsh-schedule": "^0.1.0-rc.8",
-    "@playwright/test": "1.62.1"
+    "vitest": "^3.2.7"
   },
   "dsh": {
     "bundle": {
