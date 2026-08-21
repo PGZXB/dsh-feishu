@@ -120,6 +120,8 @@ const res = spawnSync(
     `E2E_BOT_NAME=${botName}`,
     ...(appId !== undefined ? ['-e', `E2E_APP_ID=${appId}`] : []),
     ...(appSecret !== undefined ? ['-e', `E2E_APP_SECRET=${appSecret}`] : []),
+    ...(env.E2E_DEBUG !== undefined ? ['-e', `E2E_DEBUG=${env.E2E_DEBUG}`] : []),
+    ...(env.FEISHU_DEBUG !== undefined ? ['-e', `FEISHU_DEBUG=${env.FEISHU_DEBUG}`] : []),
     '-e',
     'http_proxy=',
     '-e',
