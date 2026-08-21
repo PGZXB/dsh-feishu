@@ -42,3 +42,7 @@ e2e/.build/
 
 # Polluted container-created node_modules kept for manual cleanup
 node_modules-*/
+
+# E2E state (sessions/credentials/QRs) and run outputs — never committed
+e2e/.state/
+e2e/.output/

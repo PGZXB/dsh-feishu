@@ -6,7 +6,7 @@
  * scans, the sessions/credentials for reuse, and the final report.
  *
  *   1. validates env (E2E_CHAT)
- *   2. prepares the exchange dir (_dev/e2e-exchange) + a writable setup.log
+ *   2. prepares the state dir (e2e/.state) + a writable setup.log
  *   3. builds the e2e docker image when missing
  *   4. runs the container orchestration and propagates its exit code
  *
@@ -14,7 +14,7 @@
  *   E2E_CHAT          (required) the bot chat to open
  *   E2E_VIDEO         off|webm|mp4   (default webm)
  *   E2E_SCREENSHOTS   off|on|failure (default on)
- *   E2E_EXCHANGE      exchange dir (default <repo>/_dev/e2e-exchange)
+ *   E2E_STATE / E2E_OUTPUT  state (sessions/QRs) and run-output dirs
  *   E2E_APP_ID / E2E_APP_SECRET  optional override of the bot app
  *   E2E_IMAGE         docker image (default dsh-e2e-tools)
  */
@@ -33,7 +33,8 @@ if (!chat) {
   console.error('✗ E2E_CHAT is required (the chat to open), e.g. E2E_CHAT="DSH Agent (e2e)"');
   process.exit(2);
 }
-const exchange = env.E2E_EXCHANGE ?? join(ROOT, '_dev', 'e2e-exchange');
+const stateDir = join(ROOT, 'e2e', '.state');
+const outputDir = join(ROOT, 'e2e', '.output');
 const dockerImage = env.E2E_IMAGE ?? 'dsh-e2e-tools';
 const appId = env.E2E_APP_ID ?? env.FEISHU_APP_ID;
 const appSecret = env.E2E_APP_SECRET ?? env.FEISHU_APP_SECRET;
@@ -41,8 +42,9 @@ const appSecret = env.E2E_APP_SECRET ?? env.FEISHU_APP_SECRET;
 // The in-container setup tees its QR to this file; pre-create it as the HOST
 // user so the container (a different uid) can append and the host can read
 // it. World-writable — git-ignored local state.
-const setupLog = join(exchange, 'setup.log');
-mkdirSync(exchange, { recursive: true, mode: 0o777 });
+const setupLog = join(stateDir, 'setup.log');
+mkdirSync(stateDir, { recursive: true, mode: 0o777 });
+mkdirSync(outputDir, { recursive: true, mode: 0o777 });
 writeFileSync(setupLog, '', { flag: 'a', mode: 0o666 });
 
 function log(step, msg) {
@@ -64,7 +66,8 @@ if (inspect.status !== 0) {
 }
 
 log('docker', `running the E2E stack in image ${dockerImage}`);
-log('exchange', `scan-QR files + report land in ${exchange}`);
+log('state', `sessions/QRs: ${stateDir}`);
+log('output', `run reports: ${outputDir}`);
 
 const res = spawnSync(
   'docker',
@@ -72,10 +75,12 @@ const res = spawnSync(
     'run', '--rm', '--shm-size=1g',
     // The repo is mounted READ-ONLY; the container copies it to /app.
     '-v', `${ROOT}:/repo:ro`,
-    '-v', `${exchange}:/exchange`,
+    '-v', `${stateDir}:/state`,
+    '-v', `${outputDir}:/output`,
     '-w', '/app',
     '-e', `E2E_CHAT=${chat}`,
-    '-e', 'E2E_EXCHANGE=/exchange',
+    '-e', 'E2E_STATE=/state',
+    '-e', 'E2E_OUTPUT=/output',
     '-e', `E2E_VIDEO=${env.E2E_VIDEO ?? 'mp4'}`,
     '-e', `E2E_SCREENSHOTS=${env.E2E_SCREENSHOTS ?? 'on'}`,
     '-e', `E2E_BASE_URL=${env.E2E_BASE_URL ?? 'https://www.feishu.cn/'}`,

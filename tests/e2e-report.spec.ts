@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { collectArtifacts, writeManifest } from '../e2e/lib/report.js';
+import { collectArtifacts, generateRunReport, writeManifest } from '../e2e/lib/report.js';
 
 const TMP = join(process.cwd(), '_dev', 'e2e-unit-tmp');
 
@@ -46,5 +46,150 @@ describe('e2e report artifacts', () => {
     expect(manifest.generatedAt).toBeTruthy();
     expect(manifest.artifacts.length).toBe(artifacts.length);
     expect(manifest.artifacts[0]).toHaveProperty('path');
+  });
+});
+
+describe('e2e run report generator', () => {
+  const RUN = join(TMP, 'run-report');
+
+  beforeEach(() => {
+    rmSync(RUN, { recursive: true, force: true });
+    mkdirSync(join(RUN, 'screenshots'), { recursive: true });
+    mkdirSync(join(RUN, 'playwright-output', 'send-help'), { recursive: true });
+    writeFileSync(join(RUN, 'screenshots', 'help-reply.png'), 'shot');
+    writeFileSync(join(RUN, 'playwright-output', 'send-help', 'test-finished-1.png'), 'auto');
+    writeFileSync(join(RUN, 'playwright-output', 'send-help', 'video.webm'), 'vid');
+    writeFileSync(
+      join(RUN, 'report.json'),
+      JSON.stringify({
+        stats: {
+          startTime: '2026-08-21T00:00:00.000Z',
+          duration: 6400,
+          expected: 1,
+          skipped: 0,
+          unexpected: 0,
+          flaky: 0,
+        },
+        suites: [
+          {
+            title: 'help.spec.js',
+            specs: [
+              {
+                title: 'send /help → slash command descriptions',
+                tests: [
+                  {
+                    status: 'expected',
+                    results: [
+                      {
+                        status: 'expected',
+                        duration: 6400,
+                        startTime: '2026-08-21T00:00:00.100Z',
+                        retry: 0,
+                        errors: [],
+                        annotations: [
+                          { type: 'evidence', description: 'bot reply: dsh-feishu commands:' },
+                        ],
+                        stdout: [],
+                        stderr: [],
+                        attachments: [],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    );
+  });
+
+  it('generates per-case and summary outputs', () => {
+    const summary = generateRunReport(RUN, { node: 'v22', chat: 'Test Bot' });
+
+    expect(summary.total).toBe(1);
+    expect(summary.passed).toBe(1);
+    expect(summary.failed).toBe(0);
+    expect(summary.cases[0]?.caseId).toBe('send-help-slash-command-descriptions');
+
+    const summaryJson = JSON.parse(readFileSync(join(RUN, 'summary.json'), 'utf8')) as {
+      cases: { report: string }[];
+    };
+    expect(summaryJson.cases[0]?.report).toBe(
+      'cases/send-help-slash-command-descriptions/report.json',
+    );
+
+    const caseJson = JSON.parse(
+      readFileSync(
+        join(RUN, 'cases', 'send-help-slash-command-descriptions', 'report.json'),
+        'utf8',
+      ),
+    ) as { status: string; annotations: string[]; artifacts: { kind: string; path: string }[] };
+    expect(caseJson.status).toBe('passed');
+    expect(caseJson.annotations).toContain('bot reply: dsh-feishu commands:');
+    expect(caseJson.artifacts.some((a) => a.path === 'screenshots/help-reply.png')).toBe(true);
+    expect(caseJson.artifacts.some((a) => a.path === 'video.mp4')).toBe(true);
+
+    const caseHtml = readFileSync(
+      join(RUN, 'cases', 'send-help-slash-command-descriptions', 'report.html'),
+      'utf8',
+    );
+    expect(caseHtml).toContain('<video');
+    expect(caseHtml).toContain('help-reply.png');
+
+    const summaryHtml = readFileSync(join(RUN, 'summary.html'), 'utf8');
+    expect(summaryHtml).toContain('cases/send-help-slash-command-descriptions/report.html');
+    expect(summaryHtml).toContain('v22');
+  });
+
+  it('flags failing cases', () => {
+    writeFileSync(
+      join(RUN, 'report.json'),
+      JSON.stringify({
+        stats: {
+          startTime: '2026-08-21T00:00:00.000Z',
+          duration: 10,
+          expected: 0,
+          skipped: 0,
+          unexpected: 1,
+          flaky: 0,
+        },
+        suites: [
+          {
+            specs: [
+              {
+                title: 'boom',
+                tests: [
+                  {
+                    status: 'unexpected',
+                    results: [
+                      {
+                        status: 'unexpected',
+                        duration: 10,
+                        startTime: '2026-08-21T00:00:00.000Z',
+                        retry: 0,
+                        errors: [{ message: 'boom failed', location: 'e2e/lib/x.ts:1' }],
+                        annotations: [],
+                        stdout: [],
+                        stderr: [],
+                        attachments: [],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    const summary = generateRunReport(RUN, {});
+    expect(summary.failed).toBe(1);
+    const caseJson = JSON.parse(
+      readFileSync(join(RUN, 'cases', 'boom', 'report.json'), 'utf8'),
+    ) as { status: string; error: { message: string } };
+    expect(caseJson.status).toBe('failed');
+    expect(caseJson.error.message).toBe('boom failed');
+    expect(readFileSync(join(RUN, 'summary.html'), 'utf8')).toContain('failed');
   });
 });

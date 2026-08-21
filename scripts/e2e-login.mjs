@@ -49,7 +49,7 @@ mkdirSync(dirname(stateFile), { recursive: true });
 
 // The browser profile is ephemeral per-run (the durable artifact is the
 // storageState written to --state); a temp profile avoids stale locks and
-// permission issues on shared/exchange directories.
+// permission issues on shared/state directories.
 const { tmpdir } = await import('node:os');
 const PROFILE = join(tmpdir(), `e2e-login-profile-${Date.now()}`);
 for (const lock of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {

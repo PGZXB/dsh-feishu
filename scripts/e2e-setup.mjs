@@ -6,9 +6,9 @@
  *   1. installs + builds the plugin (container-local copy)
  *   2. installs the plugin into the e2e-dev profile
  *   3. creates the bot app (console QR scan — scan with the TEST account;
- *      skipped when /exchange/creds.json already exists)
+ *      skipped when /state/creds.json already exists)
  *   4. performs the browser login (QR scan — same account; skipped when
- *      /exchange/web-session.json exists)
+ *      /state/web-session.json exists)
  *   5. verifies the chat exists (message the bot once if missing)
  *
  * Exit codes: 0 = ready (later `pnpm run e2e:ui` runs need no human),
@@ -31,15 +31,17 @@ if (!chat) {
   console.error('✗ E2E_CHAT is required (the chat to open), e.g. E2E_CHAT="DSH Agent (e2e)"');
   process.exit(2);
 }
-const exchange = env.E2E_EXCHANGE ?? join(ROOT, '_dev', 'e2e-exchange');
+const stateDir = join(ROOT, 'e2e', '.state');
+const outputDir = join(ROOT, 'e2e', '.output');
 const dockerImage = env.E2E_IMAGE ?? 'dsh-e2e-tools';
 const appId = env.E2E_APP_ID ?? env.FEISHU_APP_ID;
 const appSecret = env.E2E_APP_SECRET ?? env.FEISHU_APP_SECRET;
 
 // Pre-create the exchange + setup log as the HOST user (the container maps
 // to a different uid and appends to it).
-const setupLog = join(exchange, 'setup.log');
-mkdirSync(exchange, { recursive: true, mode: 0o777 });
+const setupLog = join(stateDir, 'setup.log');
+mkdirSync(stateDir, { recursive: true, mode: 0o777 });
+mkdirSync(outputDir, { recursive: true, mode: 0o777 });
 writeFileSync(setupLog, '', { flag: 'a', mode: 0o666 });
 
 function log(step, msg) {
@@ -56,7 +58,7 @@ if (inspect.status !== 0) {
 }
 
 log('setup', 'running the one-time E2E environment setup in docker');
-console.log(`QR files + exported state land in ${exchange}`);
+console.log(`sessions/QRs: ${stateDir}`);
 console.log('Scan the console QR (bot-app setup) at setup.log, then the browser QR at qr.png — both with the TEST account.\n');
 
 const res = spawnSync(
@@ -64,11 +66,13 @@ const res = spawnSync(
   [
     'run', '--rm', '--shm-size=1g',
     '-v', `${ROOT}:/repo:ro`,
-    '-v', `${exchange}:/exchange`,
+    '-v', `${stateDir}:/state`,
+    '-v', `${outputDir}:/output`,
     '-w', '/app',
     '-e', 'E2E_SETUP=1',
     '-e', `E2E_CHAT=${chat}`,
-    '-e', 'E2E_EXCHANGE=/exchange',
+    '-e', 'E2E_STATE=/state',
+    '-e', 'E2E_OUTPUT=/output',
     '-e', `E2E_BOT_NAME=${env.E2E_BOT_NAME ?? 'DSH Agent (e2e)'}`,
     ...(appId !== undefined ? ['-e', `E2E_APP_ID=${appId}`] : []),
     ...(appSecret !== undefined ? ['-e', `E2E_APP_SECRET=${appSecret}`] : []),

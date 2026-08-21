@@ -3,22 +3,21 @@
  * In-container E2E orchestration. The repo is mounted READ-ONLY at /repo and
  * copied to the container-local /app; every build artifact (node_modules,
  * lib, the pnpm store, the dsh home) stays in the container and vanishes
- * with it. Only the /exchange mount (a small host dir) carries data out:
+ * with it. Two small host mounts carry data out:
  *
- *   /exchange/setup.log        — the bot-app setup QR (ASCII) for the user
- *   /exchange/console-session.json — the setup tool's console session
- *   /exchange/creds.json       — {appId, appSecret} of the bot app
- *   /exchange/web-qr.png       — the browser login QR (rotates)
- *   /exchange/web-session.json — the browser storageState
- *   /exchange/report/          — screenshots, videos, html, manifest.json
+ *   /state  (host e2e/.state)   — sessions/credentials/QR files:
+ *     setup.log, console-session.json, creds.json, web-session.json
+ *   /output (host e2e/.output)  — one timestamped dir per run with the
+ *     standardized report: summary.html/json, cases/<id>/report.html/json,
+ *     screenshots, video.mp4; `latest` symlinks to the newest run
  *
  * Flow (the README install-from-source flow, inside the container):
  *   pnpm install → build → setup:feishu --new --force-login (one QR scan,
- *   TEST-account console login; reuses /exchange/console-session.json when
+ *   TEST-account console login; reuses /state/console-session.json when
  *   present) → browser login (TEST account; reuses web-session.json) →
  *   mock LLM + dsh (profile e2e-dev) → Playwright scenarios → mp4 → manifest.
  *
- * Env: E2E_CHAT, E2E_EXCHANGE, E2E_VIDEO, E2E_SCREENSHOTS, E2E_BASE_URL,
+ * Env: E2E_CHAT, E2E_STATE, E2E_OUTPUT, E2E_VIDEO, E2E_SCREENSHOTS, E2E_BASE_URL,
  * E2E_MOCK_PORT, E2E_BOT_NAME, E2E_APP_ID/E2E_APP_SECRET (override).
  */
 
@@ -36,17 +35,21 @@ if (!chat) {
   console.error('✗ E2E_CHAT is required (the chat to open), e.g. E2E_CHAT="DSH Agent (e2e)"');
   process.exit(2);
 }
-const exchange = env.E2E_EXCHANGE ?? '/exchange';
+const state = env.E2E_STATE ?? '/state';
+const outputRoot = env.E2E_OUTPUT ?? '/output';
 const video = env.E2E_VIDEO ?? 'mp4';
-const reportDir = '/exchange/report';
+// The run directory: a timestamped dir under the output root; `latest`
+// symlinks to it.
+const runId = new Date().toISOString().replace(/[:.]/g, '-');
+const reportDir = join(outputRoot, runId);
 const mockPort = env.E2E_MOCK_PORT ?? '19090';
 const dshBin = join(ROOT, 'node_modules', '.bin', 'dsh');
 const e2eHome = join(ROOT, '_dev', 'e2e-dsh-home');
 const profileDir = join(e2eHome, 'profiles', 'e2e-dev');
-const consoleSession = join(exchange, 'console-session.json');
-const webSession = join(exchange, 'web-session.json');
-const credsFile = join(exchange, 'creds.json');
-const setupLog = join(exchange, 'setup.log');
+const consoleSession = join(state, 'console-session.json');
+const webSession = join(state, 'web-session.json');
+const credsFile = join(state, 'creds.json');
+const setupLog = join(state, 'setup.log');
 
 for (const k of ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'all_proxy', 'ALL_PROXY']) {
   delete process.env[k];
@@ -312,14 +315,24 @@ async function main() {
     }
   }
 
-  // 9. Artifact manifest.
-  const artifacts = collectArtifacts(reportDir);
-  writeFileSync(
-    join(reportDir, 'manifest.json'),
-    `${JSON.stringify({ generatedAt: new Date().toISOString(), artifacts }, null, 2)}\n`,
+  // 9. Standardized run report: per-case JSON/HTML + summary JSON/HTML.
+  log('report', `generating the standardized report in ${reportDir}`);
+  const envForReport = {
+    ...process.env,
+    E2E_RUN_DIR: reportDir,
+    E2E_PLUGIN_VERSION: readFileSync(join(ROOT, 'package.json'), 'utf8').includes('"version"')
+      ? JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
+      : 'unknown',
+  };
+  const gen = spawnSync(
+    process.execPath,
+    [join(ROOT, 'scripts', 'e2e-report.mjs'), reportDir],
+    { cwd: ROOT, env: envForReport, stdio: 'inherit' },
   );
-  log('report', `artifacts: ${artifacts.length} in ${reportDir}`);
-  console.log(`  html: ${join(reportDir, 'html', 'index.html')}`);
+  if (gen.status !== 0) console.warn('  (report generation failed — raw Playwright output is still in reportDir)');
+  // `latest` symlink → this run (remove-then-create; rm -f of a dir symlink is fine).
+  spawnSync('sh', ['-c', `rm -f ${outputRoot}/latest && ln -s ${runId} ${outputRoot}/latest`], { stdio: 'ignore' });
+  log('report', `run report: ${join(reportDir, 'summary.html')} (latest -> ${runId})`);
 }
 
 const SCREENSHOT_EXT = new Set(['.png', '.jpg', '.jpeg']);

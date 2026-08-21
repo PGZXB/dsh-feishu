@@ -21,18 +21,24 @@
 pnpm run e2e:setup  →  scripts/e2e-setup.mjs（一次性，宿主）
   └─ docker：复制仓库（只读挂载 → /app）→ 安装 → 构建 →
      profile → 创建 bot 应用（控制台扫码）→ 浏览器登录（扫码）→
-     校验聊天存在  →  全部导出到 _dev/e2e-exchange/
-     （creds.json、console-session.json、web-session.json、report/）
+     校验聊天存在  →  全部导出到 e2e/.state/
+     （creds.json、console-session.json、web-session.json）
 
 pnpm run e2e:ui     →  scripts/e2e-ui.mjs（宿主启动器）
   └─ docker：复制仓库 → 安装 → 构建 → profile →
      复用导出的凭据/会话（无需扫码）→
      启动 mock DeepSeek server + dsh（profile e2e-dev）→
-     运行 Playwright 场景 →
-     录屏转 mp4 → 写报告 + manifest.json
+     运行 Playwright 场景 → 录屏转 mp4 →
+     生成标准化运行报告到 e2e/.output/<runId>/
+     （每用例 HTML/JSON + 汇总 HTML/JSON；`latest` 软链指向最新）
 ```
 
-一切都在容器内按 README 的「从源码安装」流程执行。宿主只读挂载仓库 + 一个 **exchange** 目录——只有 exchange 会随容器留存：你要扫的二维码、复用的会话与应用凭据、最终报告。构建产物（node_modules、lib、pnpm store、dsh home）只存在于容器内，随容器退出消失。
+一切都在容器内按 README 的「从源码安装」流程执行。宿主只读挂载仓库 + 两个 git-ignored 目录：
+
+- **`e2e/.state/`** — 持久会话与凭据（setup 期间的二维码文件、`creds.json`、`console-session.json`、`web-session.json`）。
+- **`e2e/.output/`** — 运行报告：每次运行一个带时间戳的目录（`<runId>/`）存放标准化报告，另有 `latest` 软链指向最新一次。
+
+构建产物（node_modules、lib、pnpm store、dsh home）只存在于容器内，随容器退出消失。
 
 **使用专用测试账号。** bot 应用和浏览器会话都创建在「扫码时所用账号」之下——请用专用测试账号扫码，绝不用生产账号。setup 带 `--force-login`，因此跨账号永远不会复用缓存的会话。
 
@@ -56,8 +62,8 @@ setup 依次完成：
 
 1. 缺少 e2e docker 镜像时先构建；
 2. 容器内：复制仓库（只读挂载）、安装 + 构建、把插件装进 profile `e2e-dev`；
-3. **创建 bot 应用** — README quick-setup 带 `--force-login`；用**测试账号**扫 `_dev/e2e-exchange/setup.log` 里的控制台二维码（过期自动换新）；应用凭据导出到 `_dev/e2e-exchange/creds.json`（已存在则跳过）；
-4. **浏览器登录** — 用同一账号扫 `_dev/e2e-exchange/qr.png`；storageState 导出到 `_dev/e2e-exchange/web-session.json`（已存在则跳过）；
+3. **创建 bot 应用** — README quick-setup 带 `--force-login`；用**测试账号**扫 `e2e/.state/setup.log` 里的控制台二维码（过期自动换新）；应用凭据导出到 `e2e/.state/creds.json`（已存在则跳过；设了 `E2E_APP_ID`/`E2E_APP_SECRET` 也跳过）；
+4. **浏览器登录** — 用同一账号扫 `e2e/.state/qr.png`；storageState 导出到 `e2e/.state/web-session.json`（已存在则跳过）；
 5. **聊天校验** — 确认名为 `E2E_CHAT` 的聊天在消息列表中存在。
 
 退出码：`0` = 就绪（之后的 `e2e:ui` 免人工）；`3` = 聊天缺失——在飞书 App 里搜索 bot 并给它发一条消息（飞书不允许程序化创建「用户↔全新 bot」的首个会话），然后重跑 `pnpm run e2e:setup` 收尾。
@@ -78,13 +84,23 @@ E2E_APP_ID / E2E_APP_SECRET # 可选：覆盖 bot 应用
 
 ## 报告
 
-每次运行写入 `_dev/e2e-exchange/report/`：
+每次运行写入 `e2e/.output/<runId>/` 下的一个带时间戳目录（`latest` 软链指向最新）：
 
-- `html/` — Playwright HTML 报告
-- `report.json` — Playwright JSON 报告
-- `screenshots/` — 每个场景自选的关键截图（通过 `snapshot(page, cfg, label)`）+ Playwright 自动截图
-- `*.webm` / `*.mp4` — 完整会话录屏（默认 mp4，webm 源保留）
-- `manifest.json` — 机器可读产物清单（路径 + 类型 + 大小）
+```
+<runId>/
+  summary.html      一页汇总：运行统计 + 所有用例，可点进 cases/ 各用例
+  summary.json      机器可读的运行 + 每用例摘要
+  cases/<caseId>/
+    report.html     单用例自包含页（状态、错误、截图、<video> 录屏、注解、产物）
+    report.json     单用例的详尽 JSON
+    screenshots/    该用例的关键截图（场景通过 snapshot(page, cfg, label) 自选）
+                    + Playwright 自动截图
+    video.mp4       该用例完整录屏（mp4；webm 源保留为 video.webm）
+  report.json       Playwright 原始 JSON（生成器的数据源）
+  manifest.json     扁平产物清单（路径 + 类型 + 大小）
+```
+
+单用例 `report.json` 事无巨细：状态、耗时、开始时间、重试次数、错误消息 + 位置、注解、stdout/stderr、产物，以及运行环境（node/playwright/插件版本、聊天名、视频/截图策略）。
 
 ## 添加场景
 

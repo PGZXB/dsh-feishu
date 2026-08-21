@@ -31,23 +31,29 @@ third testing layer:
 pnpm run e2e:setup  →  scripts/e2e-setup.mjs (one-time, host)
   └─ docker: copy repo (read-only mount → /app) → install → build →
      profile → create the bot app (console QR) → browser login (QR) →
-     verify the chat exists  →  exports everything to _dev/e2e-exchange/
-     (creds.json, console-session.json, web-session.json, report/)
+     verify the chat exists  →  exports everything to e2e/.state/
+     (creds.json, console-session.json, web-session.json)
 
 pnpm run e2e:ui     →  scripts/e2e-ui.mjs (host launcher)
   └─ docker: copy repo → install → build → profile →
      reuse exported creds/session (no QR) →
      boot the mock DeepSeek server + dsh (profile e2e-dev) →
-     run Playwright scenarios →
-     convert recordings to mp4 → write the report + manifest.json
+     run Playwright scenarios → convert recordings to mp4 →
+     generate the standardized run report into e2e/.output/<runId>/
+     (per-case HTML/JSON + summary HTML/JSON; `latest` symlinks to it)
 ```
 
 Everything runs inside the container following the README install-from-source
-flow. The host mounts the repo **read-only** and an **exchange** directory —
-only the exchange survives the container: the QR codes you scan, the
-sessions and app credentials for reuse, and the final report. Build artifacts
-(node_modules, lib, the pnpm store, the dsh home) exist only in the
-container and vanish when it exits.
+flow. The host mounts the repo **read-only** and two git-ignored directories:
+
+- **`e2e/.state/`** — durable sessions and credentials (QR files during
+  setup, `creds.json`, `console-session.json`, `web-session.json`).
+- **`e2e/.output/`** — run reports: one timestamped directory per run
+  (`<runId>/`) with the standardized layout, plus a `latest` symlink to the
+  newest run.
+
+Build artifacts (node_modules, lib, the pnpm store, the dsh home) exist only
+in the container and vanish when it exits.
 
 **Use a dedicated test account.** The bot app and the browser session are
 created under whatever account scans the QR — scan with the dedicated
@@ -79,12 +85,13 @@ The setup performs, in order:
 2. inside the container: copies the repo (read-only mount), installs +
    builds, installs the plugin into profile `e2e-dev`;
 3. **bot-app setup** — the README quick-setup with `--force-login`; scan the
-   console QR at `_dev/e2e-exchange/setup.log` (auto-refreshes on expiry)
+   console QR at `e2e/.state/setup.log` (auto-refreshes on expiry)
    with the **test account**; the app credentials are exported to
-   `_dev/e2e-exchange/creds.json` (skipped when it already exists);
-4. **browser login** — scan `_dev/e2e-exchange/qr.png` with the same
+   `e2e/.state/creds.json` (skipped when it already exists, or when
+   `E2E_APP_ID`/`E2E_APP_SECRET` are set);
+4. **browser login** — scan `e2e/.state/qr.png` with the same
    account; the storageState is exported to
-   `_dev/e2e-exchange/web-session.json` (skipped when it exists);
+   `e2e/.state/web-session.json` (skipped when it exists);
 5. **chat check** — verifies the chat named `E2E_CHAT` exists in the
    messenger.
 
@@ -111,15 +118,28 @@ shell history or the repo.
 
 ## Report
 
-Every run writes into `_dev/e2e-exchange/report/`:
+Every run writes a timestamped directory under `e2e/.output/<runId>/`
+(`latest` symlinks to the newest run):
 
-- `html/` — Playwright HTML report
-- `report.json` — Playwright JSON report
-- `screenshots/` — the scenario's key screenshots (chosen by each scenario
-  via `snapshot(page, cfg, label)`) + Playwright's automatic captures
-- `*.webm` / `*.mp4` — the full session recording (mp4 by default; the
-  webm source is kept)
-- `manifest.json` — machine-readable artifact list (path + kind + size)
+```
+<runId>/
+  summary.html      one page: run stats + every case, links into cases/
+  summary.json      machine-readable run + per-case summary
+  cases/<caseId>/
+    report.html     one case, self-contained (status, error, screenshots,
+                    <video> recording, annotations, artifacts)
+    report.json     one case, everything we know about it
+    screenshots/    the case's key screenshots (scenario-chosen via
+                    snapshot(page, cfg, label)) + Playwright captures
+    video.mp4       the case's full recording (mp4; webm kept as video.webm)
+  report.json       Playwright's raw JSON (the generator's source of truth)
+  manifest.json     flat artifact list (path + kind + size)
+```
+
+The per-case `report.json` is exhaustive: status, duration, start time,
+retry count, error message + location, annotations, stdout/stderr,
+artifacts, plus the run environment (node/playwright/plugin versions, chat
+name, video/screenshot policy).
 
 ## Adding a scenario
 

@@ -15,8 +15,8 @@ describe('e2e config', () => {
     expect(cfg.screenshots).toBe('on');
     expect(cfg.baseUrl).toBe('https://www.feishu.cn/');
     expect(cfg.timeoutMs).toBe(30_000);
-    expect(cfg.reportDir).toBe(join(process.cwd(), '_dev', 'e2e-report'));
-    expect(cfg.sessionState).toBe(join(process.cwd(), '_dev', 'e2e-session', 'state.json'));
+    expect(cfg.reportDir).toBe(join(process.cwd(), 'e2e', '.output', 'latest'));
+    expect(cfg.sessionState).toBe(join(process.cwd(), 'e2e', '.state', 'web-session.json'));
     expect(cfg.appId).toBeUndefined();
   });
 

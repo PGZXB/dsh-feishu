@@ -6,7 +6,7 @@
  * script uses the code to tell the user whether they still need to message
  * the bot once.
  *
- * Env: E2E_CHAT, E2E_SESSION_STATE (default /exchange/web-session.json).
+ * Env: E2E_CHAT, E2E_SESSION_STATE (default /state/web-session.json).
  */
 
 import { createRequire } from 'node:module';
@@ -23,7 +23,7 @@ if (!chat) {
   console.error('✗ E2E_CHAT is required');
   process.exit(2);
 }
-const sessionState = env.E2E_SESSION_STATE ?? '/exchange/web-session.json';
+const sessionState = env.E2E_SESSION_STATE ?? '/state/web-session.json';
 
 for (const k of ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'all_proxy', 'ALL_PROXY']) {
   delete process.env[k];

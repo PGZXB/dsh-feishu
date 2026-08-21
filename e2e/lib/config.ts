@@ -10,9 +10,9 @@
  * - `E2E_HEADED=1` — run with a visible browser window
  * - `E2E_VIDEO=off|webm|mp4` — video policy (default `mp4`)
  * - `E2E_SCREENSHOTS=off|on|failure` — screenshot policy (default `on`)
- * - `E2E_REPORT_DIR` — report output directory (default `<repo>/_dev/e2e-report`)
+ * - `E2E_REPORT_DIR` — run output directory (default `<repo>/e2e/.output/latest`)
  * - `E2E_SESSION_STATE` — browser session state file (default
- *   `<repo>/_dev/e2e-session/state.json`; created by `pnpm run e2e:login`)
+ *   `<repo>/e2e/.state/web-session.json`)
  * - `E2E_BASE_URL` — Feishu web base URL (default `https://www.feishu.cn/`)
  *
  * @module e2e/lib/config
@@ -60,11 +60,11 @@ function envString(env: NodeJS.ProcessEnv, ...keys: string[]): string | undefine
   return undefined;
 }
 
-/** Repo-relative default location: `<cwd>/_dev/<leaf...>` — cwd is the repo
+/** Repo-relative default location: `<cwd>/e2e/.<leaf...>` — cwd is the repo
  *  root both locally and inside the docker image (launcher mounts it with
- *  `-w`). */
-function repoDevPath(...leaf: string[]): string {
-  return join(process.cwd(), '_dev', ...leaf);
+ *  `-w`). These are the git-ignored state/output dirs. */
+function repoStatePath(...leaf: string[]): string {
+  return join(process.cwd(), 'e2e', ...leaf);
 }
 
 function parseVideo(value: string | undefined): E2eVideo {
@@ -107,8 +107,9 @@ export function loadE2eConfig(env: NodeJS.ProcessEnv = process.env): E2eConfig {
     headless: envString(env, 'E2E_HEADED') !== '1',
     video: parseVideo(envString(env, 'E2E_VIDEO')),
     screenshots: parseScreenshots(envString(env, 'E2E_SCREENSHOTS')),
-    reportDir: envString(env, 'E2E_REPORT_DIR') ?? repoDevPath('e2e-report'),
-    sessionState: envString(env, 'E2E_SESSION_STATE') ?? repoDevPath('e2e-session', 'state.json'),
+    reportDir: envString(env, 'E2E_REPORT_DIR') ?? repoStatePath('.output', 'latest'),
+    sessionState:
+      envString(env, 'E2E_SESSION_STATE') ?? repoStatePath('.state', 'web-session.json'),
     baseUrl: envString(env, 'E2E_BASE_URL') ?? 'https://www.feishu.cn/',
     timeoutMs,
   };
