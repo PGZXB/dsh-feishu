@@ -32,16 +32,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **E2E setup is idempotent and group-based.** Re-running `e2e:setup`
   never re-scans an already-exported login (`creds.json`,
   `web-session.json`, `user.json` in `e2e/.state/`); the bot app is created
-  as `DSH-E2E-TESTBOT` (open-platform QR), the test user's open_id is
-  extracted from the web session for backend group creation, and a
-  create+delete probe verifies the app can manage groups. Each test case
-  now runs in its own group chat named `<caseId>-<runId>` (unique per run),
-  created through the backend — the same `im.v1.chat.create` call the
-  plugin's `/group` wraps — so cases never share a chat page. The run
-  report has a single entry point: `summary.html` in the Playwright HTML
-  report's visual style, linking into `cases/<caseId>/report.html`
-  (screenshots + video per case); the separate Playwright `html/` output
-  is no longer generated.
+  as `DSH-E2E-TESTBOT` (open-platform QR), and the test user's open_id is
+  resolved once by sending the bot a one-time p2p message and reading the
+  chat's members through the app's existing `im:chat` permissions — no
+  extra scope. A create+delete probe verifies the app can manage groups.
+  Each test case now runs in its own group chat named `<caseId>-<runId>`
+  (unique per run), created through the backend — the same
+  `im.v1.chat.create` call the plugin's `/group` wraps — so cases never
+  share a chat page. The run report has a single entry point:
+  `summary.html` in the Playwright HTML report's visual style, linking
+  into `cases/<caseId>/report.html` (screenshots + video per case); the
+  separate Playwright `html/` output is no longer generated.
 - **Inbound attachments.** `image` and `file` messages are no longer
   ignored. Every attachment (image or file) is downloaded through the
   message-resource endpoint (`im.v1.messageResource.get` — `im.v1.image.get`

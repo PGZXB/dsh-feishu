@@ -107,9 +107,12 @@ The setup performs, in order:
 4. **browser login** — scan `e2e/.state/qr.png` with the same
    account; the storageState is exported to
    `e2e/.state/web-session.json` (skipped when it exists);
-5. **test-user open_id** — extracted from the web session (rule-based
-   localStorage/API inspection) into `e2e/.state/user.json` — the backend
-   group creation invites this user (skipped when it exists);
+5. **test-user open_id** — the browser sends the bot a one-time private
+   message (creating the p2p chat), then the app's own credentials (the
+   manifest's `im:chat` / `im:chat.members:read`, no extra scope) resolve
+   the test user's open_id from that chat's members into
+   `e2e/.state/user.json` — the backend group creation invites this user
+   (skipped when it exists);
 6. **group probe** — creates and deletes a probe group through the backend
    to verify the app can manage group chats.
 

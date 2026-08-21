@@ -68,7 +68,7 @@ setup 依次完成：
 2. 容器内：复制仓库（只读挂载）、安装 + 构建、把插件装进 profile `e2e-dev`；
 3. **创建 bot 应用** — README quick-setup；用**测试账号**扫 `e2e/.state/setup.log` 里的开放平台二维码（过期自动换新）；应用以 `DSH-E2E-TESTBOT` 创建（可用 `E2E_BOT_NAME` 覆盖），凭据导出到 `e2e/.state/creds.json`（已存在则跳过；设了 `E2E_APP_ID`/`E2E_APP_SECRET` 也跳过）；
 4. **浏览器登录** — 用同一账号扫 `e2e/.state/qr.png`；storageState 导出到 `e2e/.state/web-session.json`（已存在则跳过）；
-5. **测试用户 open_id** — 从 web 会话提取（规则化 localStorage/接口检查）到 `e2e/.state/user.json`——后台建群需要用它把测试用户拉进群（已存在则跳过）；
+5. **测试用户 open_id** — 浏览器给 bot 发一条一次性私聊消息（创建 p2p 聊天），然后用应用自身凭据（manifest 已有的 `im:chat` / `im:chat.members:read`，无需额外 scope）从该聊天的成员里解析出测试用户 open_id，存入 `e2e/.state/user.json`——后台建群需要用它把测试用户拉进群（已存在则跳过）；
 6. **建群探针** — 通过后台创建并删除一个探针群，验证应用能管理群聊。
 
 退出码：`0` = 就绪（之后的 `e2e:ui` 免人工）；其他 = 失败（看输出）。

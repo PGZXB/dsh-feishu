@@ -233,10 +233,12 @@ async function main() {
     console.log('  [setup] reusing the exported web session');
   }
 
-  // 5. Test-user open_id (idempotent): extracted from the web session once;
-  //    the backend group creation invites this user.
+  // 5. Test-user open_id (idempotent, one-time): the browser sends the bot a
+  //    p2p message (creates the chat), then the app's own credentials
+  //    (im:chat / im:chat.members:read — already in the manifest) resolve
+  //    the test user's open_id from that chat's members.
   if (!existsSync(userFile)) {
-    log('user', 'extracting the test user open_id from the web session');
+    log('user', 'sending a one-time p2p message to the bot and resolving the test user open_id');
     const res = spawnSync(
       process.execPath,
       [join(ROOT, 'scripts', 'e2e-user-id.mjs'), '--state', webSession, '--out', userFile],
