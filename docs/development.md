@@ -175,6 +175,23 @@ recipe. CI prepares both profiles.
 | Stop mid-turn swaps the reaction to the stopped emoji | `stop mid-turn swaps the received reaction` |
 | `/export` transcript includes tool rows | `/export after a tool-calling turn` |
 
+
+### Real-client E2E (feishu.cn web)
+
+The E2E suite drives the **actual feishu.cn web client** in a headless
+browser and exercises the bot like a user: open a group chat, send a slash
+command, click card buttons, assert what renders. It runs the real dsh
+process (dedicated bot app, mock LLM) plus a real browser — the only layer
+where the Feishu wire and the client are both real. Run
+`pnpm run e2e:setup` once (dedicated test account; the QR scans are the
+only human steps, and the setup is idempotent — re-running never re-scans
+an already-exported login) — afterwards `pnpm run e2e:ui` is hands-free.
+Each test case creates its own group chat (`<caseId>-<runId>`) through the
+backend (the same `im.v1.chat.create` call `/group` wraps), so cases never
+share a chat page. It is **not** part of CI: it needs a real bot app and a
+browser session. Design, constraints, runbook, and the captured web
+selectors live in `docs/e2e-testing.md`.
+
 ## Verifying the bundle in a real dsh profile
 
 The bundle must mount into a real dsh profile. Use an isolated `DSH_HOME` so
@@ -290,6 +307,7 @@ they land.
 | `docs/ux-specification.md` (+ `.zh.md`) | interactive behavior: cards, panels, actions, approvals, questions |
 | `docs/feishu-setup.md` (+ `.zh.md`) | Feishu setup, permissions, events, callbacks (kept in sync with `src/setup/feishu-manifest.json`) |
 | `docs/development.md` (+ `.zh.md`) | dev workflow, commands, gates, toolchain, PR/CI process |
+| `docs/e2e-testing.md` (+ `.zh.md`) | E2E UI suite: scenarios, runbook, constraints, captured web selectors |
 | `docs/features.md` (+ `.zh.md`) | feature list / TODO tracker — every shipped or planned feature updates its row |
 | `docs/pitfalls.md` (+ `.zh.md`) | field-proven failure modes; every entry ships with its regression test |
 | `AGENTS.md` | agent guidance, conventions, workflow (this file) |

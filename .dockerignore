@@ -1,0 +1,13 @@
+# The e2e Dockerfile copies nothing from the context (the launcher tar-copies
+# the repo into the container instead) — keep the build context lean.
+node_modules
+lib
+_dev
+_tmp
+.git
+.pnpm-store
+e2e/.build
+e2e/.state
+e2e/.output
+coverage
+*.log

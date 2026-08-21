@@ -20,6 +20,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Real-client E2E UI suite** (`e2e/`, `e2e/scripts/e2e-ui.mjs`): drives the
+  actual feishu.cn web client headless (Playwright + docker image
+  `e2e/Dockerfile`) against a real dsh process running the bot app with the
+  mock LLM — the only layer where the Feishu wire and the browser client are
+  both real. Rule-based DOM assertions only (no paid vision in tests);
+  `pnpm run e2e:setup` performs the one-time environment prep (bot app,
+  browser session, chat) and later runs are hands-free; configurable
+  screenshot/video (mp4 default) + HTML report + `manifest.json`. First
+  scenario: `/help` → slash-command descriptions. See `docs/e2e-testing.md`.
+- **E2E run diagnostics.** The dsh child process's stdout/stderr is now
+  forwarded to the terminal (its logs were previously consumed by the
+  readiness gate and invisible), so `FEISHU_DEBUG=1` shows the plugin's own
+  tracing during a run. `E2E_DEBUG=1` adds fine-grained harness diagnostics
+  (state-file resolution, group create/delete, WS lifecycle, QR cycles,
+  report collection).
+- **E2E setup is idempotent and group-based.** Re-running `e2e:setup`
+  never re-scans an already-exported login (`creds.json`,
+  `web-session.json`, `user.json` in `e2e/.state/`); the bot app is created
+  with a **unique name** (`DSH-E2E-TESTBOT-<YYYYMMDDHHmmss>`, persisted in
+  `e2e/.state/bot-name`) so the setup's search-for-bot step never matches a
+  stale app from an earlier run (open-platform QR). The test user's open_id
+  is resolved once by listening on a WSClient long connection (the same SDK
+  the plugin's transport uses) while the browser sends the bot a private
+  message — the `im.message.receive_v1` event's `sender.sender_id.open_id`
+  is the test user's id, no extra API scope. A create+delete probe verifies
+  the app can manage groups.
+  Each test case now runs in its own group chat named `<caseId>-<runId>`
+  (unique per run), created through the backend — the same
+  `im.v1.chat.create` call the plugin's `/group` wraps — so cases never
+  share a chat page. The bot stays the group owner, so each case disbands
+  its group in `finally` (runs do not accumulate chats). The run report has
+  a single entry point: `summary.html` in the Playwright HTML report's
+  visual style, linking into `cases/<caseId>/report.html`; screenshots are
+  numbered in capture order (`1_`, `2_`, …); the separate Playwright
+  `html/` output is no longer generated.
 - **Inbound attachments.** `image` and `file` messages are no longer
   ignored. Every attachment (image or file) is downloaded through the
   message-resource endpoint (`im.v1.messageResource.get` — `im.v1.image.get`

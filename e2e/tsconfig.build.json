@@ -1,0 +1,11 @@
+{
+  // Emit the e2e suite to .build/ so Playwright (which does not resolve
+  // NodeNext `.js`-suffixed imports against `.ts` sources) can load it.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": ".build",
+    "rootDir": "."
+  },
+  "include": ["."]
+}
