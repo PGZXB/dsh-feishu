@@ -85,9 +85,11 @@ async function tenantAccessToken(cfg: E2eCredentials, fetchImpl: typeof fetch): 
 }
 
 /**
- * Create a group chat via `im.v1.chat.create` — the same underlying call the
- * plugin's `/group` command performs (owner = first member, members invited
- * at creation). The bot creates the group through its app credentials.
+ * Create a group chat via `im.v1.chat.create`. The plugin's `/group` command
+ * makes the FIRST member the owner (`owner_id = memberOpenIds[0]`, so the
+ * requester owns the group); the E2E harness does the opposite — it keeps
+ * the BOT as the group owner (no `owner_id`) so the case can disband the
+ * group in its `finally` cleanup (`im.v1.chat.delete` requires the owner).
  * @param cfg - resolved E2E configuration (app credentials).
  * @param name - the group name (see {@link groupNameFor}).
  * @param memberOpenIds - members to invite (the test user's open id).
@@ -113,7 +115,9 @@ export async function createGroup(
     body: JSON.stringify({
       name,
       user_id_list: [...memberOpenIds],
-      ...(memberOpenIds.length > 0 ? { owner_id: memberOpenIds[0] } : {}),
+      // No owner_id: the bot (creator) stays the owner, so the case can
+      // disband the group afterwards. `/group` sets owner = first member;
+      // the E2E harness deliberately differs for self-cleanup.
     }),
   });
   const body = (await res.json()) as CreateChatResponse;

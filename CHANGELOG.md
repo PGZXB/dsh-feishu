@@ -34,18 +34,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `web-session.json`, `user.json` in `e2e/.state/`); the bot app is created
   with a **unique name** (`DSH-E2E-TESTBOT-<YYYYMMDDHHmmss>`, persisted in
   `e2e/.state/bot-name`) so the setup's search-for-bot step never matches a
-  stale app from an earlier run (open-platform QR), and the test user's
-  open_id is resolved once by sending the bot a one-time p2p message and
-  reading the chat's members through the app's existing `im:chat`
-  permissions — no extra scope. A create+delete probe verifies the app can
-  manage groups.
+  stale app from an earlier run (open-platform QR). The test user's open_id
+  is resolved once by listening on a WSClient long connection (the same SDK
+  the plugin's transport uses) while the browser sends the bot a private
+  message — the `im.message.receive_v1` event's `sender.sender_id.open_id`
+  is the test user's id, no extra API scope. A create+delete probe verifies
+  the app can manage groups.
   Each test case now runs in its own group chat named `<caseId>-<runId>`
   (unique per run), created through the backend — the same
   `im.v1.chat.create` call the plugin's `/group` wraps — so cases never
-  share a chat page. The run report has a single entry point:
-  `summary.html` in the Playwright HTML report's visual style, linking
-  into `cases/<caseId>/report.html` (screenshots + video per case); the
-  separate Playwright `html/` output is no longer generated.
+  share a chat page. The bot stays the group owner, so each case disbands
+  its group in `finally` (runs do not accumulate chats). The run report has
+  a single entry point: `summary.html` in the Playwright HTML report's
+  visual style, linking into `cases/<caseId>/report.html`; screenshots are
+  numbered in capture order (`1_`, `2_`, …); the separate Playwright
+  `html/` output is no longer generated.
 - **Inbound attachments.** `image` and `file` messages are no longer
   ignored. Every attachment (image or file) is downloaded through the
   message-resource endpoint (`im.v1.messageResource.get` — `im.v1.image.get`

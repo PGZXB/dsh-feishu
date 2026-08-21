@@ -56,9 +56,12 @@ describe('e2e run report generator', () => {
     rmSync(RUN, { recursive: true, force: true });
     mkdirSync(join(RUN, 'screenshots'), { recursive: true });
     mkdirSync(join(RUN, 'playwright-output', 'send-help'), { recursive: true });
-    writeFileSync(join(RUN, 'screenshots', 'help-reply.png'), 'shot');
+    // Scenario snapshots are named `N_<label>.png` at save time (per-page
+    // counter in feishu.ts) — the fixture mirrors that.
+    writeFileSync(join(RUN, 'screenshots', '1_help-reply.png'), 'shot');
     writeFileSync(join(RUN, 'playwright-output', 'send-help', 'test-finished-1.png'), 'auto');
     writeFileSync(join(RUN, 'playwright-output', 'send-help', 'video.webm'), 'vid');
+    writeFileSync(join(RUN, 'playwright-output', 'send-help', 'video.mp4'), 'vid');
     writeFileSync(
       join(RUN, 'report.json'),
       JSON.stringify({
@@ -127,7 +130,14 @@ describe('e2e run report generator', () => {
     ) as { status: string; annotations: string[]; artifacts: { kind: string; path: string }[] };
     expect(caseJson.status).toBe('passed');
     expect(caseJson.annotations).toContain('bot reply: dsh-feishu commands:');
-    expect(caseJson.artifacts.some((a) => a.path === 'screenshots/help-reply.png')).toBe(true);
+    // Scenario snapshots are already numbered in capture order at save time
+    // (1_help-reply.png, 2_…); Playwright's own capture keeps its name. The
+    // report sorts screenshots first (numbered ones lead, in order), then
+    // the video.
+    const shotPaths = caseJson.artifacts.filter((a) => a.kind === 'screenshot').map((a) => a.path);
+    expect(shotPaths.length).toBe(2);
+    expect(shotPaths[0]).toBe('screenshots/1_help-reply.png');
+    expect(shotPaths[1]).toBe('screenshots/test-finished-1.png');
     expect(caseJson.artifacts.some((a) => a.path === 'video.mp4')).toBe(true);
 
     const caseHtml = readFileSync(
@@ -135,7 +145,11 @@ describe('e2e run report generator', () => {
       'utf8',
     );
     expect(caseHtml).toContain('<video');
-    expect(caseHtml).toContain('help-reply.png');
+    expect(caseHtml).toContain('1_help-reply.png');
+    // The case page lives at cases/<caseId>/report.html; the summary is two
+    // levels up.
+    expect(caseHtml).toContain('href="../../summary.html"');
+    expect(caseHtml).not.toContain('href="../summary.html"');
 
     const summaryHtml = readFileSync(join(RUN, 'summary.html'), 'utf8');
     expect(summaryHtml).toContain('cases/send-help-slash-command-descriptions/report.html');

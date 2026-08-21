@@ -278,10 +278,13 @@ function populateCaseArtifacts(runDir: string, cases: E2eCase[]): void {
     const caseDir = join(runDir, 'cases', c.caseId);
     mkdirSync(join(caseDir, 'screenshots'), { recursive: true });
     const artifacts: E2eCase['artifacts'] = [];
-    // 1. attachments from the playwright-output tree
+    // 1. attachments from the playwright-output tree (video keeps a single
+    //    mp4 — the mp4 is the converted copy of the webm, prefer it and
+    //    skip the duplicate webm).
     for (const [dir, files] of byDir) {
       if (!dir.includes(c.caseId) && !c.caseId.includes('')) continue;
       for (const f of files) {
+        if (f.kind === 'video' && f.path.endsWith('.webm')) continue;
         const target =
           f.kind === 'video'
             ? join(caseDir, 'video.mp4')
@@ -298,7 +301,9 @@ function populateCaseArtifacts(runDir: string, cases: E2eCase[]): void {
         }
       }
     }
-    // 2. the scenario's own key screenshots (runDir/screenshots/*.png)
+    // 2. the scenario's own key screenshots (runDir/screenshots/*.png).
+    //    They are named `N_<label>.png` at save time (per-page counter in
+    //    feishu.ts), so sorting by path IS capture order — no renaming here.
     const shotsDir = join(runDir, 'screenshots');
     if (existsSync(shotsDir)) {
       for (const entry of readdirSync(shotsDir)) {
@@ -316,6 +321,12 @@ function populateCaseArtifacts(runDir: string, cases: E2eCase[]): void {
         }
       }
     }
+    // 3. Deterministic display order: screenshots first (path embeds the
+    //    capture-order prefix `N_`), then the video.
+    artifacts.sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === 'screenshot' ? -1 : 1;
+      return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+    });
     c.artifacts.push(...artifacts);
   }
 }
@@ -405,7 +416,7 @@ export function caseHtml(c: E2eCase): string {
   const sidebar = `
 <h1>${esc(c.title)}</h1>
 <p class="sub">case ${esc(c.caseId)}</p>
-<ul class="case-list"><li><a href="../summary.html">← back to run summary</a></li></ul>`;
+<ul class="case-list"><li><a href="../../summary.html">← back to run summary</a></li></ul>`;
   const shots = c.artifacts
     .filter((a) => a.kind === 'screenshot')
     .map(
@@ -423,7 +434,7 @@ export function caseHtml(c: E2eCase): string {
   const annotations = c.annotations.map((a) => `<li>${esc(a)}</li>`).join('');
   const stdout = c.stdout.length > 0 ? `<pre class="stdout">${esc(c.stdout.join('\n'))}</pre>` : '';
   const main = `
-<a class="back" href="../summary.html">← back to run summary</a>
+<a class="back" href="../../summary.html">← back to run summary</a>
 <h1 class="page">${esc(c.title)}</h1>
 <p class="meta"><span class="status" style="${statusStyle(c.status)}">${esc(c.status)}</span> · ${c.durationMs} ms · started ${esc(c.startedAt)}${c.retry > 0 ? ` · retry ${c.retry}` : ''}</p>
 ${error}

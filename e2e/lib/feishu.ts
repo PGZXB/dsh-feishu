@@ -126,19 +126,28 @@ async function openChatViaSearch(page: Page, name: string): Promise<void> {
   await result.click();
 }
 
+// Per-page capture counter: each Playwright test owns a fresh `page`, so the
+// counter restarts per test case. Screenshots are named `N_<label>.png` at
+// SAVE time — the report then shows them in capture order with no renaming.
+const shotCounters = new WeakMap<Page, number>();
+
 /**
  * Save a key screenshot for the report. Scenarios call this at the moments
  * that matter to them (chat open, mid-stream, final state) — the labels are
- * scenario-chosen, so each test case decides its own evidence points.
+ * scenario-chosen, so each test case decides its own evidence points. The
+ * file is named `N_<label>.png` with `N` counting up per page (per test
+ * case), so the report lists the screenshots in the order they were taken.
  * @param page - the browser page.
  * @param cfg - resolved E2E configuration (reportDir).
- * @param label - screenshot file name (`.png` appended; no spaces).
+ * @param label - screenshot label (`.png` appended; no spaces).
  * @returns the saved file path.
  */
 export async function snapshot(page: Page, cfg: E2eConfig, label: string): Promise<string> {
   const dir = join(cfg.reportDir, 'screenshots');
   mkdirSync(dir, { recursive: true });
-  const path = join(dir, `${label}.png`);
+  const n = (shotCounters.get(page) ?? 0) + 1;
+  shotCounters.set(page, n);
+  const path = join(dir, `${n}_${label}.png`);
   await page.screenshot({ path, timeout: 15_000, animations: 'disabled' });
   return path;
 }

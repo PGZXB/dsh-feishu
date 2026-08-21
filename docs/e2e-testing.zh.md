@@ -12,7 +12,7 @@
 
 - **断言全部规则化。** 所有断言只读渲染后的 DOM（消息文本、按钮、面板）或飞书 Open API。套件绝不调用付费视觉服务——测试必须免费且确定。
 - **`modlens` CLI 仅作开发侧验证。** 编写/调试场景时用它看截图实际内容；它不是任何测试的一部分，且消耗 provider 配额——少用。
-- **每个测试用例一个群聊。** 每个用例运行在自己独立的群聊里，群名 `<caseId>-<runId>`（每次运行全局唯一），通过后台创建——与插件 `/group` 命令底层相同的 `im.v1.chat.create` 调用。用例之间永不共享聊天页面，并行运行不会互相抢消息。
+- **每个测试用例一个群聊。** 每个用例运行在自己独立的群聊里，群名 `<caseId>-<runId>`（每次运行全局唯一），通过后台创建——与插件 `/group` 命令底层相同的 `im.v1.chat.create` 调用。用例之间永不共享聊天页面，并行运行不会互相抢消息。群主保持为 bot（与 `/group` 把群主交给发起人不同），这样每个用例在 `finally` 里**就地解散自己的群**——运行不会积累聊天。
 - **被测 bot 使用专用应用。** 用测试飞书应用（setup 会自动创建，名字带唯一后缀 `DSH-E2E-TESTBOT-<时间戳>`）和专用测试账号，绝不用生产 bot。
 
 ## 架构
@@ -99,8 +99,8 @@ E2E_APP_ID / E2E_APP_SECRET # 可选：覆盖 bot 应用
   cases/<caseId>/
     report.html     单用例自包含页（状态、错误、注解、截图、<video> 录屏、产物、stdout）
     report.json     单用例的详尽 JSON
-    screenshots/    该用例的关键截图（场景通过 snapshot(page, cfg, label) 自选）
-                    + Playwright 自动截图
+    screenshots/    该用例的截图，按拍摄顺序编号（1_<名字>、2_<名字>、…）
+                    ——场景通过 snapshot(page, cfg, label) 自选 + Playwright 自动截图
     video.mp4       该用例完整录屏（mp4；webm 源保留为 video.webm）
   report.json       Playwright 原始 JSON（生成器的数据源）
   manifest.json     扁平产物清单（路径 + 类型 + 大小）
@@ -118,19 +118,26 @@ E2E_APP_ID / E2E_APP_SECRET # 可选：覆盖 bot 应用
    import { waitForBotReplyContaining } from '../lib/assert.js';
    import { openApp, openChat, sendMessage, snapshot } from '../lib/feishu.js';
    import { caseIdFromTitle } from '../lib/report.js';
-   import { createGroup, groupNameFor } from '../lib/group.js';
+   import { createGroup, deleteGroup, groupNameFor } from '../lib/group.js';
 
    const cfg = loadE2eConfig();
 
    test('send /model → model picker card', async ({ page }, testInfo) => {
      const groupName = groupNameFor(caseIdFromTitle(testInfo.title), cfg.runId);
-     await createGroup(cfg, groupName, [cfg.userOpenId!]);
-     await openApp(page, cfg);
-     await openChat(page, groupName, cfg.timeoutMs);
-     await snapshot(page, cfg, 'model-chat-open');
-     await sendMessage(page, '/model');
-     await waitForBotReplyContaining(page, 'Model', cfg.timeoutMs);
-     await snapshot(page, cfg, 'model-picker');
+     const { chatId } = await createGroup(cfg, groupName, [cfg.userOpenId!]);
+     try {
+       await openApp(page, cfg);
+       await openChat(page, groupName, cfg.timeoutMs);
+       await snapshot(page, cfg, 'model-chat-open');
+       await sendMessage(page, '/model');
+       await waitForBotReplyContaining(page, 'Model', cfg.timeoutMs);
+       await snapshot(page, cfg, 'model-picker');
+     } finally {
+       // 就地解散群聊，避免运行积累聊天
+       await deleteGroup(cfg, chatId).catch((error) =>
+         console.warn(`[cleanup] could not disband ${groupName}: ${error.message}`),
+       );
+     }
    });
    ```
 

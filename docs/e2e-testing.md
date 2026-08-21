@@ -24,7 +24,9 @@ is the third testing layer:
   named `<caseId>-<runId>` (globally unique per run), created through the
   backend — the same `im.v1.chat.create` call the plugin's `/group` command
   wraps. Cases never share a chat page, so parallel runs cannot race each
-  other's messages.
+  other's messages. The bot stays the group owner (unlike `/group`, which
+  hands ownership to the requester) so each case **disbands its group in
+  `finally`** — runs do not accumulate chats.
 - **The bot under test runs against a dedicated app.** Use a test Feishu app
   (the setup creates one with a unique name, `DSH-E2E-TESTBOT-<stamp>`) and
   the dedicated test account, never the production bot.
@@ -153,8 +155,9 @@ one self-contained page per case:
     report.html     one case, self-contained (status, error, annotations,
                     screenshots, <video> recording, artifacts, stdout)
     report.json     one case, everything we know about it
-    screenshots/    the case's key screenshots (scenario-chosen via
-                    snapshot(page, cfg, label)) + Playwright captures
+    screenshots/    the case's screenshots, numbered in capture order
+                    (1_<name>, 2_<name>, …) — scenario-chosen via
+                    snapshot(page, cfg, label) + Playwright captures
     video.mp4       the case's full recording (mp4; webm kept as video.webm)
   report.json       Playwright's raw JSON (the generator's source of truth)
   manifest.json     flat artifact list (path + kind + size)
@@ -180,19 +183,26 @@ video/screenshot policy).
    import { waitForBotReplyContaining } from '../lib/assert.js';
    import { openApp, openChat, sendMessage, snapshot } from '../lib/feishu.js';
    import { caseIdFromTitle } from '../lib/report.js';
-   import { createGroup, groupNameFor } from '../lib/group.js';
+   import { createGroup, deleteGroup, groupNameFor } from '../lib/group.js';
 
    const cfg = loadE2eConfig();
 
    test('send /model → model picker card', async ({ page }, testInfo) => {
      const groupName = groupNameFor(caseIdFromTitle(testInfo.title), cfg.runId);
-     await createGroup(cfg, groupName, [cfg.userOpenId!]);
-     await openApp(page, cfg);
-     await openChat(page, groupName, cfg.timeoutMs);
-     await snapshot(page, cfg, 'model-chat-open');
-     await sendMessage(page, '/model');
-     await waitForBotReplyContaining(page, 'Model', cfg.timeoutMs);
-     await snapshot(page, cfg, 'model-picker');
+     const { chatId } = await createGroup(cfg, groupName, [cfg.userOpenId!]);
+     try {
+       await openApp(page, cfg);
+       await openChat(page, groupName, cfg.timeoutMs);
+       await snapshot(page, cfg, 'model-chat-open');
+       await sendMessage(page, '/model');
+       await waitForBotReplyContaining(page, 'Model', cfg.timeoutMs);
+       await snapshot(page, cfg, 'model-picker');
+     } finally {
+       // Disband the group so runs do not accumulate chats.
+       await deleteGroup(cfg, chatId).catch((error) =>
+         console.warn(`[cleanup] could not disband ${groupName}: ${error.message}`),
+       );
+     }
    });
    ```
 

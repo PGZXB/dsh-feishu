@@ -53,10 +53,11 @@ describe('createGroup / deleteGroup', () => {
     expect(chat).toBeDefined();
     expect(chat?.init.method).toBe('POST');
     expect(chat?.init.headers).toMatchObject({ Authorization: 'Bearer t0k3n' });
+    // No owner_id: the bot (creator) stays the owner so the case can
+    // disband the group afterwards (im.v1.chat.delete needs the owner).
     expect(JSON.parse(String(chat?.init.body))).toEqual({
       name: 'my-group',
       user_id_list: ['ou_user'],
-      owner_id: 'ou_user',
     });
   });
 

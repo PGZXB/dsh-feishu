@@ -20,43 +20,58 @@ import { test } from '@playwright/test';
 import { waitForBotReplyContaining } from '../lib/assert.js';
 import { loadE2eConfig } from '../lib/config.js';
 import { openApp, openChat, sendMessage, snapshot } from '../lib/feishu.js';
-import { createGroup, groupNameFor } from '../lib/group.js';
+import { createGroup, deleteGroup, groupNameFor } from '../lib/group.js';
 import { caseIdFromTitle } from '../lib/report.js';
 
 const cfg = loadE2eConfig();
 
 test('send /help → slash command descriptions', async ({ page }, testInfo) => {
   // Backend group creation (the same call /group wraps): each case owns a
-  // uniquely-named group, so parallel runs never share a chat page.
+  // uniquely-named group, so parallel runs never share a chat page. The
+  // group is disbanded in `finally` — every run cleans up after itself.
   const groupName = groupNameFor(caseIdFromTitle(testInfo.title), cfg.runId);
   if (cfg.userOpenId === undefined) {
     throw new Error('E2E_USER_OPEN_ID is required (run `pnpm run e2e:setup` first)');
   }
-  await createGroup(cfg, groupName, [cfg.userOpenId]);
+  const { chatId } = await createGroup(cfg, groupName, [cfg.userOpenId]);
+  try {
+    await openApp(page, cfg);
+    await openChat(page, groupName, cfg.timeoutMs);
+    // Key evidence point 1: the group chat is open, composer visible.
+    await snapshot(page, cfg, 'help-chat-open');
 
-  await openApp(page, cfg);
-  await openChat(page, groupName, cfg.timeoutMs);
-  // Key evidence point 1: the group chat is open, composer visible.
-  await snapshot(page, cfg, 'help-chat-open');
+    await sendMessage(page, '/help');
+    // Key evidence point 2: the /help message is in the chat.
+    await snapshot(page, cfg, 'help-sent');
 
-  await sendMessage(page, '/help');
-  // Key evidence point 2: the /help message is in the chat.
-  await snapshot(page, cfg, 'help-sent');
+    // The help block opens with the header and includes at least the /help
+    // command's own line — two independent rule-based assertions.
+    await waitForBotReplyContaining(page, 'dsh-feishu commands:', cfg.timeoutMs);
+    const reply = await waitForBotReplyContaining(
+      page,
+      '/help — List all surface commands',
+      cfg.timeoutMs,
+    );
 
-  // The help block opens with the header and includes at least the /help
-  // command's own line — two independent rule-based assertions.
-  await waitForBotReplyContaining(page, 'dsh-feishu commands:', cfg.timeoutMs);
-  const reply = await waitForBotReplyContaining(
-    page,
-    '/help — List all surface commands',
-    cfg.timeoutMs,
-  );
+    // Key evidence point 3: the final bot reply with the command list.
+    await snapshot(page, cfg, 'help-reply');
 
-  // Key evidence point 3: the final bot reply with the command list.
-  await snapshot(page, cfg, 'help-reply');
-
-  testInfo.annotations.push({
-    type: 'evidence',
-    description: `group: ${groupName} | bot reply (first 300 chars): ${reply.text.slice(0, 300)}`,
-  });
+    testInfo.annotations.push({
+      type: 'evidence',
+      description: `group: ${groupName} | bot reply (first 300 chars): ${reply.text.slice(0, 300)}`,
+    });
+  } finally {
+    // Disband the group so test runs do not accumulate chats. createGroup
+    // keeps the BOT as the group owner (unlike /group, which makes the
+    // requester the owner), so the app can delete it. Best effort: log and
+    // move on if the cleanup itself fails.
+    try {
+      await deleteGroup(cfg, chatId);
+      console.log(`  [cleanup] disbanded group ${groupName} (${chatId})`);
+    } catch (error) {
+      console.warn(
+        `  [cleanup] could not disband ${groupName}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
 });
