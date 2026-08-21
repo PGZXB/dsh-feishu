@@ -961,28 +961,6 @@ export function buildInboundFileCard(name: string, savedPath?: string, count = 1
 }
 
 /**
- * The outbound-file receipt card: posted when the agent delivers a file or
- * image to the chat via the `send_file` tool. It acknowledges what was sent
- * (and, when the agent gave one, the reason). Independent of the streaming
- * card — the upload happened, so the user sees a confirmation here.
- * @param name - the sent file/image name.
- * @param description - the agent's stated reason, when provided.
- */
-export function buildSentFileCard(name: string, description?: string): CardJson {
-  const descLine = description === undefined || description === '' ? '' : `\n\n> ${description}`;
-  return {
-    config: { wide_screen_mode: true },
-    header: { title: { tag: 'plain_text', content: '📤 Sent' }, template: 'green' },
-    elements: [
-      {
-        tag: 'markdown',
-        content: `**${name}**${descLine}`,
-      },
-    ],
-  };
-}
-
-/**
  * A busy/operating placeholder card (NO buttons — blocks mis-taps while an
  * async panel operation runs). Posted FIRST in the callback so the panel
  * always carries an immediate patch (Lark otherwise restores the pre-click

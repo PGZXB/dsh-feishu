@@ -12,7 +12,7 @@
  */
 
 import { readFile } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { basename, isAbsolute, join } from 'node:path';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
@@ -816,10 +816,12 @@ export class StreamingCardController {
           this.host.logger.warn(`send-produced ${action.chatId}: missing path`);
           return;
         }
-        const filePath = join(
-          this.host.sessionMap.cwdFor(action.chatId) ?? this.host.defaultCwd,
-          path,
-        );
+        // The produced path from `meta.diffs[].path` is ABSOLUTE (the fs
+        // write/edit tools report the resolved path); accept an absolute path
+        // as-is and only join a relative one onto the pinned cwd. Never re-join
+        // an absolute path (double-prefix bug, #31).
+        const cwd = this.host.sessionMap.cwdFor(action.chatId) ?? this.host.defaultCwd;
+        const filePath = isAbsolute(path) ? path : join(cwd, path);
         try {
           const bytes = new Uint8Array(await readFile(filePath));
           const name = basename(filePath);

@@ -1113,10 +1113,13 @@ positives.
 **Trigger** — an agent calls the `send_file` tool during a turn:
 `send_file(path, description?)`.
 
-- `path` (string, required): the workspace-relative path of the file/image to
-  send, resolved against the chat's pinned working directory (`cwd`).
-- `description` (string, optional): why the agent is sending it; shown on the
-  receipt card and returned to the agent as the tool's result context.
+- `path` (string, required): the file/image to send — an absolute path or a
+  workspace-relative path. An absolute path is used as-is; a relative path is
+  resolved against the chat's pinned working directory (`cwd`).
+- `description` (string, optional): a short, human, English explanation of
+  what is being sent; it is shown verbatim as the text line that precedes the
+  file (the intro IS this description). Returned to the agent as the tool's
+  result context.
 
 **Tool registration** — via dsh's tool runtime: `ctx.get('tools')?.register(defineTool({...}))`
 (the feature-detect pattern, mirroring `ctx.commands` / `ctx.watch`). The
@@ -1131,15 +1134,19 @@ process (the same one running the surface):
 
 1. resolve `cwd = exec.agent.session.header.cwd` (the chat's pinned working
    directory) and `chatId = sessionMap.chatFor(exec.agent.session.id)`.
-2. read the file at `join(cwd, path)`; a missing/unreadable file is a tool
+2. resolve the send target: an absolute `path` is used as-is, a relative one
+   is joined onto `cwd` (`resolveSendPath`) — never re-join an absolute path
+   (double-prefix bug). read the bytes; a missing/unreadable file is a tool
    error (loud, no upload).
 3. **classify** the type by extension + magic bytes (reuse `sniffExtension`):
    a known image container (png / jpg / gif / webp) → an image message via
    `im.v1.image.create`; any other type → a file message via
    `im.v1.file.create` (already supports binary). Upload the bytes, then
    `createMessage(chatId, 'image'|'file', ...)`.
-4. on success, post a small `📤 Sent` receipt card: the file name, the
-   optional description, and the target chat.
+4. on success, post a short text line: the `description` verbatim when given,
+   else `Sending <name>:` FIRST, then the file — no
+   receipt card; the intro line IS the affordance. A text-post failure is
+   logged and does not fail the tool.
 5. return a structured value to the agent (the sent file name + the message
    the user sees), so the agent can acknowledge.
 
@@ -1148,10 +1155,11 @@ foundation only. The "show each turn's produced files as clickable chips"
 UX is the sibling feature `turn-produced-files` and is deliberately out of
 scope here.
 
-**Card/panel shape** — the `📤 Sent` receipt card (a plain markdown card,
-like the inbound-file receipt) is posted by the tool AFTER the upload
-succeeds, independent of the streaming card (which keeps rendering the
-turn's tokens). No new panel views, no buttons.
+**Card/panel shape** — no receipt card. The tool posts a short text line
+(the `description` verbatim, else `Sending <name>:`) followed by the native
+image/file message at the moment the upload succeeds, independent of the
+streaming card (which keeps
+rendering the turn's tokens). No new panel views, no buttons.
 
 **Failure modes**:
 - `tools` service absent (host did not mount it): feature-detect — the
@@ -1174,12 +1182,13 @@ turn's tokens). No new panel views, no buttons.
       (unit + integration).
 - [ ] Agent calls `send_file` with a non-image path → a native file message
       posts and the bytes match (unit + integration).
-- [ ] A `📤 Sent` receipt card posts with the file name and description
-      (unit).
+- [ ] A short text line (the `description` verbatim, else `Sending <name>:`)
+      posts before the file; NO receipt card posts (unit).
+- [ ] An absolute `path` is used as-is (not re-joined onto the cwd) and a
+      relative one resolves against the cwd (unit).
 - [ ] The tool returns a structured value to the agent (name + confirmation)
       (unit).
-- [ ] Missing/unreadable path → tool error, no upload, no receipt card
-      (unit).
+- [ ] Missing/unreadable path → tool error, no upload, no text line (unit).
 - [ ] `tools` service absent → `send_file` not registered, loud log, turn
       still runs (unit).
 - [ ] No chips / auto-collection in this part (deferred to
@@ -1259,9 +1268,10 @@ row IS the affordance).
 
 **Ordering/cleanup** — `producedPaths` is turn-scoped: `turn/start` resets it,
 `turn/end` freezes the chip row (the card finalizes with it). A subsequent
-turn's mutations replace the previous list. Paths are relative to the chat's
-pinned cwd (what the tools' `meta.diffs[].path` carry), so resolving against
-`cwd` reproduces the file.
+turn's mutations replace the previous list. The tools' `meta.diffs[].path` are
+ABSOLUTE (the fs write/edit tools report the resolved path), so `send-produced`
+accepts an absolute path as-is and only joins a relative one onto the pinned
+`cwd` — never re-join an absolute path (the double-prefix bug).
 
 **Failure modes**:
 - `meta` absent / `diffs` empty: nothing added (reads, deletes, terminals —

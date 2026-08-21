@@ -251,6 +251,26 @@ describe('turn-produced-files', () => {
     expect(transport.sentImages).toHaveLength(0);
   });
 
+  it('a send-produced action resolves an ABSOLUTE path as-is (no cwd re-join)', async () => {
+    // Regression: `meta.diffs[].path` is absolute; joining it onto the cwd
+    // double-prefixed it and the file was never found (#31).
+    dir = mkdtempSync(join(tmpdir(), 'tpf-cwd-'));
+    const absDir = mkdtempSync(join(tmpdir(), 'tpf-abs-'));
+    const absPath = join(absDir, 'greetings.py');
+    writeFileSync(absPath, 'def greet(): pass\n');
+    const { controller, transport } = makeController(dir);
+    await controller.handleStreamingAction({
+      chatId: 'oc_chat',
+      messageId: 'm1',
+      operatorOpenId: 'u1',
+      value: { kind: 'send-produced', path: absPath },
+    } as CardAction);
+    expect(transport.sentFiles).toHaveLength(1);
+    expect(transport.sentFiles[0]?.fileName).toBe('greetings.py');
+    expect(transport.sentImages).toHaveLength(0);
+    rmSync(absDir, { recursive: true, force: true });
+  });
+
   it('a send-produced action with a missing file fails loud and sends a notice', async () => {
     dir = mkdtempSync(join(tmpdir(), 'tpf-'));
     const { controller, transport } = makeController(dir);

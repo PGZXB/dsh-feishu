@@ -10,7 +10,6 @@ import { join } from 'node:path';
 import type { Context } from '@deepseek-ai/cordis';
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools';
 import { afterEach, describe, expect, it } from 'vitest';
-import { buildSentFileCard } from '../src/cards/render.js';
 import type { CardJson, FeishuTransport } from '../src/feishu/types.js';
 import { type OutboundHost, registerSendFileTool } from '../src/outbound.js';
 import type { SessionMap } from '../src/session-map.js';
@@ -21,9 +20,12 @@ class FakeTransport {
   sentFiles: Array<{ chatId: string; fileName: string; content: Uint8Array }> = [];
   sentImages: Array<{ chatId: string; fileName: string; bytes: Uint8Array }> = [];
   sentCards: Array<{ chatId: string; card: CardJson }> = [];
+  sentTexts: Array<{ chatId: string; text: string }> = [];
   async start(): Promise<void> {}
   async stop(): Promise<void> {}
-  async sendText(_chatId: string, _text: string): Promise<void> {}
+  async sendText(chatId: string, text: string): Promise<void> {
+    this.sentTexts.push({ chatId, text });
+  }
   async sendFile(chatId: string, fileName: string, content: Uint8Array): Promise<void> {
     this.sentFiles.push({ chatId, fileName, content });
   }
@@ -133,16 +135,15 @@ describe('send_file execution', () => {
     const { transport, execute } = setupTool();
     writeFileSync(join(dir, 'plot.png'), new Uint8Array([137, 80, 78, 71]));
     const exec = makeExec(dir);
-    const result = await execute({ path: 'plot.png', description: 'A plot' }, exec);
+    const result = await execute({ path: 'plot.png', description: 'A plot:' }, exec);
     expect(transport.sentImages).toHaveLength(1);
     expect(transport.sentImages[0]?.fileName).toBe('plot.png');
     expect(transport.sentImages[0]?.chatId).toBe('oc_chat');
     expect(transport.sentFiles).toHaveLength(0);
     expect(result).toEqual({ name: 'plot.png', sent: true });
-    // A 📤 Sent receipt card posts.
-    expect(transport.sentCards).toHaveLength(1);
-    expect(transport.sentCards[0]?.card?.header?.title.content).toBe('📤 Sent');
-    expect(JSON.stringify(transport.sentCards[0]?.card)).toContain('A plot');
+    // A short text line announces the send (description used verbatim); no card.
+    expect(transport.sentTexts).toEqual([{ chatId: 'oc_chat', text: 'A plot:' }]);
+    expect(transport.sentCards).toHaveLength(0);
   });
 
   it('sends a file for a non-image path', async () => {
@@ -155,15 +156,44 @@ describe('send_file execution', () => {
     expect(Buffer.from(transport.sentFiles[0]?.content ?? []).toString()).toBe('hello\n');
     expect(transport.sentImages).toHaveLength(0);
     expect(result).toEqual({ name: 'report.txt', sent: true });
+    // No description → the intro line falls back to `Sending <name>:` (English).
+    expect(transport.sentTexts).toEqual([{ chatId: 'oc_chat', text: 'Sending report.txt:' }]);
+    expect(transport.sentCards).toHaveLength(0);
   });
 
-  it('returns an error for a missing path (no upload, no receipt card)', async () => {
+  it('resolves an ABSOLUTE path as-is instead of joining it onto the cwd', async () => {
+    // Regression (#31): the produced path is absolute; join(cwd, abs) double-
+    // prefixed it. send_file must accept an absolute path directly.
+    const { transport, execute } = setupTool();
+    const absDir = mkdtempSync(join(tmpdir(), 'outbound-abs-'));
+    const absPath = join(absDir, 'greetings.py');
+    writeFileSync(absPath, 'def greet(): pass\n');
+    const exec = makeExec(dir);
+    const result = await execute(
+      { path: absPath, description: 'greetings.py 模块示例文件:' },
+      exec,
+    );
+    expect(transport.sentFiles).toHaveLength(1);
+    expect(transport.sentFiles[0]?.fileName).toBe('greetings.py');
+    expect(Buffer.from(transport.sentFiles[0]?.content ?? []).toString()).toBe(
+      'def greet(): pass\n',
+    );
+    expect(result).toEqual({ name: 'greetings.py', sent: true });
+    // Description (already ending with a colon) is used verbatim.
+    expect(transport.sentTexts).toEqual([
+      { chatId: 'oc_chat', text: 'greetings.py 模块示例文件:' },
+    ]);
+    rmSync(absDir, { recursive: true, force: true });
+  });
+
+  it('returns an error for a missing path (no upload, no announcement)', async () => {
     const { transport, execute } = setupTool();
     const exec = makeExec(dir);
     await expect(execute({ path: 'nope.txt' }, exec)).rejects.toThrow('could not read');
     expect(transport.sentFiles).toHaveLength(0);
     expect(transport.sentImages).toHaveLength(0);
     expect(transport.sentCards).toHaveLength(0);
+    expect(transport.sentTexts).toHaveLength(0);
   });
 
   it('rejects a call without the required path', async () => {
@@ -171,21 +201,5 @@ describe('send_file execution', () => {
     const exec = makeExec(dir);
     // `path` is a required parameter — the runtime validates before execute.
     await expect(execute({ description: 'x' }, exec)).rejects.toThrow(/path/);
-  });
-});
-
-describe('buildSentFileCard', () => {
-  it('shows the name and the description', () => {
-    const card = buildSentFileCard('plot.png', 'The training loss');
-    expect(card.header?.title.content).toBe('📤 Sent');
-    expect(card.header?.template).toBe('green');
-    expect(JSON.stringify(card.elements)).toContain('plot.png');
-    expect(JSON.stringify(card.elements)).toContain('The training loss');
-    expect(card.elements.some((el) => el.tag === 'action')).toBe(false);
-  });
-
-  it('omits the description line when none given', () => {
-    const card = buildSentFileCard('report.txt');
-    expect(JSON.stringify(card.elements)).not.toContain('>');
   });
 });

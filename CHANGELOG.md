@@ -28,6 +28,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `0.1.0-rc.7` (`@latest`). `commands.execute` gained an `images`
   parameter in rc.8; the surface passes an empty array.
 
+- **`send_file` now announces with a short text line instead of a receipt
+  card.** The tool posts the `description` verbatim (or `Sending <name>:` when
+  no description is given) immediately before the native image/file message,
+  and no longer posts a `📤 Sent` receipt card — the intro line is the
+  affordance. The intro is UI text, so it is English (no i18n); the
+  `description` is shown as-is.
+- **Produced-file send and `send_file` accept an absolute path.** The fs
+  write/edit tools report an ABSOLUTE path in `tool/result` `meta.diffs[].path`;
+  previously `send-produced` re-joined it onto the pinned cwd and double-prefixed
+  it (ENOENT). Both now use an absolute path as-is and only `join` a relative
+  path onto the cwd. (The produced-file chip is the #31 feature; this is a
+  regression fix.)
+
 ### Added
 
 - **Real-client E2E UI suite** (`e2e/`, `e2e/scripts/e2e-ui.mjs`): drives the

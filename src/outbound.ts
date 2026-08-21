@@ -15,15 +15,35 @@
  */
 
 import { readFile, stat } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { basename, isAbsolute, join } from 'node:path';
 import type { Context } from '@deepseek-ai/cordis';
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools';
-import { buildSentFileCard } from './cards/render.js';
 import type { FeishuTransport } from './feishu/types.js';
 import type { SessionMap } from './session-map.js';
 
 /** Image containers recognized by `sniffExtension` (sent as image messages). */
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'gif', 'webp']);
+
+/**
+ * Resolve a send target path against a working directory. The producer tools
+ * (`write`/`edit`) carry an ABSOLUTE path in their `meta.diffs[].path`, while
+ * the surface accepts a workspace-relative path too. An absolute path is used
+ * as-is; a relative path is joined onto the cwd. Never re-join an absolute
+ * path onto a cwd — that double-prefixes it (the #31 chip-click bug).
+ */
+function resolveSendPath(cwd: string, path: string): string {
+  return isAbsolute(path) ? path : join(cwd, path);
+}
+
+/** A short announcement before the file is sent. When the agent provided a
+ *  description (English; the intro IS the description), it is used verbatim;
+ *  otherwise fall back to `Sending <name>:`. No fixed i18n prefix. */
+function sendIntro(description: string | undefined, name: string): string {
+  if (typeof description === 'string' && description.trim() !== '') {
+    return description;
+  }
+  return `Sending ${name}:`;
+}
 
 /** A minimal logger seam for debug tracing (FEISHU_DEBUG-gated upstream). */
 export interface OutboundLogger {
@@ -75,9 +95,10 @@ export function registerSendFileTool(ctx: Context, host: OutboundHost): (() => v
       name: 'send_file',
       description:
         'Send a file or image from the workspace to the chat. The path is relative to the ' +
-        'pinned working directory. The user receives it as a native Feishu ' +
-        'image/file message. Use when the user asked for (or would benefit from) a concrete ' +
-        'artifact — a plot, screenshot, generated document, report, CSV, etc.',
+        'pinned working directory. The user receives the file as a native Feishu image/file ' +
+        'message, preceded by your `description` (or `Sending <name>:` when none given). Use when ' +
+        'the user asked for (or would benefit from) a concrete artifact — a plot, screenshot, ' +
+        'generated document, report, CSV, etc.',
       parameters: {
         path: {
           type: 'string',
@@ -86,7 +107,9 @@ export function registerSendFileTool(ctx: Context, host: OutboundHost): (() => v
         },
         description: {
           type: 'string',
-          description: 'A short explanation of why you are sending it (shown on the receipt card).',
+          description:
+            'A short, human, English explanation of what is being sent; it is shown verbatim ' +
+            'before the file (e.g. `greetings.py 模块示例文件:`). The intro line IS this text.',
         },
       },
       output: {
@@ -118,7 +141,7 @@ export function registerSendFileTool(ctx: Context, host: OutboundHost): (() => v
         if (chatId === undefined) {
           throw new Error('send_file: no chat mapped for this session');
         }
-        const filePath = join(cwd, path);
+        const filePath = resolveSendPath(cwd, path);
         let bytes: Uint8Array;
         try {
           const info = await stat(filePath);
@@ -140,24 +163,23 @@ export function registerSendFileTool(ctx: Context, host: OutboundHost): (() => v
         // else (file — the resource API serves arbitrary bytes, incl. audio
         // and video).
         try {
+          // Announce first with a short text line (best-effort — a sendText
+          // failure must not fail the tool; the message itself is what
+          // matters), then send the file as a native message. No receipt card:
+          // the intro line IS the affordance (user feedback, #31).
+          try {
+            await host.transport.sendText(chatId, sendIntro(description, name));
+          } catch (introError: unknown) {
+            host.logger.warn(
+              `outbound send_file ${name}: intro message failed (${String(introError)})`,
+            );
+          }
           if (isImage) {
             await host.transport.sendImage(chatId, name, bytes);
           } else {
             await host.transport.sendFile(chatId, name, bytes);
           }
           host.logger.debug(`outbound send_file ${name}: sent to chat ${chatId}`);
-          // Acknowledge with a small receipt card (best-effort — a card post
-          // failure must not fail the tool; the message itself was sent).
-          try {
-            await host.transport.sendCard(
-              chatId,
-              buildSentFileCard(name, typeof description === 'string' ? description : undefined),
-            );
-          } catch (cardError: unknown) {
-            host.logger.warn(
-              `outbound send_file ${name}: receipt card failed (${String(cardError)})`,
-            );
-          }
           return { name, sent: true };
         } catch (error: unknown) {
           const msg = error instanceof Error ? error.message : String(error);
