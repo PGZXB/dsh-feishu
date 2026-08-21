@@ -105,6 +105,13 @@ function log(step, msg) {
   console.log(`\n── ${step} ──\n${msg}`);
 }
 
+// E2E_DEBUG=1 enables fine-grained diagnostics on top of the normal logs:
+// state-file resolution, group create/delete, WS events, artifact collection.
+const debugEnabled = process.env.E2E_DEBUG === '1';
+function debug(...args) {
+  if (debugEnabled) console.log('[debug]', ...args);
+}
+
 function teeSpawn(command, args, opts, logPath) {
   mkdirSync(dirname(logPath), { recursive: true });
   const stream = createWriteStream(logPath, { flags: 'a' });
@@ -158,6 +165,11 @@ function compileE2e() {
 
 async function main() {
   mkdirSync(reportDir, { recursive: true });
+  debug('run', `runId=${runId} reportDir=${reportDir} state=${state} video=${video}`);
+  debug(
+    'state',
+    `files: creds=${existsSync(credsFile)} web-session=${existsSync(webSession)} user=${existsSync(userFile)} console-session=${existsSync(consoleSession)}`,
+  );
 
   // 1. Install + build (README install-from-source, inside the container).
   if (!existsSync(join(ROOT, 'node_modules', '.bin', 'pnpm'))) {
@@ -291,6 +303,7 @@ async function main() {
   if (env.E2E_SETUP === '1') {
     compileE2e();
     log('setup-check', 'probing backend group creation (create + delete)');
+    debug('setup', `probe userOpenId=${userOpenId} app=${creds?.appId}`);
     const probe = spawnSync(
       process.execPath,
       [join(ROOT, 'e2e', 'scripts', 'e2e-check-group.mjs'), '--run-id', runId],
@@ -326,6 +339,7 @@ async function main() {
 
   // 8. Mock DeepSeek server.
   log('mock llm', `starting mock DeepSeek server on 127.0.0.1:${mockPort}`);
+  debug('mock', `spawning e2e-mock-llm.mjs on port ${mockPort}`);
   const mock = spawn(process.execPath, [join(ROOT, 'e2e', 'scripts', 'e2e-mock-llm.mjs')], {
     env: { ...process.env, E2E_MOCK_PORT: mockPort },
     stdio: ['ignore', 'pipe', 'inherit'],
@@ -341,7 +355,9 @@ async function main() {
     });
   });
 
-  // 9. Boot dsh with the bot app.
+  // 9. Boot dsh with the bot app. Its stdout is BOTH forwarded to the
+  //     terminal (so the plugin's FEISHU_DEBUG tracing is visible) and
+  //     accumulated for the readiness gate.
   log('dsh', `starting dsh --profile e2e-dev (app ${creds.appId})`);
   const dsh = spawn(dshBin, ['--profile', 'e2e-dev'], {
     env: {
@@ -352,7 +368,7 @@ async function main() {
       DEEPSEEK_BASE_URL: `http://127.0.0.1:${mockPort}`,
       FEISHU_DEBUG: process.env.FEISHU_DEBUG ?? '',
     },
-    stdio: ['ignore', 'pipe', 'inherit'],
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
   children.push(dsh);
   // The readiness marker is the plugin's `[feishu] bridge ready` line
@@ -363,12 +379,14 @@ async function main() {
     const timer = setTimeout(() => resolve(false), 90_000);
     let buffer = '';
     dsh.stdout.on('data', (chunk) => {
+      process.stdout.write(chunk); // surface the plugin logs
       buffer += String(chunk);
       if (buffer.includes('[feishu] bridge ready')) {
         clearTimeout(timer);
         resolve(true);
       }
     });
+    dsh.stderr.on('data', (chunk) => process.stderr.write(chunk));
   });
   if (!ready) {
     console.error('✗ dsh did not report a ready feishu connection');
@@ -428,6 +446,10 @@ async function main() {
   // 12. Single-entry run report: summary.html (Playwright-style) linking
   //     into cases/<id>/report.html, plus the JSON artifacts.
   log('report', `generating the run report in ${reportDir}`);
+  debug(
+    'report',
+    `playwright exit=${exitCode} webm files=${collectFiles(reportDir, '.webm').length}`,
+  );
   const envForReport = {
     ...process.env,
     E2E_RUN_DIR: reportDir,

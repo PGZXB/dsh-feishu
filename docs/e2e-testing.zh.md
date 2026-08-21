@@ -79,10 +79,12 @@ setup 依次完成：
 pnpm run e2e:ui
 
 # 选项
-E2E_VIDEO=off            # 不要视频（默认 mp4，webm 源也保留）
+E2E_VIDEO=off            # 不要视频（默认 mp4；用例目录保留单一 mp4）
 E2E_SCREENSHOTS=failure  # 仅失败时截图（默认 on）
 E2E_BOT_NAME="DSH-E2E-TESTBOT-20260821191530"  # bot 应用名（默认：setup 生成的唯一名）
 E2E_APP_ID / E2E_APP_SECRET # 可选：覆盖 bot 应用
+E2E_DEBUG=1              # 细粒度诊断（状态文件、建群/删群、WS 生命周期、QR 轮询、报告）
+FEISHU_DEBUG=1           # 插件自身 debug 追踪（dsh 子进程日志现在会转发到终端）
 ```
 
 不需要聊天名：每个用例自己通过后台创建群聊（`<caseId>-<runId>`）并打开它。

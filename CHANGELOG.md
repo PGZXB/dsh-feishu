@@ -29,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   browser session, chat) and later runs are hands-free; configurable
   screenshot/video (mp4 default) + HTML report + `manifest.json`. First
   scenario: `/help` → slash-command descriptions. See `docs/e2e-testing.md`.
+- **E2E run diagnostics.** The dsh child process's stdout/stderr is now
+  forwarded to the terminal (its logs were previously consumed by the
+  readiness gate and invisible), so `FEISHU_DEBUG=1` shows the plugin's own
+  tracing during a run. `E2E_DEBUG=1` adds fine-grained harness diagnostics
+  (state-file resolution, group create/delete, WS lifecycle, QR cycles,
+  report collection).
 - **E2E setup is idempotent and group-based.** Re-running `e2e:setup`
   never re-scans an already-exported login (`creds.json`,
   `web-session.json`, `user.json` in `e2e/.state/`); the bot app is created

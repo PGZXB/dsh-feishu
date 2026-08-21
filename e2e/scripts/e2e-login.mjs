@@ -52,6 +52,13 @@ const headed = argv.includes('--headed');
 const baseUrl = process.env.E2E_BASE_URL ?? 'https://www.feishu.cn/';
 const appUrl = new URL('messenger/', baseUrl).href;
 
+// E2E_DEBUG=1 adds fine-grained diagnostics (QR capture cycles, reloads).
+const debugEnabled = process.env.E2E_DEBUG === '1';
+function debug(...args) {
+  if (debugEnabled) console.log('[debug]', ...args);
+}
+debug('login', `state=${stateFile} headed=${headed} baseUrl=${baseUrl}`);
+
 const isAppUrl = (u) => /\/(messenger|home|space|contact|drive)([/?#]|$)/.test(u);
 
 mkdirSync(dirname(stateFile), { recursive: true });
@@ -93,6 +100,7 @@ if (!isAppUrl(page.url())) {
       if (capturedOnce) {
         await page.reload({ waitUntil: 'commit', timeout: 30_000 }).catch(() => {});
         await page.waitForTimeout(6_000);
+        debug('qr', 'reloaded for a fresh QR');
       }
       let captured = false;
       for (const sel of [
@@ -113,6 +121,9 @@ if (!isAppUrl(page.url())) {
       if (captured) {
         capturedOnce = true;
         console.log(`  [qr] refreshed ${new Date().toISOString()}`);
+        debug('qr', `captured ${qrPath}`);
+      } else {
+        debug('qr', 'no QR element matched on this cycle');
       }
     }
     if (isAppUrl(page.url())) {

@@ -24,6 +24,11 @@ export interface E2eCredentials {
   readonly appSecret?: string;
 }
 
+/** Optional diagnostic logger (E2E_DEBUG=1 in the scenarios). */
+export type DebugLog = (...args: unknown[]) => void;
+
+const noopDebug: DebugLog = () => {};
+
 /**
  * Build the globally-unique group name for a case: `<caseId>-<runId>` with
  * the case part truncated so the whole name stays within Feishu's 60-char
@@ -95,6 +100,7 @@ async function tenantAccessToken(cfg: E2eCredentials, fetchImpl: typeof fetch): 
  * @param name - the group name (see {@link groupNameFor}).
  * @param memberOpenIds - members to invite (the test user's open id).
  * @param fetchImpl - fetch to use (defaults to global fetch; injectable in tests).
+ * @param debug - optional diagnostic logger (E2E_DEBUG=1 in the scenarios).
  * @returns the new chat id.
  */
 export async function createGroup(
@@ -102,10 +108,12 @@ export async function createGroup(
   name: string,
   memberOpenIds: readonly string[],
   fetchImpl: typeof fetch = fetch,
+  debug: DebugLog = noopDebug,
 ): Promise<{ chatId: string }> {
   if (name.length > GROUP_NAME_MAX) {
     throw new Error(`group name too long (${name.length} > ${GROUP_NAME_MAX}): ${name}`);
   }
+  debug('group', `create "${name}" members=${memberOpenIds.length}`);
   const token = await tenantAccessToken(cfg, fetchImpl);
   const res = await fetchImpl(`${OPEN_BASE}/open-apis/im/v1/chats`, {
     method: 'POST',
@@ -127,6 +135,7 @@ export async function createGroup(
   if (body.code !== 0 || chatId === undefined) {
     throw new FeishuApiError('im.v1.chat.create', body.code ?? -1, body.msg ?? 'unknown');
   }
+  debug('group', `created ${name} -> ${chatId}`);
   return { chatId };
 }
 
@@ -136,12 +145,15 @@ export async function createGroup(
  * @param cfg - resolved E2E configuration (app credentials).
  * @param chatId - the chat to delete.
  * @param fetchImpl - fetch to use (defaults to global fetch; injectable in tests).
+ * @param debug - optional diagnostic logger (E2E_DEBUG=1 in the scenarios).
  */
 export async function deleteGroup(
   cfg: E2eCredentials,
   chatId: string,
   fetchImpl: typeof fetch = fetch,
+  debug: DebugLog = noopDebug,
 ): Promise<void> {
+  debug('group', `delete ${chatId}`);
   const token = await tenantAccessToken(cfg, fetchImpl);
   const res = await fetchImpl(`${OPEN_BASE}/open-apis/im/v1/chats/${chatId}`, {
     method: 'DELETE',

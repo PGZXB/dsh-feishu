@@ -84,6 +84,14 @@ if (!appId || !appSecret) {
 const require = createRequire(import.meta.url);
 const { WSClient, EventDispatcher } = require('@larksuiteoapi/node-sdk');
 
+// E2E_DEBUG=1 adds fine-grained diagnostics (state files, WS lifecycle,
+// browser steps) on top of the normal progress logs.
+const debugEnabled = process.env.E2E_DEBUG === '1';
+function debug(...args) {
+  if (debugEnabled) console.log('[debug]', ...args);
+}
+debug('user', `state=${sessionState} out=${outFile} bot=${botName} app=${appId}`);
+
 let resolveOpenId;
 let rejectOpenId;
 const openIdPromise = new Promise((resolve, reject) => {
@@ -130,10 +138,12 @@ const ws = new WSClient({
   onReady: () => {
     clearTimeout(readyTimer);
     console.log('  [user] long connection ready — send the message now');
+    debug('ws', 'ready — arming the 60 s event deadline');
     resolveReady();
   },
   onError: (error) => {
     clearTimeout(readyTimer);
+    debug('ws', `error: ${error.message}`);
     rejectReady(new Error(`WSClient error: ${error.message}`));
     rejectOpenId(new Error(`WSClient error: ${error.message}`));
   },
@@ -176,6 +186,7 @@ try {
 
   // Global search (Ctrl+K) → type the bot name → click the bot result card.
   console.log(`  [user] searching for the bot "${botName}" (Ctrl+K)`);
+  debug('browser', `opening messenger + Ctrl+K search for "${botName}"`);
   await page.keyboard.press('Control+k');
   await page.waitForTimeout(2_500);
   const searchBox = page.locator('.zone-container.editor-kit-container:visible').first();
@@ -190,6 +201,7 @@ try {
   if ((await botCard.count().catch(() => 0)) === 0) {
     throw new Error(`no bot result card found for "${botName}" in the search results`);
   }
+  debug('browser', 'bot result card found — opening the p2p chat');
   await botCard.click();
   await page.waitForTimeout(5_000);
 

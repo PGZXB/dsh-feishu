@@ -129,10 +129,14 @@ Exit codes: `0` = ready (later `e2e:ui` runs are hands-free), other = failed
 pnpm run e2e:ui
 
 # options
-E2E_VIDEO=off            # no video (default mp4 — webm is also kept)
+E2E_VIDEO=off            # no video (default mp4; the case dir keeps a single mp4)
 E2E_SCREENSHOTS=failure  # screenshots only on failure (default on)
 E2E_BOT_NAME="DSH-E2E-TESTBOT-20260821191530"  # the bot app name (default: the setup's unique name)
 E2E_APP_ID / E2E_APP_SECRET # optional override of the bot app
+E2E_DEBUG=1              # fine-grained diagnostics (state files, group
+                         # create/delete, WS lifecycle, QR cycles, report)
+FEISHU_DEBUG=1           # the plugin's own debug tracing (visible now that
+                         # the dsh child process logs are forwarded)
 ```
 
 No chat name is needed: every case creates its own group chat
