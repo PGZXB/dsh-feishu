@@ -8,7 +8,7 @@
 
 import { join } from 'node:path';
 import { defineConfig } from '@playwright/test';
-import { loadE2eConfig } from './lib/config.js';
+import { loadE2eConfig } from './helpers/config.js';
 
 const cfg = loadE2eConfig();
 

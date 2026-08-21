@@ -16,12 +16,11 @@
  * Env: E2E_APP_ID, E2E_APP_SECRET, E2E_RUN_ID.
  */
 
-import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(HERE, '..');
+const ROOT = join(HERE, '..', '..');
 
 const runId = process.env.E2E_RUN_ID ?? new Date().toISOString().replace(/[:.]/g, '-');
 const appId = process.env.E2E_APP_ID;
@@ -32,7 +31,7 @@ if (!appId || !appSecret) {
 }
 
 const { createGroup, deleteGroup, groupNameFor } = await import(
-  join(ROOT, 'e2e', '.build', 'lib', 'group.js')
+  join(ROOT, 'e2e', '.build', 'helpers', 'group.js')
 );
 const cfg = { appId, appSecret };
 

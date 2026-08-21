@@ -1,7 +1,7 @@
 # Dependencies
 node_modules/
 
-# Build output (root-level only — `e2e/lib/` is tracked source)
+# Build output (root-level only — `e2e/helpers/` is tracked source)
 /lib/
 /dist/
 

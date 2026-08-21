@@ -47,7 +47,12 @@ const server = createServer((req, res) => {
   }
   if (req.method === 'GET' && url === '/models') {
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ object: 'list', data: [{ id: 'deepseek-v4-flash', object: 'model', owned_by: 'mock' }] }));
+    res.end(
+      JSON.stringify({
+        object: 'list',
+        data: [{ id: 'deepseek-v4-flash', object: 'model', owned_by: 'mock' }],
+      }),
+    );
     return;
   }
   res.writeHead(404);

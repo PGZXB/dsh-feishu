@@ -20,9 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Real-client E2E UI suite** (`e2e/`, `scripts/e2e-ui.mjs`): drives the
+- **Real-client E2E UI suite** (`e2e/`, `e2e/scripts/e2e-ui.mjs`): drives the
   actual feishu.cn web client headless (Playwright + docker image
-  `Dockerfile.e2e`) against a real dsh process running the bot app with the
+  `e2e/Dockerfile`) against a real dsh process running the bot app with the
   mock LLM — the only layer where the Feishu wire and the browser client are
   both real. Rule-based DOM assertions only (no paid vision in tests);
   `pnpm run e2e:setup` performs the one-time environment prep (bot app,

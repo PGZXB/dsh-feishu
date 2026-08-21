@@ -27,7 +27,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(HERE, '..');
+const ROOT = join(HERE, '..', '..');
 
 const env = process.env;
 const stateDir = join(ROOT, 'e2e', '.state');
@@ -59,10 +59,14 @@ function log(step, msg) {
 // `DOCKER_CONFIG` can redirect it, see docs/e2e-testing.md).
 const inspect = spawnSync('docker', ['image', 'inspect', dockerImage], { stdio: 'ignore' });
 if (inspect.status !== 0) {
-  log('docker', `image ${dockerImage} missing — building from Dockerfile.e2e`);
-  const build = spawnSync('docker', ['build', '-f', join(ROOT, 'Dockerfile.e2e'), '-t', dockerImage, ROOT], {
-    stdio: 'inherit',
-  });
+  log('docker', `image ${dockerImage} missing — building from e2e/Dockerfile`);
+  const build = spawnSync(
+    'docker',
+    ['build', '-f', join(ROOT, 'e2e', 'Dockerfile'), '-t', dockerImage, ROOT],
+    {
+      stdio: 'inherit',
+    },
+  );
   if (build.status !== 0) {
     console.error('✗ docker build failed (docker available? DOCKER_CONFIG writable?)');
     process.exit(2);
@@ -76,27 +80,47 @@ log('output', `run reports: ${outputDir}`);
 const res = spawnSync(
   'docker',
   [
-    'run', '--rm', '--shm-size=1g',
+    'run',
+    '--rm',
+    '--shm-size=1g',
     // The repo is mounted READ-ONLY; the container copies it to /app.
-    '-v', `${ROOT}:/repo:ro`,
-    '-v', `${stateDir}:/state`,
-    '-v', `${outputDir}:/output`,
-    '-w', '/app',
-    '-e', 'E2E_STATE=/state',
-    '-e', 'E2E_OUTPUT=/output',
-    '-e', `E2E_VIDEO=${env.E2E_VIDEO ?? 'mp4'}`,
-    '-e', `E2E_SCREENSHOTS=${env.E2E_SCREENSHOTS ?? 'on'}`,
-    '-e', `E2E_BASE_URL=${env.E2E_BASE_URL ?? 'https://www.feishu.cn/'}`,
-    '-e', `E2E_BOT_NAME=${botName}`,
+    '-v',
+    `${ROOT}:/repo:ro`,
+    '-v',
+    `${stateDir}:/state`,
+    '-v',
+    `${outputDir}:/output`,
+    '-w',
+    '/app',
+    '-e',
+    'E2E_STATE=/state',
+    '-e',
+    'E2E_OUTPUT=/output',
+    '-e',
+    `E2E_VIDEO=${env.E2E_VIDEO ?? 'mp4'}`,
+    '-e',
+    `E2E_SCREENSHOTS=${env.E2E_SCREENSHOTS ?? 'on'}`,
+    '-e',
+    `E2E_BASE_URL=${env.E2E_BASE_URL ?? 'https://www.feishu.cn/'}`,
+    '-e',
+    `E2E_BOT_NAME=${botName}`,
     ...(appId !== undefined ? ['-e', `E2E_APP_ID=${appId}`] : []),
     ...(appSecret !== undefined ? ['-e', `E2E_APP_SECRET=${appSecret}`] : []),
-    '-e', 'http_proxy=', '-e', 'https_proxy=', '-e', 'HTTP_PROXY=', '-e', 'HTTPS_PROXY=',
-    ...(env.E2E_DEBUG_DOM !== undefined ? ['-e', 'E2E_DEBUG_DOM=' + env.E2E_DEBUG_DOM] : []),
+    '-e',
+    'http_proxy=',
+    '-e',
+    'https_proxy=',
+    '-e',
+    'HTTP_PROXY=',
+    '-e',
+    'HTTPS_PROXY=',
+    ...(env.E2E_DEBUG_DOM !== undefined ? ['-e', `E2E_DEBUG_DOM=${env.E2E_DEBUG_DOM}`] : []),
     dockerImage,
-    'bash', '-c',
+    'bash',
+    '-c',
     'mkdir -p /app && tar --exclude=./node_modules --exclude=./lib --exclude=./_dev ' +
       '--exclude=.pnpm-store --exclude=.git -C /repo -cf - . | tar -C /app -xf - && ' +
-      'node /app/scripts/e2e-container.mjs',
+      'node /app/e2e/scripts/e2e-container.mjs',
   ],
   { stdio: 'inherit' },
 );

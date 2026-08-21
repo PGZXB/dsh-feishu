@@ -34,14 +34,14 @@ is the third testing layer:
 ## Architecture
 
 ```
-pnpm run e2e:setup  →  scripts/e2e-setup.mjs (one-time, host, idempotent)
+pnpm run e2e:setup  →  e2e/scripts/e2e-setup.mjs (one-time, host, idempotent)
   └─ docker: copy repo (read-only mount → /app) → install → build →
      profile → create the bot app (open-platform QR) → browser login (QR) →
      extract the test-user open_id → probe backend group create+delete →
      exports everything to e2e/.state/
      (creds.json, console-session.json, web-session.json, user.json)
 
-pnpm run e2e:ui     →  scripts/e2e-ui.mjs (host launcher)
+pnpm run e2e:ui     →  e2e/scripts/e2e-ui.mjs (host launcher)
   └─ docker: copy repo → install → build → profile →
      reuse exported creds/session/user (no QR) →
      boot the mock DeepSeek server + dsh (profile e2e-dev) →
@@ -76,15 +76,15 @@ open-id extraction. Only the missing pieces are (re)created.
 Key pieces:
 
 - **e2e/playwright.config.ts** — Playwright config; all knobs come from the
-  environment (see `e2e/lib/config.ts`).
-- **e2e/lib/feishu.ts** — the feishu.cn web helpers (open app/chat, send a
+  environment (see `e2e/helpers/config.ts`).
+- **e2e/helpers/feishu.ts** — the feishu.cn web helpers (open app/chat, send a
   message, read the chat, click buttons, snapshots).
-- **e2e/lib/group.ts** — backend group creation/removal (`im.v1.chat.create`
+- **e2e/helpers/group.ts** — backend group creation/removal (`im.v1.chat.create`
   / `im.v1.chat.delete`, the same calls `/group` wraps) + the unique group
   name builder.
-- **e2e/lib/assert.ts** — rule-based chat assertions.
+- **e2e/helpers/assert.ts** — rule-based chat assertions.
 - **e2e/scenarios/*.spec.ts** — one file per scenario.
-- **Dockerfile.e2e** — the run image: Playwright's official image + full
+- **e2e/Dockerfile** — the run image: Playwright's official image + full
   ffmpeg (the bundled one only encodes VP8; mp4 conversion needs H.264).
 
 ## Setup (one-time, then hands-free)
@@ -209,10 +209,10 @@ video/screenshot policy).
 2. Assert only what the DOM shows (message text, button labels, panel
    content) — rule-based, free, deterministic.
 3. When a new interaction needs a helper (a panel open, a picker choice),
-   add it to `e2e/lib/feishu.ts` with the selector it targets, and note the
+   add it to `e2e/helpers/feishu.ts` with the selector it targets, and note the
    selector in the list below.
 
-## Helper API (`e2e/lib/`)
+## Helper API (`e2e/helpers/`)
 
 | Helper | Purpose |
 | --- | --- |
@@ -256,5 +256,5 @@ helper together.
 - **docker build fails** — the build writes buildx state under
   `~/.docker`; make sure that is writable (`DOCKER_CONFIG` can redirect it).
 - **mp4 conversion skipped** — the image's bundled ffmpeg has no H.264; the
-  container uses the full ffmpeg from `Dockerfile.e2e` (rebuild the image
+  container uses the full ffmpeg from `e2e/Dockerfile` (rebuild the image
   after pulling a new Playwright base).

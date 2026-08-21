@@ -35,11 +35,17 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process';
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = '/app'; // container-local copy of the repo
 const env = process.env;
 
@@ -61,7 +67,14 @@ const credsFile = join(state, 'creds.json');
 const userFile = join(state, 'user.json');
 const setupLog = join(state, 'setup.log');
 
-for (const k of ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'all_proxy', 'ALL_PROXY']) {
+for (const k of [
+  'http_proxy',
+  'https_proxy',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'all_proxy',
+  'ALL_PROXY',
+]) {
   delete process.env[k];
 }
 // Container-local pnpm store — never write into the copied repo's mounts.
@@ -128,11 +141,15 @@ function readCreds() {
 /** Compile the e2e suite to e2e/.build/ (Playwright needs .js imports). */
 function compileE2e() {
   log('playwright', 'compiling the e2e suite (container-local)');
-  const tsc = spawnSync(join(ROOT, 'node_modules', '.bin', 'tsc'), ['-p', 'e2e/tsconfig.build.json'], {
-    cwd: ROOT,
-    env: process.env,
-    stdio: 'inherit',
-  });
+  const tsc = spawnSync(
+    join(ROOT, 'node_modules', '.bin', 'tsc'),
+    ['-p', 'e2e/tsconfig.build.json'],
+    {
+      cwd: ROOT,
+      env: process.env,
+      stdio: 'inherit',
+    },
+  );
   if (tsc.status !== 0) {
     console.error('✗ e2e tsc build failed');
     process.exit(2);
@@ -150,7 +167,11 @@ async function main() {
   }
   if (!existsSync(join(ROOT, 'lib', 'index.js'))) {
     log('build', 'building the plugin (container-local)');
-    const res = spawnSync('pnpm', ['run', 'build'], { cwd: ROOT, env: process.env, stdio: 'inherit' });
+    const res = spawnSync('pnpm', ['run', 'build'], {
+      cwd: ROOT,
+      env: process.env,
+      stdio: 'inherit',
+    });
     if (res.status !== 0) process.exit(2);
   }
 
@@ -184,13 +205,22 @@ async function main() {
       code = await teeSpawn(
         'pnpm',
         [
-          'run', 'setup:feishu', '--',
-          '--new', '--profile', 'e2e-dev',
-          '--dsh-home', e2eHome,
-          '--app-name', env.E2E_BOT_NAME ?? 'DSH-E2E-TESTBOT',
+          'run',
+          'setup:feishu',
+          '--',
+          '--new',
+          '--profile',
+          'e2e-dev',
+          '--dsh-home',
+          e2eHome,
+          '--app-name',
+          env.E2E_BOT_NAME ?? 'DSH-E2E-TESTBOT',
           ...(needsLogin ? ['--force-login'] : []),
         ],
-        { env: { ...process.env, DSH_HOME: e2eHome, DSH_FEISHU_SESSION: consoleSession }, cwd: ROOT },
+        {
+          env: { ...process.env, DSH_HOME: e2eHome, DSH_FEISHU_SESSION: consoleSession },
+          cwd: ROOT,
+        },
         setupLog,
       );
       if (code === 0) break;
@@ -204,7 +234,10 @@ async function main() {
     const id = /appId:\s*(\S+)/.exec(patch);
     const secret = /appSecret:\s*(\S+)/.exec(patch);
     if (id?.[1] && secret?.[1]) {
-      writeFileSync(credsFile, `${JSON.stringify({ appId: id[1], appSecret: secret[1] }, null, 2)}\n`);
+      writeFileSync(
+        credsFile,
+        `${JSON.stringify({ appId: id[1], appSecret: secret[1] }, null, 2)}\n`,
+      );
       console.log(`  [setup] credentials exported to ${credsFile}`);
       process.env.E2E_APP_ID = id[1];
       process.env.E2E_APP_SECRET = secret[1];
@@ -222,7 +255,7 @@ async function main() {
     log('session', 'browser login required — scan with the TEST account');
     const res = spawnSync(
       process.execPath,
-      [join(ROOT, 'scripts', 'e2e-login.mjs'), '--state', webSession],
+      [join(ROOT, 'e2e', 'scripts', 'e2e-login.mjs'), '--state', webSession],
       { cwd: ROOT, env: process.env, stdio: 'inherit' },
     );
     if (res.status !== 0) {
@@ -241,7 +274,7 @@ async function main() {
     log('user', 'sending a one-time p2p message to the bot and resolving the test user open_id');
     const res = spawnSync(
       process.execPath,
-      [join(ROOT, 'scripts', 'e2e-user-id.mjs'), '--state', webSession, '--out', userFile],
+      [join(ROOT, 'e2e', 'scripts', 'e2e-user-id.mjs'), '--state', webSession, '--out', userFile],
       { cwd: ROOT, env: process.env, stdio: 'inherit' },
     );
     if (res.status !== 0) {
@@ -260,7 +293,7 @@ async function main() {
     log('setup-check', 'probing backend group creation (create + delete)');
     const probe = spawnSync(
       process.execPath,
-      [join(ROOT, 'scripts', 'e2e-check-group.mjs'), '--run-id', runId],
+      [join(ROOT, 'e2e', 'scripts', 'e2e-check-group.mjs'), '--run-id', runId],
       {
         cwd: ROOT,
         env: {
@@ -293,7 +326,7 @@ async function main() {
 
   // 8. Mock DeepSeek server.
   log('mock llm', `starting mock DeepSeek server on 127.0.0.1:${mockPort}`);
-  const mock = spawn(process.execPath, [join(ROOT, 'scripts', 'e2e-mock-llm.mjs')], {
+  const mock = spawn(process.execPath, [join(ROOT, 'e2e', 'scripts', 'e2e-mock-llm.mjs')], {
     env: { ...process.env, E2E_MOCK_PORT: mockPort },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
@@ -368,7 +401,18 @@ async function main() {
       log('convert', `${webm} -> ${mp4}`);
       const conv = spawnSync(
         'ffmpeg',
-        ['-y', '-i', webm, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', mp4],
+        [
+          '-y',
+          '-i',
+          webm,
+          '-c:v',
+          'libx264',
+          '-pix_fmt',
+          'yuv420p',
+          '-movflags',
+          '+faststart',
+          mp4,
+        ],
         { stdio: 'inherit' },
       );
       if (conv.status !== 0) console.warn('  (mp4 conversion failed — keeping the webm)');
@@ -385,12 +429,15 @@ async function main() {
   };
   const gen = spawnSync(
     process.execPath,
-    [join(ROOT, 'scripts', 'e2e-report.mjs'), reportDir],
+    [join(ROOT, 'e2e', 'scripts', 'e2e-report.mjs'), reportDir],
     { cwd: ROOT, env: envForReport, stdio: 'inherit' },
   );
-  if (gen.status !== 0) console.warn('  (report generation failed — raw Playwright output is still in reportDir)');
+  if (gen.status !== 0)
+    console.warn('  (report generation failed — raw Playwright output is still in reportDir)');
   // `latest` symlink → this run (remove-then-create; rm -f of a dir symlink is fine).
-  spawnSync('sh', ['-c', `rm -f ${outputRoot}/latest && ln -s ${runId} ${outputRoot}/latest`], { stdio: 'ignore' });
+  spawnSync('sh', ['-c', `rm -f ${outputRoot}/latest && ln -s ${runId} ${outputRoot}/latest`], {
+    stdio: 'ignore',
+  });
   log('report', `run report: ${join(reportDir, 'summary.html')} (latest -> ${runId})`);
 }
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 /**
  * One-time feishu.cn web login for the E2E suite: opens the app, and when the
  * session is missing/expired, captures the rotating QR code (canvas element,
@@ -15,13 +16,13 @@
  * The QR to scan is written to `<state dir>/qr.png` (refreshed every 5 s).
  */
 
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(HERE, '..');
+const ROOT = join(HERE, '..', '..');
 
 // Browser cache: prefer the repo-local pw-browsers when present (host runs).
 const LOCAL_BROWSERS = join(ROOT, '_dev', 'pw-browsers');
@@ -29,7 +30,14 @@ if (!process.env.PLAYWRIGHT_BROWSERS_PATH && existsSync(LOCAL_BROWSERS)) {
   process.env.PLAYWRIGHT_BROWSERS_PATH = LOCAL_BROWSERS;
 }
 process.env.XDG_CONFIG_HOME = join(ROOT, '_dev', 'e2e-session', 'config');
-for (const k of ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'all_proxy', 'ALL_PROXY']) {
+for (const k of [
+  'http_proxy',
+  'https_proxy',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'all_proxy',
+  'ALL_PROXY',
+]) {
   delete process.env[k];
 }
 
@@ -38,12 +46,13 @@ const { chromium } = require('@playwright/test'); // devDep (resolvable top-leve
 
 const argv = process.argv.slice(2);
 const stateIdx = argv.indexOf('--state');
-const stateFile = stateIdx >= 0 ? argv[stateIdx + 1] : join(ROOT, '_dev', 'e2e-session', 'state.json');
+const stateFile =
+  stateIdx >= 0 ? argv[stateIdx + 1] : join(ROOT, '_dev', 'e2e-session', 'state.json');
 const headed = argv.includes('--headed');
 const baseUrl = process.env.E2E_BASE_URL ?? 'https://www.feishu.cn/';
 const appUrl = new URL('messenger/', baseUrl).href;
 
-const isAppUrl = (u) => /\/(messenger|home|space|contact|drive)([\/?#]|$)/.test(u);
+const isAppUrl = (u) => /\/(messenger|home|space|contact|drive)([/?#]|$)/.test(u);
 
 mkdirSync(dirname(stateFile), { recursive: true });
 
@@ -81,7 +90,9 @@ if (!isAppUrl(page.url())) {
       const stale = await page
         .evaluate(() => {
           const box = document.querySelector('[class*="scan-QR-code"], canvas');
-          return box ? /Refresh QR Code|\u5237\u65b0\u4e8c\u7ef4\u7801/.test(box.textContent ?? '') : false;
+          return box
+            ? /Refresh QR Code|\u5237\u65b0\u4e8c\u7ef4\u7801/.test(box.textContent ?? '')
+            : false;
         })
         .catch(() => false);
       if (stale) {
@@ -89,7 +100,12 @@ if (!isAppUrl(page.url())) {
         await page.waitForTimeout(6_000);
         console.log('  [qr] expired — reloaded for a fresh QR');
       }
-      for (const sel of ['[class*="scan-QR-code"] canvas', 'canvas', 'img[src*="qr"]', 'img[class*="qrcode"]']) {
+      for (const sel of [
+        '[class*="scan-QR-code"] canvas',
+        'canvas',
+        'img[src*="qr"]',
+        'img[class*="qrcode"]',
+      ]) {
         try {
           const el = page.locator(sel).first();
           if ((await el.count()) > 0) {

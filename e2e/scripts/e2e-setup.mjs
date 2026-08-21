@@ -29,7 +29,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(HERE, '..');
+const ROOT = join(HERE, '..', '..');
 const env = process.env;
 
 const stateDir = join(ROOT, 'e2e', '.state');
@@ -75,10 +75,14 @@ const botName = resolveBotName();
 
 const inspect = spawnSync('docker', ['image', 'inspect', dockerImage], { stdio: 'ignore' });
 if (inspect.status !== 0) {
-  log('docker', `image ${dockerImage} missing — building from Dockerfile.e2e`);
-  const build = spawnSync('docker', ['build', '-f', join(ROOT, 'Dockerfile.e2e'), '-t', dockerImage, ROOT], {
-    stdio: 'inherit',
-  });
+  log('docker', `image ${dockerImage} missing — building from e2e/Dockerfile`);
+  const build = spawnSync(
+    'docker',
+    ['build', '-f', join(ROOT, 'e2e', 'Dockerfile'), '-t', dockerImage, ROOT],
+    {
+      stdio: 'inherit',
+    },
+  );
   if (build.status !== 0) process.exit(2);
 }
 
@@ -92,23 +96,41 @@ console.log(
 const res = spawnSync(
   'docker',
   [
-    'run', '--rm', '--shm-size=1g',
-    '-v', `${ROOT}:/repo:ro`,
-    '-v', `${stateDir}:/state`,
-    '-v', `${outputDir}:/output`,
-    '-w', '/app',
-    '-e', 'E2E_SETUP=1',
-    '-e', 'E2E_STATE=/state',
-    '-e', 'E2E_OUTPUT=/output',
-    '-e', `E2E_BOT_NAME=${botName}`,
+    'run',
+    '--rm',
+    '--shm-size=1g',
+    '-v',
+    `${ROOT}:/repo:ro`,
+    '-v',
+    `${stateDir}:/state`,
+    '-v',
+    `${outputDir}:/output`,
+    '-w',
+    '/app',
+    '-e',
+    'E2E_SETUP=1',
+    '-e',
+    'E2E_STATE=/state',
+    '-e',
+    'E2E_OUTPUT=/output',
+    '-e',
+    `E2E_BOT_NAME=${botName}`,
     ...(appId !== undefined ? ['-e', `E2E_APP_ID=${appId}`] : []),
     ...(appSecret !== undefined ? ['-e', `E2E_APP_SECRET=${appSecret}`] : []),
-    '-e', 'http_proxy=', '-e', 'https_proxy=', '-e', 'HTTP_PROXY=', '-e', 'HTTPS_PROXY=',
+    '-e',
+    'http_proxy=',
+    '-e',
+    'https_proxy=',
+    '-e',
+    'HTTP_PROXY=',
+    '-e',
+    'HTTPS_PROXY=',
     dockerImage,
-    'bash', '-c',
+    'bash',
+    '-c',
     'mkdir -p /app && tar --exclude=./node_modules --exclude=./lib --exclude=./_dev ' +
       '--exclude=./.pnpm-store --exclude=./.git -C /repo -cf - . | tar -C /app -xf - && ' +
-      'node /app/scripts/e2e-container.mjs',
+      'node /app/e2e/scripts/e2e-container.mjs',
   ],
   { stdio: 'inherit' },
 );

@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { loadE2eConfig } from '../e2e/lib/config.js';
+import { loadE2eConfig } from '../e2e/helpers/config.js';
 
 describe('e2e config', () => {
   it('applies defaults', () => {

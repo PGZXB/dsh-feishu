@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createGroup, deleteGroup, FeishuApiError, groupNameFor } from '../e2e/lib/group.js';
+import { createGroup, deleteGroup, FeishuApiError, groupNameFor } from '../e2e/helpers/group.js';
 
 describe('groupNameFor', () => {
   it('joins caseId and runId with a dash', () => {

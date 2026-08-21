@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 /**
  * Extract the test user's Feishu open_id during `e2e:setup` (one-time).
  *
@@ -27,21 +28,29 @@
  * Writes `{ "openId": "ou_..." }` to the out file; exits 0 on success.
  */
 
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(HERE, '..');
+const ROOT = join(HERE, '..', '..');
 
 const argv = process.argv.slice(2);
 const stateIdx = argv.indexOf('--state');
-const sessionState = stateIdx >= 0 ? argv[stateIdx + 1] : join(ROOT, 'e2e', '.state', 'web-session.json');
+const sessionState =
+  stateIdx >= 0 ? argv[stateIdx + 1] : join(ROOT, 'e2e', '.state', 'web-session.json');
 const outIdx = argv.indexOf('--out');
 const outFile = outIdx >= 0 ? argv[outIdx + 1] : join(ROOT, 'e2e', '.state', 'user.json');
 
-for (const k of ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'all_proxy', 'ALL_PROXY']) {
+for (const k of [
+  'http_proxy',
+  'https_proxy',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'all_proxy',
+  'ALL_PROXY',
+]) {
   delete process.env[k];
 }
 process.env.XDG_CONFIG_HOME = join(ROOT, '_dev', 'e2e-session', 'config');
@@ -60,8 +69,12 @@ const botName =
 
 // App credentials: env first, then creds.json in the state dir.
 const credsFile = join(stateDir, 'creds.json');
-const appId = process.env.E2E_APP_ID ?? (existsSync(credsFile) ? JSON.parse(readFileSync(credsFile, 'utf8')).appId : undefined);
-const appSecret = process.env.E2E_APP_SECRET ?? (existsSync(credsFile) ? JSON.parse(readFileSync(credsFile, 'utf8')).appSecret : undefined);
+const appId =
+  process.env.E2E_APP_ID ??
+  (existsSync(credsFile) ? JSON.parse(readFileSync(credsFile, 'utf8')).appId : undefined);
+const appSecret =
+  process.env.E2E_APP_SECRET ??
+  (existsSync(credsFile) ? JSON.parse(readFileSync(credsFile, 'utf8')).appSecret : undefined);
 if (!appId || !appSecret) {
   console.error('✗ E2E_APP_ID / E2E_APP_SECRET required (or creds.json in the state dir)');
   process.exit(2);
@@ -78,7 +91,9 @@ const openIdPromise = new Promise((resolve, reject) => {
   rejectOpenId = reject;
 });
 const eventTimeout = setTimeout(() => {
-  rejectOpenId(new Error('no im.message.receive_v1 event within 60 s — did the message reach the bot?'));
+  rejectOpenId(
+    new Error('no im.message.receive_v1 event within 60 s — did the message reach the bot?'),
+  );
 }, 60_000);
 
 const dispatcher = new EventDispatcher({}).register({
@@ -118,15 +133,16 @@ await context.addCookies(s.cookies ?? []);
 for (const origin of s.origins ?? []) {
   await page.goto(`${origin.origin}/`, { waitUntil: 'commit', timeout: 30_000 }).catch(() => {});
   for (const item of origin.localStorage ?? []) {
-    await page.evaluate(
-      ([k, v]) => window.localStorage.setItem(k, v),
-      [item.name, item.value],
-    ).catch(() => {});
+    await page
+      .evaluate(([k, v]) => window.localStorage.setItem(k, v), [item.name, item.value])
+      .catch(() => {});
   }
 }
 
 await ws.start({ eventDispatcher: dispatcher });
-await page.goto('https://www.feishu.cn/messenger/', { waitUntil: 'commit', timeout: 45_000 }).catch(() => {});
+await page
+  .goto('https://www.feishu.cn/messenger/', { waitUntil: 'commit', timeout: 45_000 })
+  .catch(() => {});
 await page.waitForTimeout(10_000);
 
 // Global search (Ctrl+K) → type the bot name → click the bot result card.

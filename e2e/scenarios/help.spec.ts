@@ -17,11 +17,11 @@
  */
 
 import { test } from '@playwright/test';
-import { waitForBotReplyContaining } from '../lib/assert.js';
-import { loadE2eConfig } from '../lib/config.js';
-import { openApp, openChat, sendMessage, snapshot } from '../lib/feishu.js';
-import { createGroup, deleteGroup, groupNameFor } from '../lib/group.js';
-import { caseIdFromTitle } from '../lib/report.js';
+import { waitForBotReplyContaining } from '../helpers/assert.js';
+import { loadE2eConfig } from '../helpers/config.js';
+import { openApp, openChat, sendMessage, snapshot } from '../helpers/feishu.js';
+import { createGroup, deleteGroup, groupNameFor } from '../helpers/group.js';
+import { caseIdFromTitle } from '../helpers/report.js';
 
 const cfg = loadE2eConfig();
 

@@ -18,14 +18,14 @@
 ## 架构
 
 ```
-pnpm run e2e:setup  →  scripts/e2e-setup.mjs（一次性，宿主，幂等）
+pnpm run e2e:setup  →  e2e/scripts/e2e-setup.mjs（一次性，宿主，幂等）
   └─ docker：复制仓库（只读挂载 → /app）→ 安装 → 构建 →
      profile → 创建 bot 应用（开放平台扫码）→ 浏览器登录（扫码）→
      提取测试用户 open_id → 探针验证后台建群/删群 →
      全部导出到 e2e/.state/
      （creds.json、console-session.json、web-session.json、user.json）
 
-pnpm run e2e:ui     →  scripts/e2e-ui.mjs（宿主启动器）
+pnpm run e2e:ui     →  e2e/scripts/e2e-ui.mjs（宿主启动器）
   └─ docker：复制仓库 → 安装 → 构建 → profile →
      复用导出的凭据/会话/用户（无需扫码）→
      启动 mock DeepSeek server + dsh（profile e2e-dev）→
@@ -47,12 +47,12 @@ pnpm run e2e:ui     →  scripts/e2e-ui.mjs（宿主启动器）
 
 关键组成：
 
-- **e2e/playwright.config.ts** — Playwright 配置；所有开关来自环境变量（见 `e2e/lib/config.ts`）。
-- **e2e/lib/feishu.ts** — feishu.cn 网页 helper（打开应用/聊天、发消息、读聊天、点按钮、截图）。
-- **e2e/lib/group.ts** — 后台建群/删群（`im.v1.chat.create` / `im.v1.chat.delete`，与 `/group` 同一底层调用）+ 唯一群名构造器。
-- **e2e/lib/assert.ts** — 规则化聊天断言。
+- **e2e/playwright.config.ts** — Playwright 配置；所有开关来自环境变量（见 `e2e/helpers/config.ts`）。
+- **e2e/helpers/feishu.ts** — feishu.cn 网页 helper（打开应用/聊天、发消息、读聊天、点按钮、截图）。
+- **e2e/helpers/group.ts** — 后台建群/删群（`im.v1.chat.create` / `im.v1.chat.delete`，与 `/group` 同一底层调用）+ 唯一群名构造器。
+- **e2e/helpers/assert.ts** — 规则化聊天断言。
 - **e2e/scenarios/*.spec.ts** — 每个场景一个文件。
-- **Dockerfile.e2e** — 运行镜像：Playwright 官方镜像 + 完整 ffmpeg（自带版只支持 VP8；转 mp4 需要 H.264）。
+- **e2e/Dockerfile** — 运行镜像：Playwright 官方镜像 + 完整 ffmpeg（自带版只支持 VP8；转 mp4 需要 H.264）。
 
 ## Setup（一次性，之后免人工）
 
@@ -142,9 +142,9 @@ E2E_APP_ID / E2E_APP_SECRET # 可选：覆盖 bot 应用
    ```
 
 2. 只断言 DOM 可见内容（消息文本、按钮文案、面板内容）——规则化、免费、确定。
-3. 需要新交互 helper（打开面板、选择器选择）时，加进 `e2e/lib/feishu.ts` 并注明它定位的选择器，同时更新下方选择器表。
+3. 需要新交互 helper（打开面板、选择器选择）时，加进 `e2e/helpers/feishu.ts` 并注明它定位的选择器，同时更新下方选择器表。
 
-## Helper API（`e2e/lib/`）
+## Helper API（`e2e/helpers/`）
 
 | Helper | 用途 |
 | --- | --- |
@@ -177,4 +177,4 @@ E2E_APP_ID / E2E_APP_SECRET # 可选：覆盖 bot 应用
 - **「setup state missing」** — 先跑 `pnpm run e2e:setup`；运行模式拒绝猜测凭据。
 - **dsh 一直不报 "long connection ready"** — 应用凭据错误，或应用未配置长连接事件模式（见 `docs/feishu-setup.md`）。
 - **docker build 失败** — 构建需要写 `~/.docker` 的 buildx 状态；确保可写（可用 `DOCKER_CONFIG` 重定向）。
-- **mp4 转换被跳过** — 镜像自带 ffmpeg 无 H.264；容器用的是 `Dockerfile.e2e` 里的完整 ffmpeg（升级 Playwright 基础镜像后重建镜像）。
+- **mp4 转换被跳过** — 镜像自带 ffmpeg 无 H.264；容器用的是 `e2e/Dockerfile` 里的完整 ffmpeg（升级 Playwright 基础镜像后重建镜像）。

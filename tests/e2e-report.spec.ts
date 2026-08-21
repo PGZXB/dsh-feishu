@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { collectArtifacts, generateRunReport, writeManifest } from '../e2e/lib/report.js';
+import { collectArtifacts, generateRunReport, writeManifest } from '../e2e/helpers/report.js';
 
 const TMP = join(process.cwd(), '_dev', 'e2e-unit-tmp');
 
@@ -182,7 +182,7 @@ describe('e2e run report generator', () => {
                         duration: 10,
                         startTime: '2026-08-21T00:00:00.000Z',
                         retry: 0,
-                        errors: [{ message: 'boom failed', location: 'e2e/lib/x.ts:1' }],
+                        errors: [{ message: 'boom failed', location: 'e2e/helpers/x.ts:1' }],
                         annotations: [],
                         stdout: [],
                         stderr: [],

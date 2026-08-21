@@ -14,14 +14,14 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(HERE, '..');
+const ROOT = join(HERE, '..', '..');
 const runDir = process.argv[2];
 if (!runDir) {
   console.error('usage: node scripts/e2e-report.mjs <runDir>');
   process.exit(2);
 }
 
-const { generateRunReport } = await import(join(ROOT, 'e2e', '.build', 'lib', 'report.js'));
+const { generateRunReport } = await import(join(ROOT, 'e2e', '.build', 'helpers', 'report.js'));
 const require = createRequire(import.meta.url);
 let playwrightVersion = 'unknown';
 try {
