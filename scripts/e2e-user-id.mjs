@@ -2,26 +2,28 @@
 /**
  * Extract the test user's Feishu open_id during `e2e:setup` (one-time).
  *
- * Feishu's web client never exposes the current user's open_id — it only
- * works with the internal user_id. The backend group creation needs the
- * open_id, so the setup resolves it from a real user↔bot exchange:
+ * The plugin's `/group` command gets the requester's open_id from the
+ * `im.message.receive_v1` event (`data.sender.sender_id.open_id`). The
+ * setup reuses that exact path:
  *
- *   1. the browser (using the exported web session) opens the global search
- *      (Ctrl+K), types the bot name, and clicks the bot result card — this
- *      opens the p2p chat with the bot;
- *   2. it sends a private message (creating the chat if needed);
- *   3. the app's OWN credentials (im:chat / im:chat.members:read — already
- *      in the manifest, no extra scope) list that chat and read its member
- *      open ids;
- *   4. the member that is not the bot is the test user → written to user.json.
+ *   1. a `WSClient` long connection (the same SDK the plugin's transport
+ *      uses) listens for message events, registered to
+ *      `im.message.receive_v1`;
+ *   2. the browser (using the exported web session) opens the bot's p2p
+ *      chat via the global search (Ctrl+K) and sends a private message;
+ *   3. the event arrives with `sender.sender_id.open_id` = the TEST user's
+ *      open id → written to user.json.
+ *
+ * No extra API scope is needed: the app's existing `im:chat` permissions
+ * and the long connection are all `im.message.receive_v1` requires.
  *
  * This runs exactly once, during `e2e:setup`; test runs never re-send the
  * message (user.json is already exported). All rule-based — DOM/API
  * inspection only, no vision.
  *
  * Usage: node scripts/e2e-user-id.mjs [--state <web-session.json>] [--out <user.json>]
- * Env: E2E_BOT_NAME (default DSH-E2E-TESTBOT), E2E_APP_ID, E2E_APP_SECRET
- *      (fall back to the state dir's creds.json).
+ * Env: E2E_BOT_NAME (default DSH-E2E-TESTBOT-<stamp> from the state dir),
+ *      E2E_APP_ID, E2E_APP_SECRET (fall back to creds.json in the state dir).
  * Writes `{ "openId": "ou_..." }` to the out file; exits 0 on success.
  */
 
@@ -49,11 +51,14 @@ if (!existsSync(sessionState)) {
   process.exit(2);
 }
 
-const botName = process.env.E2E_BOT_NAME ?? 'DSH-E2E-TESTBOT';
-
-// App credentials: env first, then the exported state dir (E2E_STATE, e.g.
-// /state in the container — the host e2e/.state mount).
+// The bot app name (unique per setup run, persisted in the state dir).
 const stateDir = process.env.E2E_STATE ?? join(ROOT, 'e2e', '.state');
+const botNameFile = join(stateDir, 'bot-name');
+const botName =
+  process.env.E2E_BOT_NAME ??
+  (existsSync(botNameFile) ? readFileSync(botNameFile, 'utf8').trim() : 'DSH-E2E-TESTBOT');
+
+// App credentials: env first, then creds.json in the state dir.
 const credsFile = join(stateDir, 'creds.json');
 const appId = process.env.E2E_APP_ID ?? (existsSync(credsFile) ? JSON.parse(readFileSync(credsFile, 'utf8')).appId : undefined);
 const appSecret = process.env.E2E_APP_SECRET ?? (existsSync(credsFile) ? JSON.parse(readFileSync(credsFile, 'utf8')).appSecret : undefined);
@@ -62,58 +67,41 @@ if (!appId || !appSecret) {
   process.exit(2);
 }
 
-const OPEN_BASE = 'https://open.feishu.cn';
-
-/** Fetch a tenant_access_token for the bot app. */
-async function tenantToken() {
-  const res = await fetch(`${OPEN_BASE}/open-apis/auth/v3/tenant_access_token/internal`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
-  });
-  const body = await res.json();
-  if (body.code !== 0 || body.tenant_access_token === undefined) {
-    throw new Error(`tenant token failed: ${body.code} ${body.msg ?? ''}`);
-  }
-  return body.tenant_access_token;
-}
-
-/** The bot's own open id (`bot/v3/info`), to exclude it from the member list. */
-async function botOpenId(token) {
-  const res = await fetch(`${OPEN_BASE}/open-apis/bot/v3/info`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  const body = await res.json();
-  if (body.code !== 0) throw new Error(`bot/v3/info failed: ${body.code} ${body.msg ?? ''}`);
-  return body.data?.open_id;
-}
-
-/** List the bot's chats; return the p2p chat id (or undefined). */
-async function findP2pChat(token) {
-  const res = await fetch(
-    `${OPEN_BASE}/open-apis/im/v1/chats?user_id_type=open_id&page_size=50`,
-    { headers: { Authorization: `Bearer ${token}` } },
-  );
-  const body = await res.json();
-  if (body.code !== 0) throw new Error(`im/v1/chats failed: ${body.code} ${body.msg ?? ''}`);
-  for (const item of body.data?.items ?? []) {
-    if (item.chat_type === 'p2p') return item;
-  }
-  return undefined;
-}
-
-/** Member open ids of a chat (`im:chat.members:read`, already granted). */
-async function memberOpenIds(token, chatId) {
-  const res = await fetch(
-    `${OPEN_BASE}/open-apis/im/v1/chats/${chatId}/members?member_id_type=open_id&page_size=50`,
-    { headers: { Authorization: `Bearer ${token}` } },
-  );
-  const body = await res.json();
-  if (body.code !== 0) throw new Error(`im/v1/chats/:id/members failed: ${body.code} ${body.msg ?? ''}`);
-  return (body.data?.items ?? []).map((m) => m.member_id).filter(Boolean);
-}
-
+// ── 1. WSClient long connection — capture the incoming message event ──────
 const require = createRequire(import.meta.url);
+const { WSClient, EventDispatcher } = require('@larksuiteoapi/node-sdk');
+
+let resolveOpenId;
+let rejectOpenId;
+const openIdPromise = new Promise((resolve, reject) => {
+  resolveOpenId = resolve;
+  rejectOpenId = reject;
+});
+const eventTimeout = setTimeout(() => {
+  rejectOpenId(new Error('no im.message.receive_v1 event within 60 s — did the message reach the bot?'));
+}, 60_000);
+
+const dispatcher = new EventDispatcher({}).register({
+  'im.message.receive_v1': (data) => {
+    const openId = data?.sender?.sender_id?.open_id;
+    if (typeof openId === 'string' && openId !== '') {
+      clearTimeout(eventTimeout);
+      console.log(`  [user] message event received — sender open_id: ${openId}`);
+      resolveOpenId(openId);
+    }
+    return undefined;
+  },
+});
+const ws = new WSClient({
+  appId,
+  appSecret,
+  autoReconnect: true,
+  handshakeTimeoutMs: 15_000,
+  onReady: () => console.log('  [user] long connection ready — send the message now'),
+  onError: (error) => console.log(`  [user] long connection error: ${error.message}`),
+});
+
+// ── 2. Browser: open the bot's p2p chat and send the message ──────────────
 const { chromium } = require('@playwright/test'); // devDep (resolvable top-level)
 const { tmpdir } = require('node:os');
 
@@ -137,10 +125,11 @@ for (const origin of s.origins ?? []) {
   }
 }
 
+await ws.start({ eventDispatcher: dispatcher });
 await page.goto('https://www.feishu.cn/messenger/', { waitUntil: 'commit', timeout: 45_000 }).catch(() => {});
 await page.waitForTimeout(10_000);
 
-// 1. Global search (Ctrl+K) → type the bot name → click the bot result card.
+// Global search (Ctrl+K) → type the bot name → click the bot result card.
 console.log(`  [user] searching for the bot "${botName}" (Ctrl+K)`);
 await page.keyboard.press('Control+k');
 await page.waitForTimeout(2_500);
@@ -151,49 +140,38 @@ await page.waitForTimeout(3_500);
 
 // The bot appears as a `.bot-result-card` (cursor:pointer) in the search
 // results; clicking it opens the p2p chat. The bot name is unique per setup
-// run (`DSH-E2E-TESTBOT-<stamp>`), so exactly one card carries it.
+// run, so exactly one card carries it.
 const botCard = page.locator('.bot-result-card:visible').filter({ hasText: botName }).first();
 if ((await botCard.count().catch(() => 0)) === 0) {
   console.error(`✗ no bot result card found for "${botName}" in the search results`);
+  ws.close();
   process.exit(2);
 }
 await botCard.click();
 await page.waitForTimeout(5_000);
 
-// 2. Send a private message — creates/confirms the p2p chat with the bot.
+// Send a private message — the incoming event carries the sender open_id.
 const composer = page.locator('.innerdocbody:visible, [class*="editor-kit"]:visible').last();
 await composer.click();
 await composer.fill('e2e setup probe — one-time user resolution');
 await composer.press('Enter');
-await page.waitForTimeout(4_000);
+await page.waitForTimeout(2_000);
 await context.close();
-console.log('  [user] p2p message sent to the bot');
+console.log('  [user] p2p message sent, waiting for the event…');
 
-// 3. Resolve the test user's open_id from the resulting chat via the app API.
-const token = await tenantToken();
-const botOpenIdValue = await botOpenId(token);
-// The p2p chat may take a moment to reach the bot's chat list.
-let p2p;
-for (let attempt = 1; attempt <= 5; attempt += 1) {
-  p2p = await findP2pChat(token);
-  if (p2p !== undefined) break;
-  console.log(`  [user] p2p chat not listed yet (attempt ${attempt}/5) — retrying`);
-  await new Promise((resolve) => setTimeout(resolve, 3_000));
-}
+// ── 3. Resolve the open_id from the event ─────────────────────────────────
 let openId;
-if (p2p?.chat_id !== undefined) {
-  const members = await memberOpenIds(token, p2p.chat_id);
-  openId = members.find((m) => m !== botOpenIdValue);
-  console.log(
-    `  [user] p2p chat ${p2p.chat_id} members: ${members.join(', ')} (bot: ${botOpenIdValue})`,
-  );
-} else {
-  console.error('  [user] no p2p chat found — did the message reach the bot?');
+try {
+  openId = await openIdPromise;
+} catch (error) {
+  console.error(`✗ ${error.message}`);
+  ws.close();
+  process.exit(1);
 }
+ws.close();
 
-if (openId === undefined || !/^ou_/.test(openId)) {
-  console.error('✗ could not resolve the test user open_id (no p2p chat / member mismatch).');
-  console.error('  Check that the bot app is the one the message was sent to.');
+if (typeof openId !== 'string' || !/^ou_/.test(openId)) {
+  console.error(`✗ invalid open_id resolved: ${JSON.stringify(openId)}`);
   process.exit(1);
 }
 

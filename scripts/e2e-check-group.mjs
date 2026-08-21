@@ -8,7 +8,12 @@
  * Exits 0 when create+delete succeed (the probe group is removed again), 1
  * otherwise. The probe group name embeds the run id so it is unique.
  *
- * Env: E2E_APP_ID, E2E_APP_SECRET, E2E_USER_OPEN_ID, E2E_RUN_ID.
+ * The probe creates a group with NO members: the bot (creator) stays the
+ * group owner, so the delete step is permitted. With a user as owner (as
+ * the `/group` command does), only that user could delete it — the probe
+ * must not leave a chat behind.
+ *
+ * Env: E2E_APP_ID, E2E_APP_SECRET, E2E_RUN_ID.
  */
 
 import { createRequire } from 'node:module';
@@ -21,9 +26,8 @@ const ROOT = join(HERE, '..');
 const runId = process.env.E2E_RUN_ID ?? new Date().toISOString().replace(/[:.]/g, '-');
 const appId = process.env.E2E_APP_ID;
 const appSecret = process.env.E2E_APP_SECRET;
-const userOpenId = process.env.E2E_USER_OPEN_ID;
-if (!appId || !appSecret || !userOpenId) {
-  console.error('✗ E2E_APP_ID / E2E_APP_SECRET / E2E_USER_OPEN_ID are required for the group probe');
+if (!appId || !appSecret) {
+  console.error('✗ E2E_APP_ID / E2E_APP_SECRET are required for the group probe');
   process.exit(2);
 }
 
@@ -34,7 +38,7 @@ const cfg = { appId, appSecret };
 
 const name = groupNameFor('e2e-setup-probe', runId);
 try {
-  const { chatId } = await createGroup(cfg, name, [userOpenId]);
+  const { chatId } = await createGroup(cfg, name, []);
   console.log(`  [probe] created group "${name}" (${chatId})`);
   await deleteGroup(cfg, chatId);
   console.log(`  [probe] deleted group ${chatId} — backend group management works`);
