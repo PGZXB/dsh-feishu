@@ -50,7 +50,7 @@ function chatForSession(sessionMap: SessionMap, sessionId: string): string | und
 }
 
 /** Classify a path's extension as an image container (image message) or file. */
-function isImagePath(path: string): boolean {
+export function isImagePath(path: string): boolean {
   const ext = basename(path).split('.').pop()?.toLowerCase() ?? '';
   return IMAGE_EXTENSIONS.has(ext);
 }

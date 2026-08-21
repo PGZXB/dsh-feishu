@@ -11,10 +11,13 @@
  * @module @dsh-feishu/dsh-feishu/cards/StreamingCardController
  */
 
+import { readFile } from 'node:fs/promises';
+import { basename, join } from 'node:path';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
 import type { CardAction, FeishuTransport } from '../feishu/types.js';
+import { isImagePath } from '../outbound.js';
 import type { SessionMap } from '../session-map.js';
 import {
   assistantText,
@@ -47,6 +50,25 @@ function isCompactionLifecycleEvent(event: SessionEvent): boolean {
 }
 
 /**
+ * The `file_path` of a mutation tool call, parsed from its raw arguments JSON.
+ * The fs write/edit tools name the target in `file_path` (the schema key the
+ * model emits); a read also carries `file_path`, but callers gate on a
+ * `meta.diffs` mutation signal, so only write/edit reach this. Returns
+ * undefined when the field is absent or the arguments are not JSON.
+ */
+function filePathFromArguments(args: string | undefined): string | undefined {
+  if (args === undefined || args === '') return undefined;
+  try {
+    const parsed = JSON.parse(args) as { file_path?: unknown };
+    return typeof parsed.file_path === 'string' && parsed.file_path !== ''
+      ? parsed.file_path
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * One chat's streaming-card state — the single authoritative source for the
  * card. The controller renders the card from THIS state and nothing else;
  * card actions mutate it (or not) and then always call {@link
@@ -71,6 +93,10 @@ export interface ChatCardState {
   /** The user pressed Stop; the card shows an in-progress Stopping state
    *  until turn/end(aborted) settles it to `stopped`. */
   stopRequested: boolean;
+  /** Paths (relative to the pinned cwd) of files the agent produced this
+   *  turn via write/edit mutations (from `tool/result` `meta.diffs`).
+   *  Reset on turn start; the final card chips render from it. */
+  producedPaths: string[];
 }
 
 const MAX_TITLE_CHARS = 40;
@@ -233,6 +259,7 @@ export class StreamingCardController {
       status: 'working',
       collapsed: true,
       stopRequested: false,
+      producedPaths: [],
     });
     try {
       await this.host.cards.open(chatId, title);
@@ -292,6 +319,7 @@ export class StreamingCardController {
       cwd: this.host.sessionMap.cwdFor(chatId) ?? this.host.defaultCwd,
       collapsed: state.collapsed,
       stopRequested: state.stopRequested,
+      producedPaths: state.producedPaths,
       status: state.status,
     };
   }
@@ -381,6 +409,7 @@ export class StreamingCardController {
           status: 'working',
           collapsed: true,
           stopRequested: false,
+          producedPaths: [],
         });
         try {
           await this.host.cards.open(chatId, title);
@@ -444,6 +473,7 @@ export class StreamingCardController {
         this.host.logger.debug(
           `streaming tool/result ${chatId}: call ${event.data.message.content[0]?.toolCallId ?? '(unknown)'} -> ${status}`,
         );
+        // Find the correlated tool row (also the create-fallback path source).
         const index = state.rows.findIndex(
           (row): row is ToolRow =>
             row.kind === 'tool' && row.id === event.data.message.content[0]?.toolCallId,
@@ -460,6 +490,36 @@ export class StreamingCardController {
                 }
                 return -1;
               })();
+        const callRow = target >= 0 ? (state.rows[target] as ToolRow | undefined) : undefined;
+        // Turn-produced files (path-level parity with the DSH web row). The
+        // web derives produced paths from a mutation tool's render intent
+        // (diff / generic+edit → `locations[].path`), which is browser-only.
+        // The host-visible analogue: the fs write/edit mutation tools persist
+        // a `meta.diffs` KEY on `tool/result` — a non-empty array for an
+        // update/overwrite, an empty one for a new-file CREATE. Reads carry a
+        // window/snippet meta (NO diffs key) and deletes/terminals carry none,
+        // so a `meta.diffs` key (even empty) is the mutation signal. For an
+        // empty `diffs` (a create) the path is not in meta, so derive it from
+        // the correlated `tool/call` arguments' `file_path` — matching the
+        // web's `presentCall.locations` exactly.
+        const meta = (event.data as { meta?: { diffs?: unknown[] } }).meta;
+        if (meta !== undefined && Array.isArray(meta.diffs)) {
+          let path: string | undefined;
+          if (meta.diffs.length > 0) {
+            const first = meta.diffs[0] as { path?: unknown };
+            if (typeof first?.path === 'string' && first.path !== '') path = first.path;
+          } else {
+            // New-file create: no diff basis, so `meta.diffs` is empty. The
+            // path rides the tool/call arguments (`file_path`).
+            path = filePathFromArguments(callRow?.args);
+          }
+          if (path !== undefined && path !== '' && !state.producedPaths.includes(path)) {
+            state.producedPaths.push(path);
+            this.host.logger.debug(
+              `streaming produced-file ${chatId}: ${path} (${state.producedPaths.length} total)`,
+            );
+          }
+        }
         if (target >= 0 && state.rows[target]?.kind === 'tool') {
           const row = state.rows[target] as ToolRow;
           state.rows[target] = {
@@ -558,6 +618,7 @@ export class StreamingCardController {
             status: 'working',
             collapsed: true,
             stopRequested: false,
+            producedPaths: [],
           };
           this.cardStates.set(chatId, state);
           try {
@@ -704,6 +765,7 @@ export class StreamingCardController {
           status: 'working',
           collapsed: true,
           stopRequested: false,
+          producedPaths: [],
         });
         try {
           await this.host.cards.open(action.chatId, turnTitle(prompt));
@@ -741,6 +803,40 @@ export class StreamingCardController {
         if (state !== undefined) {
           state.collapsed = !state.collapsed;
           this.syncCard(action.chatId);
+        }
+        return;
+      }
+      case 'send-produced': {
+        // A produced-file chip: send the file to the chat via the outbound
+        // transport (image extension -> image message, otherwise file). This
+        // does NOT mutate card state — the card stays terminal. Best-effort;
+        // an unreadable file fails loud to the user. `path` is cwd-relative.
+        const path = action.value.path;
+        if (typeof path !== 'string' || path === '') {
+          this.host.logger.warn(`send-produced ${action.chatId}: missing path`);
+          return;
+        }
+        const filePath = join(
+          this.host.sessionMap.cwdFor(action.chatId) ?? this.host.defaultCwd,
+          path,
+        );
+        try {
+          const bytes = new Uint8Array(await readFile(filePath));
+          const name = basename(filePath);
+          if (isImagePath(path)) {
+            await this.host.transport.sendImage(action.chatId, name, bytes);
+            this.host.logger.debug(`send-produced ${action.chatId}: sent image ${path}`);
+          } else {
+            await this.host.transport.sendFile(action.chatId, name, bytes);
+            this.host.logger.debug(`send-produced ${action.chatId}: sent file ${path}`);
+          }
+        } catch (error: unknown) {
+          const msg = error instanceof Error ? error.message : String(error);
+          this.host.logger.warn(`send-produced ${action.chatId} ${path}: failed (${msg})`);
+          await this.host.transport.sendText(
+            action.chatId,
+            `⚠️ Could not send the produced file \`${path}\` (${msg}).`,
+          );
         }
         return;
       }

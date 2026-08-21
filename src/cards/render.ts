@@ -12,6 +12,7 @@
  * @module @dsh-feishu/dsh-feishu/cards/render
  */
 
+import { basename } from 'node:path';
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import type { CardElement, CardJson } from '../feishu/types.js';
 import type { ProjectInfo } from '../projects.js';
@@ -68,6 +69,9 @@ export interface CardSnapshot {
   readonly collapsed?: boolean;
   /** The user pressed Stop; show an in-progress Stopping state. */
   readonly stopRequested?: boolean;
+  /** Paths (relative to cwd) of files produced this turn — rendered as
+   *  clickable `📎 Produced` chips on the terminal card. */
+  readonly producedPaths?: readonly string[];
   readonly status: CardStatus;
 }
 
@@ -484,6 +488,26 @@ export function buildCard(snapshot: CardSnapshot): CardJson {
             : '✅ Done';
       elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: terminalNote }] });
     }
+  }
+  // Turn-produced files: render a `📎 Produced` chip row on the TERMINAL card
+  // (done/stopped/error — after the content, once the turn has settled). Each
+  // chip is a button that sends the file to the chat (send-produced action).
+  const produced = snapshot.producedPaths ?? [];
+  if (snapshot.status !== 'working' && produced.length > 0) {
+    elements.push({ tag: 'hr' });
+    elements.push({
+      tag: 'markdown',
+      content: '**📎 Produced**',
+    });
+    elements.push({
+      tag: 'action',
+      actions: produced.map((path) => ({
+        tag: 'button',
+        text: { tag: 'plain_text', content: basename(path) },
+        type: 'primary',
+        value: { kind: 'send-produced', path },
+      })),
+    });
   }
   // Two button rows: row 1 = state actions (Stop / Copy·Retry·Panel), row 2
   // = the row view toggle — one row of 4 wrapped awkwardly on mobile.
