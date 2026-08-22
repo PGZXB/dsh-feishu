@@ -425,6 +425,16 @@ dsh `@latest`), and the two tracks are verified separately:
 - the `Release compat (npm latest vs dsh@latest)` workflow lifts the repo
   to dsh `@latest` — the combination the next release must ship against.
 
+The two adapted-for-DSH versions (the `@next` for `main`, the `@latest` for
+the npm release) are recorded declaratively in `dsh-version.json` at the repo
+root (`dsh.stable` = A, `dsh.next` = B). It is the single source of truth:
+the README Note is regenerated from it (`node scripts/render-version-note.mjs`)
+and `pnpm run check` (`checkVersionTrack()`) fails if the README Notes drift
+from it. The `dsh-version-track` skill (`.dsh/skills/dsh-version-track/`)
+diagnoses the canary / release-compat runs and adapts the code on a red run or
+refreshes a label on a green one, landing as a worktree PR (merge and npm
+publish stay human-gated).
+
 ### Releasing
 
 ```sh

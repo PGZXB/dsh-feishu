@@ -1,0 +1,15 @@
+{
+  "schema": "dsh-feishu-version-track/v1",
+  "dsh": {
+    "stable": "0.1.0-rc.7",
+    "next": "0.1.0-rc.8"
+  },
+  "dshFeishu": {
+    "npmLatest": "0.2.1"
+  },
+  "lastAdapted": {
+    "track": null,
+    "by": null,
+    "at": null
+  }
+}
