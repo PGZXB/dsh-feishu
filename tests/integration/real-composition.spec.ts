@@ -1631,24 +1631,34 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
       const chatId = `oc_model_${Date.now()}`;
       sendMessage(chatId, '/model');
       // Bare /model opens the picker card with the real deepseek catalog
-      // (loading placeholder posts first, the real picker is a patch).
-      await waitFor(
-        'the model picker card',
-        () =>
-          readOutbox().some(
+      // (loading placeholder posts first, the real picker is a patch). The
+      // picker's `select_static` options are populated asynchronously from the
+      // model catalog, so wait for a card whose options are NON-EMPTY: a
+      // title-only match can read the placeholder or an unfilled picker and
+      // flake on an empty options list.
+      const pickerSelectOptions = (record: MemoryOutboxRecord): string[] => {
+        const action = record.card?.elements.find((el) => el.tag === 'action');
+        const select =
+          action && 'actions' in action
+            ? action.actions.find((a) => a.tag === 'select_static')
+            : undefined;
+        return select && 'options' in select ? select.options.map((o) => o.value) : [];
+      };
+      const findModelPicker = (): MemoryOutboxRecord | undefined =>
+        [...readOutbox()]
+          .reverse()
+          .find(
             (r) =>
               (r.kind === 'card' || r.kind === 'patch') &&
-              r.card?.header?.title.content === '🤖 Model',
-          ),
+              r.card?.header?.title.content === '🤖 Model' &&
+              pickerSelectOptions(r).length > 0,
+          );
+      await waitFor(
+        'the model picker card with a filled catalog',
+        () => findModelPicker() !== undefined,
         60_000,
       );
-      const pickerRecord = [...readOutbox()]
-        .reverse()
-        .find(
-          (r) =>
-            (r.kind === 'card' || r.kind === 'patch') &&
-            r.card?.header?.title.content === '🤖 Model',
-        );
+      const pickerRecord = findModelPicker();
       const pickerAction = pickerRecord?.card?.elements.find((el) => el.tag === 'action');
       const pickerSelect =
         pickerAction && 'actions' in pickerAction
