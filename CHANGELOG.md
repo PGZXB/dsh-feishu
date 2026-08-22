@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`dsh-version-track` infra: a structured A/B source of truth + a
+  diagnosis/adaptation skill.** `dsh-version.json` (repo root) records the
+  dsh versions the repo tracks — `dsh.stable` (A) = the dsh `@latest` the
+  stable release tracks, `dsh.next` (B) = the dsh `@next` `main` tracks —
+  plus `dshFeishu.npmLatest` and `lastAdapted` provenance. The README Notes
+  are regenerated from it (`scripts/render-version-note.mjs`) and `pnpm run
+  check` (`checkVersionTrack()`) fails if they drift. The `dsh-version-track`
+  skill (`.dsh/skills/dsh-version-track/`) diagnoses the canary /
+  release-compat runs, adapts the code on a red run or refreshes a label on a
+  green one, and lands as a worktree PR (merge and npm publish stay
+  human-gated). See `docs/development.md` → "Version tracks".
+
 ### Changed
 
 - **More E2E smoke scenarios for the real-client suite.** The E2E suite

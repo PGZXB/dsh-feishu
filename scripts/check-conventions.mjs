@@ -18,6 +18,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { relative, join } from 'node:path';
+import { checkReadmeSync, loadTrack } from './version-track-lib.mjs';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 let failures = 0;
@@ -184,6 +185,19 @@ function checkMinimumReleaseAge() {
   }
 }
 
+function checkVersionTrack() {
+  const track = loadTrack(ROOT);
+  if (track.error) {
+    fail(track.error);
+    return;
+  }
+  const errors = checkReadmeSync(ROOT, track);
+  for (const error of errors) fail(error);
+  if (errors.length === 0) {
+    pass(`dsh-version.json tracks dsh @latest=${track.stable} / @next=${track.next} and the README Notes match`);
+  }
+}
+
 const args = process.argv.slice(2);
 const commitFlag = args.find((a) => a.startsWith('--commits='));
 const commitCount = commitFlag ? Number(commitFlag.split('=')[1]) : 5;
@@ -193,6 +207,7 @@ checkNoMirrorLeaks();
 checkDocPairs();
 checkCommits(commitCount);
 checkMinimumReleaseAge();
+checkVersionTrack();
 checkMainTreeClean();
 
 if (failures > 0) {
