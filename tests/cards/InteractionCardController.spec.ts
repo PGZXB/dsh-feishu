@@ -131,6 +131,8 @@ describe('InteractionCardController', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     h.controller.handleCardAction(action('approval', { id: 'approval-1', decision: 'reject' }));
     await expect(pending).resolves.toBe('rejected');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.transport.updatedCards).toHaveLength(1);
     const pending2 = h.controller.handleApprovalRequest({
       agent: h.agent,
       toolName: 'bash',

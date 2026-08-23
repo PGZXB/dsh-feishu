@@ -130,11 +130,12 @@ export class InteractionCardController {
         setTimeout(() => {
           void this.host.transport
             .updateCard(messageId, buildApprovalDecidedCard(settled))
+            .then(() => this.host.syncCard(chatId))
             .catch((error: unknown) => {
               this.host.logger.warn(`approval card settle update failed: ${String(error)}`);
+              this.host.syncCard(chatId);
             });
         }, 0);
-        this.host.syncCard(chatId);
         resolve(settled);
       });
       if (request.signal !== undefined) {
