@@ -7,6 +7,8 @@
  * without any network.
  */
 
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import type { Context } from '@deepseek-ai/cordis';
 import type { CommandExecution, CommandId, CommandRuntime } from '@deepseek-ai/dsh-commands';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -45,7 +47,13 @@ class FakeTransport implements FeishuTransport {
     this.started = true;
   }
   async stop(): Promise<void> {}
-  onMessage(_handler: (message: FeishuMessage) => void): void {}
+  private messageHandler: ((message: FeishuMessage) => void) | undefined;
+  onMessage(handler: (message: FeishuMessage) => void): void {
+    this.messageHandler = handler;
+  }
+  emitMessage(message: FeishuMessage): void {
+    this.messageHandler?.(message);
+  }
   onCardAction(_handler: (action: CardAction) => void): void {}
   getBotOpenId(): string | undefined {
     return undefined;
@@ -87,6 +95,8 @@ function makeFakeContext(
   options: {
     withCommands?: boolean;
     credentials?: { resolve: () => Promise<unknown>; set: () => unknown };
+    agents?: unknown;
+    workspaceRegistry?: unknown;
   } = {},
 ): {
   ctx: Context;
@@ -111,6 +121,8 @@ function makeFakeContext(
   const get = (service: string): unknown => {
     if (service === 'commands' && options.withCommands !== false) return commands;
     if (service === 'credentials') return options.credentials;
+    if (service === 'agents') return options.agents;
+    if (service === 'workspaceRegistry') return options.workspaceRegistry;
     return undefined;
   };
   const on = vi.fn(() => () => {});
@@ -244,6 +256,7 @@ describe('apply', () => {
   afterEach(() => {
     delete process.env.FEISHU_APP_ID;
     delete process.env.FEISHU_APP_SECRET;
+    delete process.env.DSH_HOME;
   });
 
   it('registers a console log exporter on boot', () => {
@@ -293,6 +306,54 @@ describe('apply', () => {
     await Promise.resolve();
     expect(set).not.toHaveBeenCalled();
     delete process.env.DEEPSEEK_API_KEY;
+  });
+
+  it('attaches a newly created session to the workspace owning its cwd', async () => {
+    process.env.FEISHU_APP_ID = 'env_app';
+    process.env.FEISHU_APP_SECRET = 'env_secret';
+    const attachSession = vi.fn(async () => {});
+    const workspaceCreate = vi.fn(async () => ({ attachSession }));
+    const followup = vi.fn();
+    const create = vi.fn(async ({ sessionId }: { sessionId: string }) => ({
+      agent: { id: sessionId, followup },
+    }));
+    const agents = {
+      get: () => undefined,
+      resume: vi.fn(async () => {
+        throw new Error('not found');
+      }),
+      create,
+    };
+    const { ctx } = makeFakeContext({
+      agents,
+      workspaceRegistry: {
+        create: workspaceCreate,
+        archivedSessionIds: [],
+        archiveSession: vi.fn(),
+      },
+    });
+    // The surface persists its session map under `$DSH_HOME/feishu`; point it
+    // at a scratch dir so the test never touches the real `~/.dsh`.
+    process.env.DSH_HOME = mkdtempSync(`${tmpdir()}/dsh-feishu-`);
+    const transport = new FakeTransport();
+    apply(ctx, { requireWorkingDir: false }, { createTransport: () => transport });
+    transport.emitMessage({
+      messageId: 'om_1',
+      chatId: 'oc_1',
+      chatType: 'p2p',
+      senderOpenId: 'ou_1',
+      text: 'hi',
+      mentions: [],
+      attachments: [],
+      createdAt: 1_700_000_000_000,
+    });
+    await vi.waitFor(() => expect(attachSession).toHaveBeenCalled());
+    // The workspace record was resolved/created for the session's cwd
+    // (process.cwd(), since the test config omits defaultCwd) under a
+    // title derived from that directory's basename.
+    expect(workspaceCreate).toHaveBeenCalledWith(process.cwd(), expect.any(String));
+    // And the freshly minted `feishu-…` session id was attached to it.
+    expect(attachSession).toHaveBeenCalledWith(expect.stringMatching(/^feishu-/));
   });
 
   it('registers the feishu-status command when the commands service exists', () => {

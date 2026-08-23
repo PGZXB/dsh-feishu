@@ -17,7 +17,7 @@
 
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import type { Context } from '@deepseek-ai/cordis';
 // Empty type imports carry the Context merges (`ctx.commands`, `ctx.agents`,
@@ -201,9 +201,13 @@ export function defaultDataDir(): string {
 type SessionTitleLike = {
   rename(session: unknown, title: string): unknown;
 };
+type WorkspaceEntityLike = {
+  attachSession(sessionId: string): Promise<unknown>;
+};
 type WorkspaceRegistryLike = {
   archiveSession(sessionId: string): Promise<unknown>;
   readonly archivedSessionIds: readonly string[];
+  create(path: string, title?: string): Promise<WorkspaceEntityLike>;
 };
 
 /**
@@ -466,6 +470,20 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
         meta: { cwd },
         ...(resolvedAgentOptions !== undefined ? { agentOptions: resolvedAgentOptions } : {}),
       });
+      // Attach the new session to the workspace owning `cwd` (dsh web parity),
+      // creating the workspace record when the directory is not yet
+      // registered. Best-effort: a failure here must never block the turn.
+      const registry = ctx.get('workspaceRegistry');
+      if (registry !== undefined) {
+        try {
+          const workspace = await (registry as WorkspaceRegistryLike).create(cwd, basename(cwd));
+          await workspace.attachSession(sessionId);
+        } catch (error) {
+          logger.warn(
+            `[feishu] attach session ${String(sessionId)} to workspace failed: ${String(error)}`,
+          );
+        }
+      }
       return agent;
     },
   };
