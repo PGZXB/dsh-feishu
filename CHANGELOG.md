@@ -23,6 +23,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **dsh family bumped to `0.1.1-rc.2`.** `@deepseek-ai/dsh` is pinned exactly in
+  devDependencies; the rest of the `@deepseek-ai/*` surface moves to
+  `^0.1.1-rc.2` (dev, peer, AND runtime deps), and the new harness peer
+  packages `@deepseek-ai/dsh-invariants`, `dsh-scope`, and `dsh-timeout` are
+  declared. This resolves the `sessionPersistence.prepare` undefined break that
+  was reddening the Canary (main vs dsh@next): `@next` is now `0.1.1-rc.2`,
+  which both the `main` track (B, adapted) and the stable release track (A, via
+  the green release-compat run) are verified against. `dsh-version.json` A/B
+  and the README Notes are refreshed to `0.1.1-rc.2`, and the version-track
+  README-sync helper now handles wrapped (multi-line) blockquote Notes.
+
 - **More E2E smoke scenarios for the real-client suite.** The E2E suite
   now covers the local-resolving surface commands (no LLM round-trip), each
   in its own backend group that is disbanded afterwards: `/status`,

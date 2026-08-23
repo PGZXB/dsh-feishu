@@ -59,6 +59,23 @@ describe('setNoteVersions', () => {
     expect(out).toContain('# title');
     expect(out).toContain('plain line');
   });
+
+  it('handles the wrapped blockquote form (tag and version on separate lines)', () => {
+    const wrapped = [
+      '> **Note:** still pre-release (`0.1.0-rc.x`).',
+      '> - the `main` branch tracks **dsh `@next`** — currently',
+      '>   **`0.1.0-rc.8`**;',
+      '> - npm `@latest` tracks **dsh `@latest`** — currently',
+      '>   **`0.1.0-rc.7`**.',
+    ].join('\n');
+    const out = setNoteVersions(wrapped, '0.1.1-rc.2', '0.1.1-rc.2');
+    // Both wrapped versions move to the new value; the unrelated pre-release
+    // caveat token (before any tag) and the tags themselves are untouched.
+    expect(out).toContain('**`0.1.1-rc.2`**');
+    expect(out).toContain('> **Note:** still pre-release (`0.1.0-rc.x`).');
+    expect(out).toContain('**dsh `@next`**');
+    expect(out).toContain('**dsh `@latest`**');
+  });
 });
 
 describe('loadTrack', () => {

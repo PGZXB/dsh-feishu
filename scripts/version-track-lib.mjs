@@ -43,14 +43,30 @@ const VERSION_TOKEN_RE = /`(\d[^`]*?)`/;
  * @returns the text with the two Note version tokens updated.
  */
 export function setNoteVersions(text, stable, next) {
-  return text
-    .split('\n')
-    .map((line) => {
-      if (line.includes('dsh `@next`')) return line.replace(VERSION_TOKEN_RE, `\`${next}\``);
-      if (line.includes('dsh `@latest`')) return line.replace(VERSION_TOKEN_RE, `\`${stable}\``);
-      return line;
-    })
-    .join('\n');
+  const lines = text.split('\n');
+  // The tag and its version may sit on the SAME line (zh, or the un-wrapped
+  // single-line form) or split across a wrapped blockquote line (en). Walk
+  // the lines: when a `@next` / `@latest` marker appears, remember the tag
+  // and replace the FIRST digit-prefixed version token that follows with the
+  // corresponding version. `replaced` guards so only that one token moves.
+  let currentTag = null;
+  let replaced = false;
+  const out = lines.map((line) => {
+    if (line.includes('dsh `@next`')) {
+      currentTag = 'next';
+      replaced = false;
+    } else if (line.includes('dsh `@latest`')) {
+      currentTag = 'stable';
+      replaced = false;
+    }
+    if (currentTag !== null && !replaced && VERSION_TOKEN_RE.test(line)) {
+      const version = currentTag === 'next' ? next : stable;
+      replaced = true;
+      return line.replace(VERSION_TOKEN_RE, `\`${version}\``);
+    }
+    return line;
+  });
+  return out.join('\n');
 }
 
 /**
