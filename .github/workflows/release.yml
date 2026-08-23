@@ -43,10 +43,31 @@ jobs:
         run: pnpm run typecheck
       - name: Build
         run: pnpm run build
-      # The integration suite needs the same prepared profiles as CI.
-      - name: Prepare integration-test profile
+      # The integration suite needs the same prepared profiles as CI — one
+      # dsh home per suite (each suite writes its own session-map state).
+      - name: Prepare integration-test profile (attachments)
         env:
-          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-attachments
+        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
+      - name: Prepare integration-test profile (rich-text)
+        env:
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-rich-text
+        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
+      - name: Prepare integration-test profile (wait-instruction)
+        env:
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-wait-instruction
+        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
+      - name: Prepare integration-test profile (real-composition)
+        env:
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-real
+        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
+      - name: Prepare integration-test profile (outbound)
+        env:
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-outbound
+        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
+      - name: Prepare integration-test profile (turn-produced-files)
+        env:
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-turn-produced-files
         run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
       - name: Prepare scenario integration-test profile
         env:
