@@ -673,3 +673,81 @@ chip 是卡片动作（`value.kind: 'send-produced'`、`value.path`）；它不�
 - `@deepseek-ai/dsh-tool-fs` write/edit 工具：`presentationMeta` 输出
   `{diffs}`（新建 create 为 `[]`），`presentCall` 的 `locations`
   `[{path: file_path}]` — 两个宿主信号来源。
+
+## Part: session-stats-context
+
+> 终态流式卡上，一行紧凑的统计显示本次会话的轮/步/工具/token 用量（仅精确
+> 字段）加一个上下文占用百分比，镜像 DSH web 的 `StatsLine`/context meter
+> 作为路径级一致的表面。不含 timing（TTFT/tok/s/时长）——宿主看不到 web 的
+> `node.timing`；只统计可精确计数的字段。
+
+### 预期行为
+
+**为什么只做精确字段、不做 timing** — DSH web `StatsLine`
+（`turn-metrics.ts`、`StatsLine.tsx`）从每个 node 的 `node.timing`
+（`stepStartTime`/`firstTokenTime`/`completedTime`）和一个 `sessionStats`
+全日志投影推导 TTFT/tok/s/时长——都是浏览器侧。宿主插件只看到会话事件流，
+事件带 `usage: TokenUsage`（input/output/cacheRead/cacheWrite）但**不带
+timing**。所以本表面复刻可精确计数的字段（轮/步/工具/token/缓存命中）与
+上下文占用（已用 token 对比模型 `contextWindow`），并省略任何依赖 timing 的
+数值（时长、TTFT、tok/s——那需要从事件时间戳估算）。
+
+**触发** — 一个有会话活动的 chat 的终态流式卡。该行渲染在卡片 FINAL 状态
+（done / stopped / error），与其他终态行（如 `📎 Produced` chips）一起。
+working 时不显示。
+
+**状态** — `ChatCardState` 之外，controller 维护一个会话级累计器（NOT 每
+turn 重置——整会话累计，镜像 web 的 whole-log `sessionStats`）：
+
+- `turnCount` — 已记录轮数（`turn/start` 自增）。
+- `stepCount` — assistant 步数（`assistant/message` 自增）。
+- `toolCount` — 工具调用数（`tool/call` 自增）。
+- `tokenUsage` — 累计 `TokenUsage`（`assistant/message.usage` 跨步求和，
+  无 usage 不计）。
+- `contextWindow` — chat 当前模型的 `contextWindow`（经 `ctx.llm` 解析），
+  解析前 `undefined`。
+
+`CardSnapshot`/单一渲染路径（`syncCard`）携带它。
+
+**卡/面板形态** — 终态卡上，内容之后、与任何 `📎 Produced` chips 一起，渲染
+一行由 `|` 分隔的组（镜像 web `StatsLine` 组，但只取精确字段）：
+
+1. counts — `N turns · M steps`（无活动时省略）。
+2. tokens — `input A · output B`（`formatTokens`：517 / 12.2K / 517K / 1.2M），
+   有计费输入时加 `cache X%`。
+3. context occupancy — `context P%`（`usedTokens` 与 `contextWindow` 均已知
+   时；四舍五入整数，上限 100）。
+
+工具调用数在 counts 组用括号折叠（`M steps · T tools`），仅当有工具运行时。
+**永不显示 timing 组。**
+
+**失败模式**：
+- 尚无会话活动：不渲染统计行（卡片同今日）。
+- `assistant/message` 无 `usage`：不计 token（绝不给全部步骤都未计费的会话
+  渲染零 token 组）。
+- `contextWindow` 未知（模型解析缺失/失败）：省略 context 组（只显示
+  counts/tokens 组）。
+- chat 未固定 cwd：不受影响（这是只读卡行，不发送、不解路径）。
+
+**验收清单**：
+- [ ] `assistant/message.usage` 累加进 token 总量；无 usage 的步不计（单测）。
+- [ ] `turn/start` / `assistant/message` / `tool/call` 正确自增计数；计数是
+      会话级（不随 `turn/start` 重置）（单测）。
+- [ ] 终态卡只对精确字段渲染 counts + tokens（+ cache %）组；绝不显示
+      timing 组（单测 + 集成）。
+- [ ] `contextWindow` 与 usedTokens 已知时渲染 context 组，否则省略（单测）。
+- [ ] 无活动 → 无统计行（单测）。
+- [ ] 统计行仅终态（working 不显示），且不改卡片状态（单测）。
+
+### Reference
+
+- DSH web `packages/client/ui-conversation/src/client/chat/turn-metrics.ts`
+  与 `StatsLine.tsx`：`deriveTurnMetrics`/`deriveStats` 读 `node.timing`
+  （TTFT/decode）与 `sessionStats`/`tokenUsage` 投影——浏览器独有的 timing+
+  token 来源。`formatTokens`/`formatDuration`/`cacheHitPercent`/
+  `contextOccupancy` 给出本 part 为 count/token/context 组镜像的精确显示
+  规则（timing 组特意排除）。
+- 已安装 dsh 类型：`dsh-session` `SessionEventMap['assistant/message']` 带
+  `usage?: TokenUsage`；`dsh-llm` `TokenUsage`
+  （`inputTokens`/`outputTokens`/`cacheReadTokens`/`cacheWriteTokens`）与
+  `LlmResolvedModelInfo.context.contextWindow`——宿主可见数据。
