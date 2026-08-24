@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Session stats line + context occupancy on the terminal streaming card.**
+  After a turn ends, the card renders a compact `|`-separated line of exact
+  counted session figures — turns · steps · tools, input/output tokens +
+  cache-hit % — plus a context-occupancy percent (used tokens vs the model's
+  context window). Mirror of the DSH web `StatsLine` for the exact-counted
+  fields (no timing: the host cannot see the web's `node.timing`, so duration/
+  TTFT/tok/s are intentionally omitted). The controller folds
+  `turn/start`/`assistant/message`/`tool/call` events into a session-scoped
+  accumulator (survives per-turn card re-creation) and renders the line only
+  on the terminal card.
+
 - **`dsh-version-track` infra: a structured A/B source of truth + a
   diagnosis/adaptation skill.** `dsh-version.json` (repo root) records the
   dsh versions the repo tracks — `dsh.stable` (A) = the dsh `@latest` the

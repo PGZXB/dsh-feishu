@@ -211,6 +211,13 @@ export interface LlmModelView {
 export interface LlmService {
   listProviders(): readonly { readonly id: string; readonly name: string }[];
   listModels(provider: string): Promise<readonly LlmModelView[]>;
+  /** Optional model-context resolution (dsh `resolveModelInfo`), used for the
+   *  stats line's context-occupancy group. Absent → the group is omitted. */
+  resolveModelInfo?(
+    provider: string,
+    model: string,
+    signal?: AbortSignal,
+  ): Promise<{ readonly context?: { readonly contextWindow?: number } }>;
 }
 
 /** The approval settlement union (structural subset of `ApprovalOutcome`). */
@@ -553,6 +560,8 @@ export class Bridge {
       defaultCwd: this.options.defaultCwd,
       reactions: this.options.reactions,
       resolveAgent: (chatId, sessionId, cwd) => this.resolveAgent(chatId, sessionId, cwd),
+      resolveContextWindow: (chatId, sessionId, cwd) =>
+        this.resolveContextWindow(chatId, sessionId, cwd),
       textMentionFor: (chatId) => this.textMentionFor(chatId),
     };
   }
@@ -1199,6 +1208,37 @@ export class Bridge {
     const selection = this.options.agentDefaultModel?.currentSelection();
     if (selection === undefined) return undefined;
     return `${selection.provider}/${selection.model}`;
+  }
+
+  /** Best-effort model context window (tokens) for a chat's current model.
+   *  Resolves the agent's `provider/model`, queries the llm service's
+   *  optional `resolveModelInfo`, and returns `context.contextWindow`.
+   *  Returns `undefined` when the model is unknown, the llm service does not
+   *  expose `resolveModelInfo`, or resolution fails — the stats line omits the
+   *  context group in every such case. */
+  private async resolveContextWindow(
+    chatId: string,
+    _sessionId: string,
+    _cwd: string,
+  ): Promise<number | undefined> {
+    const llm = this.options.llm;
+    const selection = this.currentModelSelection(chatId);
+    if (llm === undefined || selection === undefined || llm.resolveModelInfo === undefined) {
+      return undefined;
+    }
+    const slash = selection.indexOf('/');
+    if (slash <= 0 || slash === selection.length - 1) return undefined;
+    const provider = selection.slice(0, slash);
+    const model = selection.slice(slash + 1);
+    try {
+      const info = await llm.resolveModelInfo(provider, model);
+      return info.context?.contextWindow;
+    } catch (error: unknown) {
+      this.options.logger.warn(
+        `context-window ${chatId}: resolveModelInfo ${selection} failed (${String(error)})`,
+      );
+      return undefined;
+    }
   }
 
   /**

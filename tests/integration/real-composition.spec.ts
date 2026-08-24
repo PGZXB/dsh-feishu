@@ -305,6 +305,18 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
       const patches = records.filter((r) => r.kind === 'patch');
       const lastCard = patches.at(-1)?.card;
       expect(JSON.stringify(lastCard?.elements)).toContain('Hello from mock LLM');
+      // The terminal card also carries the session-stats line (exact counted
+      // fields): at least one turn + one step, rendered as a markdown row.
+      expect(
+        lastCard?.elements.some(
+          (el) => el.tag === 'markdown' && 'content' in el && String(el.content).includes('turns'),
+        ),
+      ).toBe(true);
+      expect(
+        lastCard?.elements.some(
+          (el) => el.tag === 'markdown' && 'content' in el && String(el.content).includes('steps'),
+        ),
+      ).toBe(true);
       expect(server.completionRequests()).toBeGreaterThanOrEqual(1);
     } catch (error) {
       throw new Error(
@@ -2209,7 +2221,12 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
       const markdowns = (finalCard?.elements ?? []).filter(
         (el): el is Extract<typeof el, { tag: 'markdown' }> => el.tag === 'markdown',
       );
-      const joined = markdowns.map((el) => el.content).join('\n');
+      // Exclude the session-stats line (it follows the output on the terminal
+      // card); the tail assertion is about the streamed output, not the stats.
+      const joined = markdowns
+        .map((el) => el.content)
+        .filter((content) => !content.includes('turns'))
+        .join('\n');
       expect(joined).toContain('truncated');
       // The newest tail survives (the marker prepends; the tail stays last).
       expect(joined.endsWith('xxx')).toBe(true);

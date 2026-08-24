@@ -72,6 +72,20 @@ export interface CardSnapshot {
   /** Paths (relative to cwd) of files produced this turn — rendered as
    *  clickable `📎 Produced` chips on the terminal card. */
   readonly producedPaths?: readonly string[];
+  /** Session-scoped cumulative usage for the terminal stats line (exact
+   *  counted fields only — no timing). Undefined means no stats line. */
+  readonly sessionStats?: {
+    readonly turnCount: number;
+    readonly stepCount: number;
+    readonly toolCount: number;
+    readonly tokenUsage: {
+      readonly inputTokens: number;
+      readonly outputTokens: number;
+      readonly cacheReadTokens: number;
+      readonly cacheWriteTokens: number;
+    };
+    readonly contextWindow: number | undefined;
+  };
   readonly status: CardStatus;
 }
 
@@ -443,6 +457,50 @@ function rowElement(row: TurnRow): CardElement {
   };
 }
 
+/** Compact token count: 517 / 12.2K / 517K / 1.2M (one decimal under three
+ *  digits), mirroring the web `StatsLine.formatTokens`. */
+function formatTokenCount(n: number): string {
+  const scaled = (v: number): string =>
+    v >= 100 ? String(Math.round(v)) : String(Math.round(v * 10) / 10);
+  if (n < 1_000) return String(n);
+  if (n < 1_000_000) return `${scaled(n / 1_000)}K`;
+  return `${scaled(n / 1_000_000)}M`;
+}
+
+/**
+ * Build the terminal stats line for a session-scoped stats snapshot. Returns
+ * `|`-separated groups of exact counted fields only (no timing): counts,
+ * tokens + cache, and context occupancy. Empty string when there is no
+ * activity or no stats provided.
+ *
+ * Gated on actual token activity for the token group (a session whose steps
+ * all settled without billing shows its counts without a zero-token group),
+ * and omits the context group when either value is unknown. Counts render
+ * only when the session has recorded turns/steps.
+ */
+export function statsGrouperText(stats: CardSnapshot['sessionStats']): string {
+  if (stats === undefined) return '';
+  const groups: string[] = [];
+  if (stats.stepCount > 0) {
+    const counts = [`${stats.turnCount} turns`, `${stats.stepCount} steps`];
+    if (stats.toolCount > 0) counts.push(`${stats.toolCount} tools`);
+    groups.push(counts.join(' · '));
+  }
+  const usage = stats.tokenUsage;
+  const billedInput = usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
+  if (billedInput > 0 || usage.outputTokens > 0) {
+    const cacheHit = billedInput > 0 ? Math.round((usage.cacheReadTokens / billedInput) * 100) : 0;
+    const tokenGroup = `input ${formatTokenCount(billedInput)} · output ${formatTokenCount(usage.outputTokens)}`;
+    groups.push(cacheHit > 0 ? `cache ${cacheHit}% · ${tokenGroup}` : tokenGroup);
+  }
+  if (stats.contextWindow !== undefined && billedInput + usage.outputTokens > 0) {
+    const usedTokens = billedInput + usage.outputTokens;
+    const percent = Math.min(100, Math.round((usedTokens / stats.contextWindow) * 100));
+    groups.push(`context ${percent}%`);
+  }
+  return groups.join(' | ');
+}
+
 /**
  * Build the card JSON for one snapshot. Element order: think/tool rows
  * (chronological, all of them) → complete output at the bottom (markdown
@@ -508,6 +566,15 @@ export function buildCard(snapshot: CardSnapshot): CardJson {
         value: { kind: 'send-produced', path },
       })),
     });
+  }
+  // Session stats line: on the TERMINAL card, a compact `|`-separated line of
+  // exact counted fields (counts + tokens + cache + context occupancy). No
+  // timing group — the host cannot see the web's `node.timing`. Rendered only
+  // when there is activity; omitted while working / with no stats.
+  const statsText = statsGrouperText(snapshot.sessionStats);
+  if (snapshot.status !== 'working' && statsText !== '') {
+    elements.push({ tag: 'hr' });
+    elements.push({ tag: 'markdown', content: statsText });
   }
   // Two button rows: row 1 = state actions (Stop / Copy·Retry·Panel), row 2
   // = the row view toggle — one row of 4 wrapped awkwardly on mobile.

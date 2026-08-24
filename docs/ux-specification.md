@@ -1320,3 +1320,93 @@ accepts an absolute path as-is and only joins a relative one onto the pinned
 - Surface `src/cards/StreamingCardController.ts` (ChatCardState, `snapshot`,
   `syncCard`) — the single authoritative state + render path this feature
   extends; the `#29` outbound `sendImage`/`sendFile` transport is reused.
+
+## Part: session-stats-context
+
+> On the terminal streaming card, a compact stats line shows the session's
+> cumulative turn/step/tool/token usage (exact fields only) plus a context
+> occupancy percentage, mirroring the DSH web `StatsLine`/context meter as a
+> path-level parity surface. No timing/throughput (TTFT/tok/s/duration) — the
+> host cannot see the web's `node.timing`; only exact counted fields.
+
+### Intended behavior
+
+**Why exact fields, not timing** — the DSH web `StatsLine` (`turn-metrics.ts`,
+`StatsLine.tsx`) derives TTFT/tok/s/duration from per-node `node.timing`
+(`stepStartTime`/`firstTokenTime`/`completedTime`) and a `sessionStats`
+whole-log projection — both browser-side. The host plugin sees only the
+session event stream, and the events carry `usage: TokenUsage` (input/output/
+cacheRead/cacheWrite) but NOT timing. So the surface reproduces the counted
+fields exactly (turns/steps/tool calls/tokens/cache-hit) and the context
+occupancy (used tokens vs the model's `contextWindow`), and omits any
+timing-derived figure (duration, TTFT, tok/s) that would require estimating
+from event timestamps.
+
+**Trigger** — a terminal streaming card for a chat that has any session
+activity. The line renders on the card's FINAL state (done / stopped / error),
+bundled with the other terminal rows (e.g. `📎 Produced` chips). It is NOT
+shown while working.
+
+**State** — `ChatCardState` gains a session-scoped accumulator (NOT reset per
+turn — it is cumulative for the whole session, mirroring the web's whole-log
+`sessionStats`):
+
+- `turnCount` — number of recorded turns (`turn/start` increments).
+- `stepCount` — number of assistant steps (`assistant/message` increments).
+- `toolCount` — number of tool calls (`tool/call` increments).
+- `tokenUsage` — accumulated `TokenUsage` (`assistant/message.usage` summed
+  across steps; absent usage contributes nothing).
+- `contextWindow` — the chat's current model `contextWindow` (from `ctx.llm`
+  resolution) when known; `undefined` until resolved.
+
+`CardSnapshot`/the one render path (`syncCard`) carry it.
+
+**Card/panel shape** — on the terminal card, after the content and alongside
+any `📎 Produced` chips, render a single line of `|`-separated groups
+(mirroring the web `StatsLine` groups, but only the exact fields):
+
+1. counts — `N turns · M steps` (omitted when no activity).
+2. tokens — `input A · output B` (`formatTokens`: 517 / 12.2K / 517K / 1.2M),
+   plus `cache X%` when there is billed input.
+3. context occupancy — `context P%` when both `usedTokens` and `contextWindow`
+   are known (rounded integer, upper-clamped at 100).
+
+Tool-call count is folded into the counts group in parentheses only when a
+tool ran (`M steps · T tools`). No timing group is ever shown.
+
+**Failure modes**:
+- No session activity yet: no stats line renders (the card looks as today).
+- `assistant/message` without `usage`: contributes no tokens (never a zero
+  token group on a session whose steps all failed to bill).
+- `contextWindow` unknown (model resolution absent/failed): the context
+  occupancy group is omitted (only the counts/tokens groups show).
+- Chat with no pinned cwd: unaffected (this is a read-only card line, no
+  sending, no path resolution).
+
+**Acceptance checklist**:
+- [ ] `assistant/message.usage` accumulates into the token totals; a step
+      without usage contributes nothing (unit).
+- [ ] `turn/start` / `assistant/message` / `tool/call` increment the counts
+      correctly; counts are SESSION-scoped (not reset at `turn/start`) (unit).
+- [ ] The terminal card renders the counts + tokens (+ cache %) groups only
+      for exact fields; never a timing group (unit + integration).
+- [ ] Context occupancy group renders when `contextWindow` and usedTokens are
+      known, and is omitted otherwise (unit).
+- [ ] No activity → no stats line (unit).
+- [ ] The stats line is terminal-only (not while working) and does not mutate
+      card state (unit).
+
+### Reference
+
+- DSH web `packages/client/ui-conversation/src/client/chat/turn-metrics.ts`
+  and `StatsLine.tsx`: `deriveTurnMetrics`/`deriveStats` read `node.timing`
+  (TTFT/decode) and `sessionStats`/`tokenUsage` projections — the browser-only
+  source of timing+token figures. `formatTokens` / `formatDuration` /
+  `cacheHitPercent` / `contextOccupancy` give the exact display rules this part
+  mirrors for the count/token/context groups (timing groups deliberately
+  excluded).
+- Installed dsh types: `dsh-session` `SessionEventMap['assistant/message']`
+  carries `usage?: TokenUsage`; `dsh-llm` `TokenUsage`
+  (`inputTokens`/`outputTokens`/`cacheReadTokens`/`cacheWriteTokens`) and
+  `LlmResolvedModelInfo.context.contextWindow` — the host-visible data.
+

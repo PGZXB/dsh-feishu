@@ -68,6 +68,41 @@ function filePathFromArguments(args: string | undefined): string | undefined {
   }
 }
 
+/** A fresh zeroed session stats accumulator (session-scoped, not per-turn). */
+function emptySessionStats(): SessionStatsView {
+  return {
+    turnCount: 0,
+    stepCount: 0,
+    toolCount: 0,
+    tokenUsage: {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    },
+    contextWindow: undefined,
+  };
+}
+
+/** Sum one assistant step's `TokenUsage` (absent fields add nothing) into the
+ *  session accumulator. `usage` is the `assistant/message` event's optional
+ *  `usage` field, absent when the adapter reported none. */
+function accumulateTokenUsage(stats: SessionStatsView, usage: unknown): void {
+  if (typeof usage !== 'object' || usage === null) return;
+  const u = usage as {
+    inputTokens?: unknown;
+    outputTokens?: unknown;
+    cacheReadTokens?: unknown;
+    cacheWriteTokens?: unknown;
+  };
+  const num = (v: unknown): number =>
+    typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0;
+  stats.tokenUsage.inputTokens += num(u.inputTokens);
+  stats.tokenUsage.outputTokens += num(u.outputTokens);
+  stats.tokenUsage.cacheReadTokens += num(u.cacheReadTokens);
+  stats.tokenUsage.cacheWriteTokens += num(u.cacheWriteTokens);
+}
+
 /**
  * One chat's streaming-card state — the single authoritative source for the
  * card. The controller renders the card from THIS state and nothing else;
@@ -97,6 +132,26 @@ export interface ChatCardState {
    *  turn via write/edit mutations (from `tool/result` `meta.diffs`).
    *  Reset on turn start; the final card chips render from it. */
   producedPaths: string[];
+}
+
+/** Session-scoped cumulative usage folded from the event stream (exact
+ *  counted fields only — no timing, which the host cannot see). */
+export interface SessionStatsView {
+  /** Number of recorded turns (`turn/start`). */
+  turnCount: number;
+  /** Number of assistant steps (`assistant/message`). */
+  stepCount: number;
+  /** Number of tool calls (`tool/call`). */
+  toolCount: number;
+  /** Accumulated token usage summed across steps (absent usage adds nothing). */
+  tokenUsage: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+  };
+  /** The chat's current model context window (tokens), or undefined. */
+  contextWindow: number | undefined;
 }
 
 const MAX_TITLE_CHARS = 40;
@@ -174,6 +229,14 @@ export interface StreamingCardHost {
     | undefined;
   /** Resolve a live agent for a chat (live → resume → create → remint). */
   resolveAgent(chatId: string, sessionId: string, cwd: string): Promise<Agent>;
+  /** Best-effort model context window (tokens) for a chat, or undefined when
+   *  unknown/unresolvable. Lazily consulted; feeds the context-occupancy
+   *  group on the stats line. Absent → the group is always omitted. */
+  resolveContextWindow?(
+    chatId: string,
+    sessionId: string,
+    cwd: string,
+  ): Promise<number | undefined>;
   /** Proactive @-mention prefix for a chat in groups (failure notices). */
   textMentionFor(chatId: string): string;
 }
@@ -185,6 +248,11 @@ export interface StreamingCardHost {
 export class StreamingCardController {
   /** The authoritative streaming-card state per chat (the state machine). */
   private readonly cardStates = new Map<string, ChatCardState>();
+  /** Session-scoped cumulative usage per chat, folded from the event stream.
+   *  Deliberately OUTSIDE `cardStates` so it survives `cardStates.set` (a new
+   *  turn re-creates the card state but must NOT reset the cumulative usage —
+   *  it mirrors the web whole-log `sessionStats`, which is session-scoped). */
+  private readonly sessionStatsByChat = new Map<string, SessionStatsView>();
   private readonly lastPrompts = new Map<string, string>();
   private readonly lastOutputs = new Map<string, string>();
   /** Pending two-stage ack reaction per chat (message id + reaction id). */
@@ -215,10 +283,21 @@ export class StreamingCardController {
     return this.cardStates.get(chatId);
   }
 
+  /** The chat's session-scoped stats accumulator (get-or-create). */
+  private sessionStatsFor(chatId: string): SessionStatsView {
+    let stats = this.sessionStatsByChat.get(chatId);
+    if (stats === undefined) {
+      stats = emptySessionStats();
+      this.sessionStatsByChat.set(chatId, stats);
+    }
+    return stats;
+  }
+
   /** Reset a chat's card state: no live card, no copy/retry targets. Used by
    *  /clear and /resume so the resumed/new conversation starts clean. */
   resetChat(chatId: string): void {
     this.cardStates.delete(chatId);
+    this.sessionStatsByChat.delete(chatId);
     this.lastOutputs.delete(chatId);
     this.lastPrompts.delete(chatId);
     // The pending ack reaction belongs to a turn that is being discarded;
@@ -320,6 +399,7 @@ export class StreamingCardController {
       collapsed: state.collapsed,
       stopRequested: state.stopRequested,
       producedPaths: state.producedPaths,
+      sessionStats: this.sessionStatsFor(chatId),
       status: state.status,
     };
   }
@@ -426,6 +506,33 @@ export class StreamingCardController {
       }
     }
     switch (event.type) {
+      case 'turn/start': {
+        // Session-scoped turn accounting mirrors the web whole-log
+        // `sessionStats`; it is NOT reset per turn.
+        const stats = this.sessionStatsFor(chatId);
+        stats.turnCount += 1;
+        this.host.logger.debug(`streaming turn/start ${chatId}: turn ${event.data.turn}`);
+        // Best-effort: resolve the chat's model context window once per turn
+        // to feed the context-occupancy group. Non-blocking — a failure just
+        // leaves `contextWindow` undefined (the group is omitted).
+        if (this.host.resolveContextWindow !== undefined) {
+          const cwd = this.host.sessionMap.cwdFor(chatId) ?? this.host.defaultCwd;
+          void this.host
+            .resolveContextWindow(chatId, sessionId, cwd)
+            .then((window) => {
+              if (window !== undefined) {
+                stats.contextWindow = window;
+                if (state.status === 'working') this.syncCard(chatId);
+              }
+            })
+            .catch((error: unknown) => {
+              this.host.logger.warn(
+                `streaming context-window ${chatId}: resolve failed (${String(error)})`,
+              );
+            });
+        }
+        break;
+      }
       case 'assistant/chunk': {
         const chunk = event.data.chunk;
         if (chunk.type === 'text-delta') {
@@ -449,6 +556,7 @@ export class StreamingCardController {
       }
       case 'tool/call': {
         settleOpenThink(state);
+        this.sessionStatsFor(chatId).toolCount += 1;
         this.host.logger.debug(
           `streaming tool/call ${chatId}: ${event.data.name} (${event.data.callId})`,
         );
@@ -534,6 +642,9 @@ export class StreamingCardController {
       case 'assistant/message': {
         settleOpenThink(state);
         state.content = assistantText(event.data.message.content);
+        const stats = this.sessionStatsFor(chatId);
+        stats.stepCount += 1;
+        accumulateTokenUsage(stats, event.data.usage);
         this.syncCard(chatId);
         break;
       }
