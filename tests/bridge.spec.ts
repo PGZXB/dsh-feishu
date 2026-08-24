@@ -3579,6 +3579,23 @@ class FakeLlmService implements LlmService {
 }
 
 describe('/model picker', () => {
+  it('each typed /model opens a FRESH, independent card (regression: never reusing an earlier panel card)', async () => {
+    const llm = new FakeLlmService();
+    const defaults = new FakeAgentDefaultModelService();
+    const h = makeHarness({ llm, agentDefaultModel: defaults });
+    const before = h.transport.sentCards.length;
+    // First typed /model posts a NEW card.
+    await h.bridge.handleMessage(message({ text: '/model' }));
+    expect(h.transport.sentCards.length).toBe(before + 1);
+    // Second typed /model posts ANOTHER NEW card — it must NOT refresh/update
+    // the first card (typed commands are independent state machines).
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/model' }));
+    expect(h.transport.sentCards.length).toBe(before + 2);
+    // A different card-opening command also opens its own fresh card.
+    await h.bridge.handleMessage(message({ messageId: 'om_msg3', text: '/repo' }));
+    expect(h.transport.sentCards.length).toBe(before + 3);
+  });
+
   it('a bare /model opens the picker card with the model catalog', async () => {
     const llm = new FakeLlmService();
     const defaults = new FakeAgentDefaultModelService();

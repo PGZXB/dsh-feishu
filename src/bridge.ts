@@ -2286,15 +2286,12 @@ export class Bridge {
         return bridge.lastInboundAtValue;
       },
       openPanel: (chatId) => bridge.openPanel(chatId),
-      // Slash commands (e.g. /sessions) open a panel view on the LATEST
-      // panel card when one exists, else a fresh card seeded with the view.
+      // Typed slash commands open a FRESH, INDEPENDENT card seeded with the
+      // view — never pilot/update the chat's existing panel card. Each typed
+      // command is its own state machine; a later command must not touch an
+      // earlier card (the `#panel` fix).
       pushPanel: async (chatId, view) => {
-        const latest = bridge.panel.latestPanelCardId(chatId);
-        if (latest === undefined) {
-          await bridge.panel.openPanelView(chatId, view);
-        } else {
-          await bridge.panel.pushPanel(chatId, latest, view);
-        }
+        await bridge.panel.openPanelView(chatId, view);
       },
       ensureAgent: (chatId) => bridge.ensureAgent(chatId),
       resumeSession: (chatId, sessionId, cwd) => bridge.resumeSession(chatId, sessionId, cwd),
