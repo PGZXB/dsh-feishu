@@ -53,18 +53,18 @@ const HARNESS_COMMANDS: ReadonlyArray<{
 }> = [
   {
     name: 'goal',
-    description: 'Set or view the goal for a long-running task (dsh web)',
+    description: 'Set or view the goal for a long-running task',
     usage: '<text>',
     buttonLabel: '🎯 Goal',
   },
   {
     name: 'compact',
-    description: 'Compact older conversation history (dsh web)',
+    description: 'Compact older conversation history',
     buttonLabel: '🧹 Compact',
   },
   {
     name: 'feedback',
-    description: 'Send feedback (dsh web)',
+    description: 'Send feedback',
     usage: '<text>',
     buttonLabel: '💬 Feedback',
   },
@@ -260,25 +260,29 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
   });
   commands.register({
     name: 'repo',
-    description: 'List candidate project directories (from repoRoots)',
+    description:
+      'Pick a project directory (bare scans the default roots; /repo <path> scans that path)',
     usage: '[path]',
     category: 'session',
     buttonLabel: '📚 Pick project',
     handler: async (invocation) => {
-      // Direct path selection stays supported: /repo <abs-path>.
+      // /repo ALWAYS opens the picker card (the only command whose arg form
+      // does too). `/repo <path>` scans that path as the repo root; bare uses
+      // the deployment's default repoRoots. It never sets the cwd — use /cd
+      // for that (that's the distinction between the two).
       const raw = invocation.rawInput.trim();
-      if (raw.startsWith('/') || raw.startsWith('~')) {
+      let roots: readonly string[] | undefined;
+      if (raw !== '') {
         const resolved = resolveDirectory(raw);
         if (!resolved.ok) return { kind: 'error', text: resolved.error };
-        options.sessionMap.setCwd(invocation.chatId, resolved.path);
-        options.sessionMap.remint(invocation.chatId);
-        return {
-          kind: 'success',
-          text: `Working directory set to ${resolved.path} (session restarts on your next message).`,
-        };
+        roots = [resolved.path];
       }
-      // The picker renders INSIDE the panel state machine (single card).
-      await options.pushPanel(invocation.chatId, { kind: 'picker', picker: 'repo', page: 0 });
+      await options.pushPanel(invocation.chatId, {
+        kind: 'picker',
+        picker: 'repo',
+        page: 0,
+        ...(roots === undefined ? {} : { roots }),
+      });
       return { kind: 'success', text: '' };
     },
   });
@@ -377,8 +381,8 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
   commands.register({
     name: 'model',
     description:
-      'Choose a model (opens the picker); or /model <provider>/<model> to set the default',
-    usage: '[provider/model]',
+      'Switch this session\u2019s model (bare opens the picker); /model <provider>/<model> switches directly',
+    usage: '<provider/model>',
     category: 'system',
     buttonLabel: '🤖 Model',
     handler: async (invocation) => {
@@ -495,8 +499,8 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
   });
   commands.register({
     name: 'resume',
-    description: 'Resume a saved session (no id opens the session list)',
-    usage: '[id]',
+    description: 'Resume a saved session (bare opens the session list to pick one)',
+    usage: '<id>',
     category: 'session',
     buttonLabel: '↩️ Resume session',
     // The Sessions button owns the list/detail flow; a separate resume
@@ -590,8 +594,8 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
   // user can actually choose — the bare harness command only reports.
   commands.register({
     name: 'permission',
-    description: 'Switch the permission preset — sandbox mode + approval policy (dsh web)',
-    usage: '[preset]',
+    description: 'Switch the permission preset — sandbox mode + approval policy',
+    usage: '<preset>',
     category: 'system',
     buttonLabel: '🔐 Permission',
     handler: async (invocation) => {
@@ -621,13 +625,20 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
   // again leaves plan mode (user report: bare /plan only ever entered).
   commands.register({
     name: 'plan',
-    description: 'Enter or leave plan mode (dsh web)',
+    description: 'Enter or leave plan mode (bare toggles; /plan on|off sets it)',
     usage: '[on|off]',
     category: 'system',
     buttonLabel: '🗺️ Plan mode',
     handler: async (invocation) => {
       const raw = invocation.rawInput.trim();
-      if (raw !== '') return runHarnessCommand(options, invocation, 'plan');
+      // A bare /plan toggles plan mode; /plan on|off sets it explicitly. The
+      // surface handles on/off directly — deferring a bare arg to the harness
+      // echoed it as a message (the `/plan on` bug). An unrecognized arg still
+      // falls back to the harness.
+      const explicit = raw === 'on' ? true : raw === 'off' ? false : undefined;
+      if (explicit === undefined && raw !== '') {
+        return runHarnessCommand(options, invocation, 'plan');
+      }
       if (options.isWorking(invocation.chatId)) {
         return { kind: 'error', text: 'a turn is running — stop it first.' };
       }
@@ -641,7 +652,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
       }
       const agent = await options.ensureAgent(invocation.chatId);
       const state = planMode.get(agent);
-      const target = !(state.pending ?? state.active);
+      const target = explicit ?? !(state.pending ?? state.active);
       const outcome = planMode.set(agent, target);
       return { kind: 'success', text: planModeResultText(target, outcome) };
     },

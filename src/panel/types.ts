@@ -27,6 +27,9 @@ export type PanelView =
       readonly kind: 'picker';
       readonly picker: 'repo' | 'model' | 'permission';
       readonly page: number;
+      /** Custom repo roots to scan (a typed `/repo <path>` passes one root);
+       *  omit to use the deployment's default `repoRoots`. */
+      readonly roots?: readonly string[];
     };
 
 /** Commands whose panel button opens a text-input sub-view. */

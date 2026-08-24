@@ -1738,13 +1738,14 @@ describe('Bridge', () => {
       expect(help).toBeDefined();
       expect(help?.text).toContain('/group');
       // /help documents the with-arg usage, distinguishing a REQUIRED arg
-      // (`<...>`: cd/group/goal/feedback need a value) from an OPTIONAL one
+      // (`<...>`: the value is the command's substance) from an OPTIONAL one
       // (`[...]`: a picker/toggle card completes the action on its own).
       expect(help?.text).toContain('/cd <path>');
       expect(help?.text).toContain('/group <name>');
       expect(help?.text).toContain('/goal <text>');
-      expect(help?.text).toContain('/model [provider/model]');
-      expect(help?.text).toContain('/resume [id]');
+      expect(help?.text).toContain('/model <provider/model>');
+      expect(help?.text).toContain('/resume <id>');
+      expect(help?.text).toContain('/plan [on|off]');
       expect(h.agentStore.followups.get('feishu-session-1')).toBeUndefined();
     });
 
@@ -3479,6 +3480,18 @@ describe('stateful web wrappers (/permission picker, /plan toggle)', () => {
     ).toBe(true);
   });
 
+  it('/plan on|off sets plan mode directly — the arg is not echoed as a message (bug)', async () => {
+    const planMode = new FakePlanModeService();
+    const h = makeHarness({ planMode });
+    await h.bridge.handleMessage(message({ text: '/plan on' }));
+    expect(planMode.calls).toEqual([true]);
+    expect(h.transport.sentTexts.some((t) => t.text.includes('Plan mode on'))).toBe(true);
+    // 'on' must not leak as a standalone message.
+    expect(h.transport.sentTexts.some((t) => t.text === 'on')).toBe(false);
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/plan off' }));
+    expect(planMode.calls).toEqual([true, false]);
+  });
+
   it('/plan off and /plan <message> pass through to the harness command', async () => {
     const h = makeHarness({
       executeCommand: async (_agent, line) =>
@@ -3829,12 +3842,14 @@ describe('working-directory gate (requireWorkingDir)', () => {
     expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(1);
   });
 
-  it('allows the turn after a /repo pick', async () => {
+  it('allows the turn after a working directory is set', async () => {
     const { mkdirSync } = await import('node:fs');
     const target = join(SCRATCH, 'proj-gate-repo');
     mkdirSync(target, { recursive: true });
     const h = makeHarness({ requireWorkingDir: true });
-    await h.bridge.handleMessage(message({ text: `/repo ${target}` }));
+    // /repo <path> now opens the picker (it scans that path) and never pins
+    // the cwd — pin it with /cd (the working-dir gate is what's under test).
+    await h.bridge.handleMessage(message({ text: `/cd ${target}` }));
     expect(h.sessionMap.cwdFor('oc_chat')).toBe(target);
     await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: 'now work' }));
     expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(1);
