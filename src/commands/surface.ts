@@ -28,7 +28,7 @@ import type { CommandInvocation, CommandRegistry, CommandResult } from '../comma
 import { resolveDirectory } from '../directory.js';
 import type { FeishuTransport } from '../feishu/types.js';
 import { parseModelArg } from '../model-args.js';
-import { applySessionModelSwitch } from '../model-switch.js';
+import { applySessionModelSwitch, sessionSelection } from '../model-switch.js';
 import type { PanelView } from '../panel/types.js';
 import { buildSessionExport, type SessionExportEvent } from '../session-export.js';
 import type { SessionMap } from '../session-map.js';
@@ -370,16 +370,20 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
           await options.pushPanel(invocation.chatId, { kind: 'picker', picker: 'model', page: 0 });
           return { kind: 'success', text: '' };
         }
-        // No catalog: fall back to the text display.
-        // The live agent's own options win (what this session actually
-        // runs); otherwise the deployment default.
+        // No catalog: fall back to the text display. The session-switched model
+        // (via /model, dsh web parity) wins over the live agent's static
+        // options (which a switch does NOT mutate); otherwise the deployment
+        // default.
         const live = options.liveAgent(invocation.chatId);
+        const switched = sessionSelection(live?.ctx)?.current;
         const liveSelection =
-          live !== undefined &&
-          live.options?.provider !== undefined &&
-          live.options?.model !== undefined
-            ? { provider: live.options.provider, model: live.options.model }
-            : undefined;
+          switched !== undefined
+            ? { provider: switched.provider, model: switched.model }
+            : live !== undefined &&
+                live.options?.provider !== undefined &&
+                live.options?.model !== undefined
+              ? { provider: live.options.provider, model: live.options.model }
+              : undefined;
         const selection: ModelSelectionView | undefined =
           liveSelection ?? options.agentDefaultModel?.currentSelection();
         if (selection === undefined) {

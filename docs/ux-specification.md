@@ -1586,6 +1586,13 @@ maintainer's "B"):
 
 The reply text is `Model set to <provider> · <model> (this session + default).`
 
+The **read** side (`currentModelSelection`, used by the model picker's current
+preselection and the no-catalog `/model` text display) prefers the
+session-switched `ref.current` over the live agent's static `options` — a
+switch writes the ref but never mutates `agent.options`, so reading `options`
+would show the pre-switch model (the `#40 display bug`). It falls back to
+`agent.options`, then the deployment default.
+
 ### Seam
 
 - `ctx.agentDefaultModel.saveSelection` — default (existing).

@@ -205,6 +205,11 @@ class FakeAgentStore {
       followup,
       cancel,
       session: { id: sessionId, events: [] },
+      // A stable scoped ctx with a minimal `on` so the real
+      // installModelSelection (coupled by the /model session switch) registers
+      // its waterfall listeners without throwing. The listeners are never
+      // invoked in a fake run; the identity is what keys the model-switch ref.
+      ctx: { on: () => () => {} },
       get options() {
         return optionMap.get(sessionId) ?? {};
       },
@@ -3533,6 +3538,31 @@ describe('/model command', () => {
       h.transport.sentTexts.some((t) => t.text === 'model: deepseek-official · deepseek-v4-flash'),
     ).toBe(true);
   });
+
+  it('shows the SESSION-switched model, not the static agent options (regression #40)', async () => {
+    const service = new FakeAgentDefaultModelService();
+    const h = makeHarness({ agentDefaultModel: service }); // no llm -> /model text display
+    await h.bridge.handleMessage(message()); // create the live agent
+    // The live agent's STATIC options (what /model used to read) differ from the
+    // session model the user switches to — the bug read `live.options` (never
+    // mutated by a switch) first, so it showed the pre-switch model.
+    h.agentStore.setOptions('feishu-session-1', {
+      provider: 'deepseek-official',
+      model: 'deepseek-v4-flash',
+    });
+    // Switch the session model (raw arg path — allowed while a turn runs).
+    await h.bridge.handleMessage(
+      message({ messageId: 'om_msg2', text: '/model pi-ai/deepseek-r1' }),
+    );
+    expect(
+      h.transport.sentTexts.some(
+        (t) => t.text === 'Model set to pi-ai · deepseek-r1 (this session + default).',
+      ),
+    ).toBe(true);
+    // The /model display now shows the SWITCHED model, not the static options.
+    await h.bridge.handleMessage(message({ messageId: 'om_msg3', text: '/model' }));
+    expect(h.transport.sentTexts.some((t) => t.text === 'model: pi-ai · deepseek-r1')).toBe(true);
+  });
 });
 
 /** Fake `ctx.llm` service for the /model picker tests. */
@@ -3568,6 +3598,36 @@ describe('/model picker', () => {
     // The current default is preselected.
     expect(select && 'initial_option' in select ? select.initial_option : undefined).toBe(
       'deepseek-official/deepseek-v4-flash',
+    );
+  });
+
+  it('the picker current reflects a session switch (not the static agent options) — regression #40', async () => {
+    const llm = new FakeLlmService();
+    const defaults = new FakeAgentDefaultModelService();
+    const h = makeHarness({ llm, agentDefaultModel: defaults });
+    await h.bridge.handleMessage(message()); // create the live agent (a turn runs)
+    // The live agent's STATIC options differ from the session the user picks —
+    // the bug read `live.options` (never mutated by a switch) first.
+    h.agentStore.setOptions('feishu-session-1', {
+      provider: 'deepseek-official',
+      model: 'deepseek-v4-flash',
+    });
+    // Switch the session model (raw arg path — allowed even while a turn runs).
+    await h.bridge.handleMessage(
+      message({ messageId: 'om_msg2', text: '/model deepseek-official/deepseek-r1' }),
+    );
+    // Re-open the picker: the CURRENT (preselected) model is the switched one,
+    // NOT the static agent options.
+    await h.bridge.handleMessage(message({ messageId: 'om_msg3', text: '/model' }));
+    const card = h.transport.updatedCards.at(-1) ?? h.transport.sentCards.at(-1);
+    expect(card?.header?.title.content).toBe('🤖 Model');
+    const action = card?.elements.find((el) => el.tag === 'action');
+    const select =
+      action && 'actions' in action
+        ? action.actions.find((a) => a.tag === 'select_static')
+        : undefined;
+    expect(select && 'initial_option' in select ? select.initial_option : undefined).toBe(
+      'deepseek-official/deepseek-r1',
     );
   });
 

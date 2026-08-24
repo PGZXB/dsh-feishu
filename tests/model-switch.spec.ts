@@ -11,7 +11,11 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { applySessionModelSwitch, sessionSelectionFor } from '../src/model-switch.js';
+import {
+  applySessionModelSwitch,
+  sessionSelection,
+  sessionSelectionFor,
+} from '../src/model-switch.js';
 
 const mocks = vi.hoisted(() => ({ installModelSelection: vi.fn(() => () => {}) }));
 
@@ -61,5 +65,30 @@ describe('applySessionModelSwitch', () => {
   it('no-ops when the agent context is undefined (does not install)', () => {
     applySessionModelSwitch(undefined, { provider: 'deepseek-official', model: 'deepseek-v4-pro' });
     expect(mocks.installModelSelection).toHaveBeenCalledTimes(0);
+  });
+});
+
+describe('sessionSelection', () => {
+  it('returns undefined for a context with no session switch (never installs)', () => {
+    const ctx = fakeCtx();
+    expect(sessionSelection(ctx as never)).toBeUndefined();
+    expect(mocks.installModelSelection).not.toHaveBeenCalled();
+  });
+
+  it('returns undefined when the agent context is undefined', () => {
+    expect(sessionSelection(undefined)).toBeUndefined();
+    expect(mocks.installModelSelection).not.toHaveBeenCalled();
+  });
+
+  it('returns the coupled ref (its current is the switched model) without re-installing', () => {
+    const ctx = fakeCtx();
+    applySessionModelSwitch(ctx as never, {
+      provider: 'deepseek-official',
+      model: 'deepseek-v4-pro',
+    });
+    const ref = sessionSelection(ctx as never);
+    expect(mocks.installModelSelection).toHaveBeenCalledTimes(1);
+    expect(ref?.current).toEqual({ provider: 'deepseek-official', model: 'deepseek-v4-pro' });
+    expect(ref).toBe(sessionSelectionFor(ctx as never));
   });
 });
