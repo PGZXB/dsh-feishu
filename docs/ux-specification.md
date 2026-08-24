@@ -388,6 +388,14 @@ session rebind/remint can never corrupt the live card.
 
 ### 8.5 Session lifecycle commands
 
+- **Panel cards are independent state machines.** A typed slash command
+  (`/model /repo /permission /sessions /cd` bare) opens its OWN fresh card
+  seeded with the view — it never pilots/updates an earlier panel card. A card
+  with a parent (its panel stack is deeper than one) renders `⬅ Back`; a
+  typed-command card is a standalone root (depth one) and shows **no Back**.
+  A completed pick/command on a standalone card **stays** on its result (it
+  does not jump back to the panel menu); only a navigation card can pop back.
+
 - `/sessions` is a **dropdown picker** (mobile-friendly, user requirement —
   no long list, no pagination): a `select_static` whose options are the
   sessions (`title ★ ● · id`), capped at `SESSION_SELECT_MAX = 50` (Feishu's

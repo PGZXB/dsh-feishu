@@ -34,7 +34,15 @@ export class RepoPickAction extends PanelAction {
     };
   }
   protected override async finish(ctx: PanelActionContext, action: CardAction): Promise<void> {
-    await ctx.popToMenu(action.chatId);
+    // A navigation card (has a parent) pops back to the menu; a standalone
+    // card seeded by a typed command has no parent — it stays (shows the
+    // result posted by runPanelOperation) and redraws its current view so it
+    // is not left on the busy placeholder.
+    if (ctx.canReturn(action.chatId)) {
+      await ctx.popToMenu(action.chatId);
+    } else {
+      await ctx.replacePanel(action.chatId, ctx.panelViewFor(action.chatId));
+    }
   }
 }
 
@@ -69,7 +77,15 @@ export class PermissionPickAction extends PanelAction {
     };
   }
   protected override async finish(ctx: PanelActionContext, action: CardAction): Promise<void> {
-    await ctx.popToMenu(action.chatId);
+    // A navigation card (has a parent) pops back to the menu; a standalone
+    // card seeded by a typed command has no parent — it stays (shows the
+    // result posted by runPanelOperation) and redraws its current view so it
+    // is not left on the busy placeholder.
+    if (ctx.canReturn(action.chatId)) {
+      await ctx.popToMenu(action.chatId);
+    } else {
+      await ctx.replacePanel(action.chatId, ctx.panelViewFor(action.chatId));
+    }
   }
 }
 
@@ -105,7 +121,15 @@ export class ModelPickAction extends PanelAction {
     };
   }
   protected override async finish(ctx: PanelActionContext, action: CardAction): Promise<void> {
-    await ctx.popToMenu(action.chatId);
+    // A navigation card (has a parent) pops back to the menu; a standalone
+    // card seeded by a typed command has no parent — it stays (shows the
+    // result posted by runPanelOperation) and redraws its current view so it
+    // is not left on the busy placeholder.
+    if (ctx.canReturn(action.chatId)) {
+      await ctx.popToMenu(action.chatId);
+    } else {
+      await ctx.replacePanel(action.chatId, ctx.panelViewFor(action.chatId));
+    }
   }
 }
 

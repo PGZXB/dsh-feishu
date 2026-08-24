@@ -143,21 +143,25 @@ feels faster; `/help` lists them all.
 
 | Command | What it does |
 |---|---|
-| `/cd <path>` | set this chat's working directory |
-| `/repo` | list candidate project directories to pick from |
-| `/sessions` | list saved sessions (resume any of them from the card) |
-| `/resume [id]` | resume a saved session in this chat |
-| `/clear` `/new` | start a fresh conversation (the old session stays saved) |
-| `/cancel` | stop the running turn |
-| `/status` | show this chat's session status |
-| `/model` | pick or set the model |
-| `/export` | send this chat's session log as a file |
-| `/schedule` | list active reminders |
-| `/feishu-status` | show the surface diagnostic card |
-| `/group` | create a group with the bot |
-| `/panel` | open the control-panel card (all commands as buttons) |
 | `/help` | list all commands |
-| `/plan` `/permission` `/goal` `/compact` `/feedback` | dsh's own commands, same as the web UI |
+| `/panel` | open the control-panel card (all commands as buttons) |
+| `/group <name>` | create a group with the bot (bare opens a name-input card) |
+| `/cancel` | stop the running turn |
+| `/cd <path>` | set this chat's working directory (bare opens a path-input card) |
+| `/repo [path]` | pick a project directory (bare scans the default roots; `/repo <path>` scans that path) |
+| `/status` | show this chat's session status |
+| `/feishu-status` | show the surface diagnostic card |
+| `/schedule` | list active reminders |
+| `/model <provider/model>` | switch this session's model (bare opens the picker) |
+| `/export` | send this chat's session log as a file |
+| `/sessions` | list saved sessions (resume any of them from the card) |
+| `/resume <id>` | resume a saved session (bare opens the session list) |
+| `/clear` `/new` | start a fresh conversation (the old session stays saved) |
+| `/goal <text>` | set the task goal (bare opens a text-input card) |
+| `/compact` | compact older conversation history |
+| `/feedback <text>` | send feedback (bare opens a text-input card) |
+| `/permission <preset>` | switch the permission preset (bare opens the picker) |
+| `/plan [on\|off]` | enter or leave plan mode (bare toggles) |
 
 ## Features
 

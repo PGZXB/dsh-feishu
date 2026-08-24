@@ -28,7 +28,7 @@
  * @module @dsh-feishu/dsh-feishu/panel/PanelController
  */
 
-import { buildPanelBusyCard, buildPanelNoticeCard } from '../cards/render.js';
+import { actionValue, buildPanelBusyCard, buildPanelNoticeCard } from '../cards/render.js';
 import type { CommandResult } from '../commands.js';
 import type { CardJson, FeishuTransport } from '../feishu/types.js';
 import type { PanelView } from './types.js';
@@ -199,13 +199,18 @@ export class PanelController {
     if (messageId === undefined) {
       const view = seed ?? { kind: 'menu', page: 0 };
       const isMenu = view.kind === 'menu';
-      // Async seeds (sessions/pickers) post a Loading placeholder FIRST on
-      // the fresh card, then the real card updates it in place.
-      const initial = isMenu
-        ? this.host.buildMenuCard(chatId, 0)
-        : this.host.isAsyncView(view)
-          ? this.loadingPanelCard(view)
-          : undefined;
+      // Post ONE initial card: the menu (root), a ⏳ Loading placeholder for
+      // async seeds, or — for a sync non-menu seed (input/confirm) — the
+      // rendered view immediately. A menu fallback would flash the control
+      // panel before the sync view settles (the `/cd` flash bug).
+      let initial: CardJson | undefined;
+      if (isMenu) {
+        initial = this.host.buildMenuCard(chatId, 0);
+      } else if (this.host.isAsyncView(view)) {
+        initial = this.loadingPanelCard(view);
+      } else {
+        initial = await this.host.renderPanelView(chatId, view);
+      }
       const sent = await this.postPanelCard(
         chatId,
         undefined,
@@ -213,9 +218,9 @@ export class PanelController {
       );
       const stack = this.stackFor(chatId, sent.messageId);
       stack[0] = view;
-      // Non-menu seeds (slash commands: picker/sessions) render their view
-      // onto the fresh card in place — no transient menu card.
-      if (!isMenu) {
+      // Async seeds (sessions/pickers) update the Loading placeholder with the
+      // real view; sync seeds were already rendered as the initial card.
+      if (!isMenu && this.host.isAsyncView(view)) {
         let card: CardJson;
         try {
           card = await this.host.renderPanelView(chatId, view);
@@ -249,6 +254,27 @@ export class PanelController {
       }
       await this.host.text(chatId, '⚠️ The panel view could not be rendered — see the bot log.');
       return { messageId };
+    }
+    // A card with a parent (its stack is deeper than one) can return to it:
+    // append the ⬅ Back row. A standalone card seeded directly by a typed
+    // command (depth one) has no parent and renders no Back.
+    if (stack.length > 1) {
+      card = {
+        ...card,
+        elements: [
+          ...card.elements,
+          {
+            tag: 'action',
+            actions: [
+              {
+                tag: 'button',
+                text: { tag: 'plain_text', content: '⬅ Back' },
+                value: actionValue({ kind: 'panel-back' }),
+              },
+            ],
+          },
+        ],
+      };
     }
     await this.postPanelCard(chatId, messageId, card);
     this.host.syncCard(chatId);
@@ -406,5 +432,12 @@ export class PanelController {
   panelViewFor(chatId: string, messageId: string): PanelView {
     const stack = this.stackFor(chatId, messageId);
     return stack[stack.length - 1] ?? { kind: 'menu', page: 0 };
+  }
+
+  /** Whether one (chat, card) has a parent to return to (its view stack is
+   *  deeper than one). A standalone card seeded directly by a typed slash
+   *  command is at depth one → cannot pop. */
+  canReturn(chatId: string, messageId: string): boolean {
+    return this.stackFor(chatId, messageId).length > 1;
   }
 }

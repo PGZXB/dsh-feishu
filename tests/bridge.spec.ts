@@ -1737,6 +1737,15 @@ describe('Bridge', () => {
       const help = texts.find((t) => t.text.includes('dsh-feishu commands'));
       expect(help).toBeDefined();
       expect(help?.text).toContain('/group');
+      // /help documents the with-arg usage, distinguishing a REQUIRED arg
+      // (`<...>`: the value is the command's substance) from an OPTIONAL one
+      // (`[...]`: a picker/toggle card completes the action on its own).
+      expect(help?.text).toContain('/cd <path>');
+      expect(help?.text).toContain('/group <name>');
+      expect(help?.text).toContain('/goal <text>');
+      expect(help?.text).toContain('/model <provider/model>');
+      expect(help?.text).toContain('/resume <id>');
+      expect(help?.text).toContain('/plan [on|off]');
       expect(h.agentStore.followups.get('feishu-session-1')).toBeUndefined();
     });
 
@@ -1859,11 +1868,12 @@ describe('working directory commands', () => {
       option: join(root, 'proj-b'),
     });
     expect(h.sessionMap.cwdFor('oc_chat')).toBe(join(root, 'proj-b'));
-    // The pick lands, notifies as a result card, and the panel returns to
-    // the menu root.
+    // The pick lands, notifies as a result card, and — because this card was
+    // seeded by a typed command (a standalone root) — it STAYS on its current
+    // view instead of returning to the panel menu.
     expect(resultCardTexts(h).some((t) => t.includes('Working directory set to'))).toBe(true);
-    const menu = h.transport.updatedCards.at(-1);
-    expect(menu?.header?.title.content).toBe('⚙️ dsh-feishu panel');
+    const stay = h.transport.updatedCards.at(-1);
+    expect(stay?.header?.title.content).toBe('📚 Pick a project');
   });
 
   it('/repo with an empty root list posts an empty picker (no crash, no dropdown)', async () => {
@@ -2548,6 +2558,35 @@ describe('panel command palette', () => {
     );
   });
 
+  it('bare /group /goal /feedback open the same text-input card as their panel button (consistency)', async () => {
+    const h = makeHarness();
+    const cases: Array<[string, string]> = [
+      ['/group', '👥 New group'],
+      ['/goal', '🎯 Goal'],
+      ['/feedback', '💬 Feedback'],
+    ];
+    for (const [cmd, title] of cases) {
+      await h.bridge.handleMessage(message({ text: cmd, messageId: `om-${cmd}` }));
+      const card = h.transport.updatedCards.at(-1) ?? h.transport.sentCards.at(-1);
+      expect(card?.header?.title.content).toBe(title);
+    }
+  });
+
+  it('typing /cd posts the input card directly — no transient menu flash (regression)', async () => {
+    const h = makeHarness();
+    const before = h.transport.sentCards.length;
+    await h.bridge.handleMessage(message({ text: '/cd' }));
+    // The FIRST card posted by the typed /cd is the input card, never the
+    // control panel menu (a sync non-menu seed must not flash the menu).
+    const first = h.transport.sentCards[before];
+    expect(first?.header?.title.content).toBe('📁 Change working directory');
+    expect(
+      h.transport.sentCards
+        .slice(before)
+        .some((c) => c.header?.title.content === '⚙️ dsh-feishu panel'),
+    ).toBe(false);
+  });
+
   it('an empty input submit runs the command with an empty argument', async () => {
     const h = makeHarness();
     await h.bridge.handleCardAction({
@@ -2563,9 +2602,10 @@ describe('panel command palette', () => {
       value: { kind: 'panel-input-submit', command: 'cd' },
       formValue: { path: '' },
     });
-    // /cd with no argument → usage error as a result card, and the panel
-    // returns to menu.
-    expect(resultCardTexts(h).some((t) => t.includes('usage: /cd'))).toBe(true);
+    // /cd with no argument no longer raises a usage error (the handler now
+    // opens the text-input card for a bare /cd); the panel-button flow still
+    // returns to the menu after the submit.
+    expect(resultCardTexts(h).some((t) => t.includes('usage: /cd'))).toBe(false);
     expect(h.transport.updatedCards.at(-1)?.header?.title.content).toBe('⚙️ dsh-feishu panel');
   });
 
@@ -3195,7 +3235,9 @@ describe('dsh web command wrappers', () => {
 
   it('wrapper reports unavailable when the dsh registry is not mounted', async () => {
     const h = makeHarness();
-    await h.bridge.handleMessage(message({ text: '/goal' }));
+    // Some value: a bare /goal now opens the panel text-input card, so use
+    // an argument to reach the harness wrapper's missing-registry path.
+    await h.bridge.handleMessage(message({ text: '/goal run tests' }));
     expect(h.transport.sentTexts.some((t) => t.text.includes('not mounted'))).toBe(true);
   });
 
@@ -3348,8 +3390,9 @@ describe('stateful web wrappers (/permission picker, /plan toggle)', () => {
       option: 'read-only',
     });
     expect(service.applied).toEqual(['read-only']);
-    // The panel returns to the menu root.
-    expect(h.transport.updatedCards.at(-1)?.header?.title.content).toBe('⚙️ dsh-feishu panel');
+    // A typed-command card STAYS on its result (the permission picker is
+    // redrawn) instead of returning to the panel menu.
+    expect(h.transport.updatedCards.at(-1)?.header?.title.content).toBe('🔐 Permission presets');
   });
 
   it('a permission pick while a turn runs is refused', async () => {
@@ -3435,6 +3478,18 @@ describe('stateful web wrappers (/permission picker, /plan toggle)', () => {
         t.text.includes('Leaving plan mode (applies from the next step)'),
       ),
     ).toBe(true);
+  });
+
+  it('/plan on|off sets plan mode directly — the arg is not echoed as a message (bug)', async () => {
+    const planMode = new FakePlanModeService();
+    const h = makeHarness({ planMode });
+    await h.bridge.handleMessage(message({ text: '/plan on' }));
+    expect(planMode.calls).toEqual([true]);
+    expect(h.transport.sentTexts.some((t) => t.text.includes('Plan mode on'))).toBe(true);
+    // 'on' must not leak as a standalone message.
+    expect(h.transport.sentTexts.some((t) => t.text === 'on')).toBe(false);
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/plan off' }));
+    expect(planMode.calls).toEqual([true, false]);
   });
 
   it('/plan off and /plan <message> pass through to the harness command', async () => {
@@ -3579,6 +3634,32 @@ class FakeLlmService implements LlmService {
 }
 
 describe('/model picker', () => {
+  it('each typed /model opens a FRESH, independent card (regression: never reusing an earlier panel card)', async () => {
+    const llm = new FakeLlmService();
+    const defaults = new FakeAgentDefaultModelService();
+    const h = makeHarness({ llm, agentDefaultModel: defaults });
+    const before = h.transport.sentCards.length;
+    // First typed /model posts a NEW card.
+    await h.bridge.handleMessage(message({ text: '/model' }));
+    expect(h.transport.sentCards.length).toBe(before + 1);
+    // Second typed /model posts ANOTHER NEW card — it must NOT refresh/update
+    // the first card (typed commands are independent state machines).
+    await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/model' }));
+    expect(h.transport.sentCards.length).toBe(before + 2);
+    // A different card-opening command also opens its own fresh card.
+    await h.bridge.handleMessage(message({ messageId: 'om_msg3', text: '/repo' }));
+    expect(h.transport.sentCards.length).toBe(before + 3);
+  });
+
+  it('a typed-command picker card renders NO Back (it has no parent to return to)', async () => {
+    const llm = new FakeLlmService();
+    const h = makeHarness({ llm, agentDefaultModel: new FakeAgentDefaultModelService() });
+    await h.bridge.handleMessage(message({ text: '/model' }));
+    const card = h.transport.updatedCards.at(-1) ?? h.transport.sentCards.at(-1);
+    // The picker card is a standalone seed (stack depth 1) → no ⬅ Back.
+    expect(JSON.stringify(card?.elements ?? [])).not.toContain('⬅ Back');
+  });
+
   it('a bare /model opens the picker card with the model catalog', async () => {
     const llm = new FakeLlmService();
     const defaults = new FakeAgentDefaultModelService();
@@ -3761,12 +3842,14 @@ describe('working-directory gate (requireWorkingDir)', () => {
     expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(1);
   });
 
-  it('allows the turn after a /repo pick', async () => {
+  it('allows the turn after a working directory is set', async () => {
     const { mkdirSync } = await import('node:fs');
     const target = join(SCRATCH, 'proj-gate-repo');
     mkdirSync(target, { recursive: true });
     const h = makeHarness({ requireWorkingDir: true });
-    await h.bridge.handleMessage(message({ text: `/repo ${target}` }));
+    // /repo <path> now opens the picker (it scans that path) and never pins
+    // the cwd — pin it with /cd (the working-dir gate is what's under test).
+    await h.bridge.handleMessage(message({ text: `/cd ${target}` }));
     expect(h.sessionMap.cwdFor('oc_chat')).toBe(target);
     await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: 'now work' }));
     expect(h.agentStore.followups.get('feishu-session-1')).toHaveLength(1);

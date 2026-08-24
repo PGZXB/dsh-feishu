@@ -543,11 +543,11 @@ describe('repo relative paths', () => {
     );
     const card = buildRepoPickerCard(projects, ['/work'], 0);
     const actions = card.elements.filter((el) => el.tag === 'action');
-    const last = actions.at(-1);
-    // The final action row is the Back button (every sub-view returns to
-    // the panel menu); the pagination nav precedes it.
-    expect(buttonLabels(last)).toEqual(['⬅ Back']);
-    const nav = actions.at(-2);
+    // No Back button on a direct builder card — the panel controller appends
+    // it only when the card's stack can return (a standalone typed-command
+    // card renders none).
+    expect(actions.every((el) => !buttonLabels(el).includes('⬅ Back'))).toBe(true);
+    const nav = actions.at(-1);
     expect(buttonLabels(nav)).toEqual(['Next ›']);
     const first = actions[0];
     expect(selectOf(first)).toBeUndefined();

@@ -144,16 +144,6 @@ export function buildSessionsCard(
             : 'No sessions yet — send a message to start the first one.'
           : `No session matches \`${query}\` — try the id or part of the title.`,
     });
-    elements.push({
-      tag: 'action',
-      actions: [
-        {
-          tag: 'button',
-          text: { tag: 'plain_text', content: '⬅ Back' },
-          value: actionValue({ kind: 'panel-back' }),
-        },
-      ],
-    });
     return {
       config: { wide_screen_mode: true },
       header: { title: { tag: 'plain_text', content: '🗂️ Sessions' }, template: 'wathet' },
@@ -191,17 +181,6 @@ export function buildSessionsCard(
       ],
     });
   }
-  // Every sub-view can return to the panel menu root (stack semantics).
-  elements.push({
-    tag: 'action',
-    actions: [
-      {
-        tag: 'button',
-        text: { tag: 'plain_text', content: '⬅ Back' },
-        value: actionValue({ kind: 'panel-back' }),
-      },
-    ],
-  });
   return {
     config: { wide_screen_mode: true },
     header: { title: { tag: 'plain_text', content: '🗂️ Sessions' }, template: 'wathet' },
@@ -277,11 +256,6 @@ export function buildSessionDetailCard(view: SessionDetailView, canMutate: boole
     tag: 'button',
     text: { tag: 'plain_text', content: '📤 Export' },
     value: actionValue({ kind: 'session-export', sessionId: view.sessionId }),
-  });
-  actions.push({
-    tag: 'button',
-    text: { tag: 'plain_text', content: '⬅ Back' },
-    value: actionValue({ kind: 'panel-back' }),
   });
   return {
     config: { wide_screen_mode: true },

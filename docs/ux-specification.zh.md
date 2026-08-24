@@ -252,6 +252,8 @@ harness 的裸 `/plan` 和 `/permission` 形式无法*选择*或*切换*：不�
 
 ### 8.5 会话生命周期命令
 
+- **面板卡片是独立的状态机。** 一条键入的 slash 命令（`/model /repo /permission /sessions /cd` 无参）会打开一张**专属的全新卡片**（用该视图作为种子）——它绝不会"驾驶"/更新更早的面板卡片。有父级可回退（面板栈深度大于 1）的卡片渲染 `⬅ Back`；键入命令开的卡是独立根（深度 1），**不显示 Back**。在独立根卡上完成的选卡/提交会**停留在其结果上**（不会跳回面板菜单）；只有可导航的卡片才能出栈返回。
+
 - `/sessions` 是**下拉选择器**（移动端友好，用户需求 —— 无长列表、无分页）：一个 `select_static`，选项为各会话（`title ★ ● · id`），上限 `SESSION_SELECT_MAX = 50`（飞书 select_static 真实上限），超出部分用 `note` 说明。**🔎 Find session** 按钮打开输入子视图：输入 id 或标题片段即可过滤列表，因此上限之外的任意会话都可到达。选择后打开**会话详情子视图**（面板卡片内入栈）；所选会话 id 通过回调的 `option` 字段送达。
 - `/sessions` + `/resume` 数据：`ctx.sessionQuery`（由 dsh-base 的 `session-query-sqlite` 挂载）、`listSessions()` 最新优先 + 批量 `readTitleSnapshots()` 获取标题。服务缺失时 surface 降级为仅列出已绑定会话（响亮日志）。
 - 会话详情子视图（`🗂️ Session`）：会话信息（标题、id、cwd、创建时长、消息数、最后回答）加 **Resume**（当前会话隐藏）、**Rename**、**Archive**（归档时显示 **Restore** —— 宿主 `workspace.archiveSession` 可逆）、**Export**、**Back**（出栈）。仅当宿主 `apiProxy` seam 挂载时才有 Rename/Archive（否则静默降级）。
