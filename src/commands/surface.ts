@@ -48,11 +48,13 @@ import type { SessionMap } from '../session-map.js';
 const HARNESS_COMMANDS: ReadonlyArray<{
   readonly name: string;
   readonly description: string;
+  readonly usage?: string;
   readonly buttonLabel: string;
 }> = [
   {
     name: 'goal',
     description: 'Set or view the goal for a long-running task (dsh web)',
+    usage: '[text]',
     buttonLabel: '🎯 Goal',
   },
   {
@@ -63,6 +65,7 @@ const HARNESS_COMMANDS: ReadonlyArray<{
   {
     name: 'feedback',
     description: 'Send feedback (dsh web)',
+    usage: '[text]',
     buttonLabel: '💬 Feedback',
   },
 ];
@@ -170,11 +173,14 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     handler: () => {
       const lines = commands
         .list()
-        .map((command) => `/${command.name} — ${command.description}`)
+        .map(
+          (command) =>
+            `/${command.name}${command.usage === undefined ? '' : ` ${command.usage}`} — ${command.description}`,
+        )
         .join('\n');
       return {
         kind: 'success',
-        text: `dsh-feishu commands:\n${lines}\n\nOther slash lines are forwarded to dsh when they exist in its registry.`,
+        text: `dsh-feishu commands:\n${lines}\n\nA bare command with optional args opens a picker/input card (same as its panel button); other slash lines are forwarded to dsh when they exist in its registry.`,
       };
     },
   });
@@ -191,6 +197,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
   commands.register({
     name: 'group',
     description: 'Create a group chat with you and the bot',
+    usage: '[name]',
     category: 'chat',
     buttonLabel: '👥 New group',
     handler: async (invocation) => {
@@ -228,6 +235,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
   commands.register({
     name: 'cd',
     description: 'Set this chat\u2019s working directory (session restarts in it)',
+    usage: '<path>',
     category: 'session',
     buttonLabel: '📁 Change dir',
     handler: async (invocation) => {
@@ -253,6 +261,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
   commands.register({
     name: 'repo',
     description: 'List candidate project directories (from repoRoots)',
+    usage: '[path]',
     category: 'session',
     buttonLabel: '📚 Pick project',
     handler: async (invocation) => {
@@ -369,6 +378,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     name: 'model',
     description:
       'Choose a model (opens the picker); or /model <provider>/<model> to set the default',
+    usage: '[provider/model]',
     category: 'system',
     buttonLabel: '🤖 Model',
     handler: async (invocation) => {
@@ -486,6 +496,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
   commands.register({
     name: 'resume',
     description: 'Resume a saved session (no id opens the session list)',
+    usage: '[id]',
     category: 'session',
     buttonLabel: '↩️ Resume session',
     // The Sessions button owns the list/detail flow; a separate resume
@@ -539,6 +550,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     commands.register({
       name: spec.name,
       description: spec.description,
+      ...(spec.usage === undefined ? {} : { usage: spec.usage }),
       category: 'system',
       buttonLabel: spec.buttonLabel,
       handler: async (invocation) => {
@@ -579,6 +591,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
   commands.register({
     name: 'permission',
     description: 'Switch the permission preset — sandbox mode + approval policy (dsh web)',
+    usage: '[preset]',
     category: 'system',
     buttonLabel: '🔐 Permission',
     handler: async (invocation) => {
@@ -609,6 +622,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
   commands.register({
     name: 'plan',
     description: 'Enter or leave plan mode (dsh web)',
+    usage: '[on|off]',
     category: 'system',
     buttonLabel: '🗺️ Plan mode',
     handler: async (invocation) => {

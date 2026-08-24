@@ -30,6 +30,11 @@ export interface SurfaceCommand {
   readonly name: string;
   /** Human-readable summary. */
   readonly description: string;
+  /** Self-describing usage args (botmux `/help` style): `<required>` for a
+   *  mandatory arg, `[optional]` for one that may be omitted (a bare command
+   *  often opens a picker/input card instead). Shown by `/help` and in the
+   *  README commands table; omit for a command that takes no argument. */
+  readonly usage?: string;
   /** Panel category grouping. */
   readonly category: 'session' | 'chat' | 'system';
   /** Button label on the control panel; defaults to the command name. */
