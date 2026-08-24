@@ -28,6 +28,7 @@ import type { CommandInvocation, CommandRegistry, CommandResult } from '../comma
 import { resolveDirectory } from '../directory.js';
 import type { FeishuTransport } from '../feishu/types.js';
 import { parseModelArg } from '../model-args.js';
+import { applySessionModelSwitch } from '../model-switch.js';
 import type { PanelView } from '../panel/types.js';
 import { buildSessionExport, type SessionExportEvent } from '../session-export.js';
 import type { SessionMap } from '../session-map.js';
@@ -404,9 +405,17 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
         };
       }
       await service.saveSelection(parsed.selection);
+      // (B) switch the CURRENT session immediately, not just the default for
+      // future sessions: couple the agent's model selection so the next turn
+      // assembles with the new provider/model (dsh web parity).
+      applySessionModelSwitch(
+        options.liveAgent(invocation.chatId)?.ctx,
+        parsed.selection,
+        options.logger,
+      );
       return {
         kind: 'success',
-        text: `Default model set to ${parsed.selection.provider} · ${parsed.selection.model} (applies to new sessions).`,
+        text: `Model set to ${parsed.selection.provider} · ${parsed.selection.model} (this session + default).`,
       };
     },
   });

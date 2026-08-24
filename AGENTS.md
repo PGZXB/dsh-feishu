@@ -251,6 +251,16 @@ feishu-dev add "link:$(pwd)"`). If pnpm is not on your `PATH`, use
 the local install under `_dev/pnpm` and point store/cache at `_dev/` (env
 block in `docs/development.md` → "Local toolchain").
 
+> Gotcha: after a worktree change bumps dependencies and is merged to `main`,
+> run `pnpm install` in the MAIN tree too — `node_modules` is git-ignored and
+> the merge only updates the tracked `package.json`/lockfile. Unless you
+> re-install, the main tree keeps running the OLD resolved versions (e.g. a
+> `dsh-feishu` built against `0.1.0-rc.8` while `package.json` says
+> `^0.1.1-rc.2`), so a local run from the main tree silently misses newer
+> dsh features (a stale `/model` catalog dropped a newly-added model). `pnpm
+> install` in the worktree (or a `CI=true pnpm install` in the main tree, which
+> needs no TTY) reconciles it.
+
 Verify every gate exactly as CI does — including `FEISHU_INT_REQUIRED=1` so
 the integration suite must actually run, never silently skip — then:
 

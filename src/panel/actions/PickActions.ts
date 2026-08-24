@@ -8,6 +8,7 @@
 
 import type { CommandResult } from '../../commands.js';
 import type { CardAction } from '../../feishu/types.js';
+import { applySessionModelSwitch } from '../../model-switch.js';
 import { PanelAction } from './ActionRegistry.js';
 import type { PanelActionContext } from './PanelAction.js';
 
@@ -92,9 +93,15 @@ export class ModelPickAction extends PanelAction {
     const parsed = ctx.parseModelArg(selection);
     if (!parsed.ok) return { kind: 'error', text: parsed.error };
     void service.saveSelection(parsed.selection);
+    // (B) switch the current session immediately too (not only the default).
+    applySessionModelSwitch(
+      ctx.liveAgent(action.chatId)?.ctx,
+      parsed.selection,
+      ctx.services.logger,
+    );
     return {
       kind: 'success',
-      text: `Default model set to ${parsed.selection.provider} · ${parsed.selection.model} (applies to new sessions).`,
+      text: `Model set to ${parsed.selection.provider} · ${parsed.selection.model} (this session + default).`,
     };
   }
   protected override async finish(ctx: PanelActionContext, action: CardAction): Promise<void> {

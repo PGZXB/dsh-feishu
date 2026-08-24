@@ -34,6 +34,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`/model` now switches the current session's model immediately (and sets
+  the default).** Previously `/model` only wrote the deployment default via
+  `agentDefaultModel.saveSelection`, so a model chosen in a chat applied only
+  to NEW sessions — the current chat kept its old model until restarted. Now,
+  after saving the default, the surface couples a mutable model selection to
+  the live agent's scoped context (`installModelSelection`, the same mechanism
+  dsh-host-apiproxy uses for dsh web) so the NEXT turn in the current session
+  uses the picked provider/model. Both the typed `/model` and the picker pick
+  do this. The reply now reads "Model set to … (this session + default)". This
+  is a deliberate runtime import from `@deepseek-ai/dsh-agent` (an exception to
+  the repo's "type-only `@deepseek-ai/*` imports" convention), with the package
+  moved to `dependencies`. Includes `src/model-switch.ts` (per-session
+  selection coupling + caching) and a unit test.
+
 - **dsh family bumped to `0.1.1-rc.2`.** `@deepseek-ai/dsh` is pinned exactly in
   devDependencies; the rest of the `@deepseek-ai/*` surface moves to
   `^0.1.1-rc.2` (dev, peer, AND runtime deps), and the new harness peer
