@@ -148,20 +148,20 @@ feels faster; `/help` lists them all.
 | `/group <name>` | create a group with the bot (bare opens a name-input card) |
 | `/cancel` | stop the running turn |
 | `/cd <path>` | set this chat's working directory (bare opens a path-input card) |
-| `/repo [path]` | pick a project directory (bare opens the picker) |
+| `/repo [path]` | pick a project directory (bare scans the default roots; `/repo <path>` scans that path) |
 | `/status` | show this chat's session status |
 | `/feishu-status` | show the surface diagnostic card |
 | `/schedule` | list active reminders |
-| `/model [provider/model]` | pick or set the model (bare opens the picker) |
+| `/model <provider/model>` | switch this session's model (bare opens the picker) |
 | `/export` | send this chat's session log as a file |
 | `/sessions` | list saved sessions (resume any of them from the card) |
-| `/resume [id]` | resume a saved session (bare opens the session list) |
+| `/resume <id>` | resume a saved session (bare opens the session list) |
 | `/clear` `/new` | start a fresh conversation (the old session stays saved) |
 | `/goal <text>` | set the task goal (bare opens a text-input card) |
 | `/compact` | compact older conversation history |
 | `/feedback <text>` | send feedback (bare opens a text-input card) |
-| `/permission [preset]` | switch the permission preset (bare opens the picker) |
-| `/plan [on|off]` | enter or leave plan mode |
+| `/permission <preset>` | switch the permission preset (bare opens the picker) |
+| `/plan [on|off]` | enter or leave plan mode (bare toggles) |
 
 ## Features
 
