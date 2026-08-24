@@ -1700,7 +1700,7 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         'the model-switch result card',
         () =>
           resultCardTexts().some((t) =>
-            t.includes('Default model set to deepseek-official · deepseek-v4-pro'),
+            t.includes('Model set to deepseek-official · deepseek-v4-pro (this session + default)'),
           ),
         30_000,
       );
@@ -1719,7 +1719,9 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         'the model-restore result card',
         () =>
           resultCardTexts().some((t) =>
-            t.includes('Default model set to deepseek-official · deepseek-v4-flash'),
+            t.includes(
+              'Model set to deepseek-official · deepseek-v4-flash (this session + default)',
+            ),
           ),
         30_000,
       );
@@ -2284,7 +2286,7 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
       // Typed /model sets the default directly (no picker needed).
       sendMessage(chatId, '/model deepseek-official/deepseek-v4-flash');
       await expectText(
-        'Default model set to deepseek-official · deepseek-v4-flash',
+        'Model set to deepseek-official · deepseek-v4-flash (this session + default)',
         'the /model text',
       );
       // The real harness /goal: create then view.
