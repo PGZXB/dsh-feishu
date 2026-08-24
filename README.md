@@ -161,7 +161,7 @@ feels faster; `/help` lists them all.
 | `/compact` | compact older conversation history |
 | `/feedback <text>` | send feedback (bare opens a text-input card) |
 | `/permission <preset>` | switch the permission preset (bare opens the picker) |
-| `/plan [on|off]` | enter or leave plan mode (bare toggles) |
+| `/plan [on\|off]` | enter or leave plan mode (bare toggles) |
 
 ## Features
 
