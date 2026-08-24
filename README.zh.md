@@ -33,9 +33,9 @@ node --version
 npm install -g pnpm
 
 # 3. 安装插件
-#    （pnpm ≥ 11 默认拦截 protobufjs 的构建脚本——若报
-#     ERR_PNPM_IGNORED_BUILDS，在命令后追加 --allow-build=protobufjs）
-npx @deepseek-ai/dsh plugin --profile feishu add @dsh-feishu/dsh-feishu@latest
+#    （pnpm ≥ 11 默认拦截 protobufjs 的构建脚本，所以加上
+#     --allow-build=protobufjs 让它执行）
+npx @deepseek-ai/dsh plugin --profile feishu add @dsh-feishu/dsh-feishu@latest --allow-build=protobufjs
 
 # 4. 扫一次二维码：创建并配置飞书应用
 npx --yes --package @dsh-feishu/dsh-feishu dsh-feishu-setup --new --profile feishu

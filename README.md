@@ -35,9 +35,9 @@ node --version
 npm install -g pnpm
 
 # 3. install the plugin
-#    (pnpm ≥ 11 blocks the protobufjs build script by default — if this
-#     fails with ERR_PNPM_IGNORED_BUILDS, append --allow-build=protobufjs)
-npx @deepseek-ai/dsh plugin --profile feishu add @dsh-feishu/dsh-feishu@latest
+#    (pnpm ≥ 11 blocks the protobufjs build script by default, so
+#     --allow-build=protobufjs lets pnpm run it)
+npx @deepseek-ai/dsh plugin --profile feishu add @dsh-feishu/dsh-feishu@latest --allow-build=protobufjs
 
 # 4. one QR scan — create + configure the Feishu app
 npx --yes --package @dsh-feishu/dsh-feishu dsh-feishu-setup --new --profile feishu
