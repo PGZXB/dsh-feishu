@@ -1737,9 +1737,12 @@ describe('Bridge', () => {
       const help = texts.find((t) => t.text.includes('dsh-feishu commands'));
       expect(help).toBeDefined();
       expect(help?.text).toContain('/group');
-      // /help documents the with-arg usage (/cd <path>, /model [provider/model],
-      // /resume [id] — so a bare command's card is not the only way to learn it).
+      // /help documents the with-arg usage, distinguishing a REQUIRED arg
+      // (`<...>`: cd/group/goal/feedback need a value) from an OPTIONAL one
+      // (`[...]`: a picker/toggle card completes the action on its own).
       expect(help?.text).toContain('/cd <path>');
+      expect(help?.text).toContain('/group <name>');
+      expect(help?.text).toContain('/goal <text>');
       expect(help?.text).toContain('/model [provider/model]');
       expect(help?.text).toContain('/resume [id]');
       expect(h.agentStore.followups.get('feishu-session-1')).toBeUndefined();

@@ -145,7 +145,7 @@ feels faster; `/help` lists them all.
 |---|---|
 | `/help` | list all commands |
 | `/panel` | open the control-panel card (all commands as buttons) |
-| `/group [name]` | create a group with the bot (bare opens a name-input card) |
+| `/group <name>` | create a group with the bot (bare opens a name-input card) |
 | `/cancel` | stop the running turn |
 | `/cd <path>` | set this chat's working directory (bare opens a path-input card) |
 | `/repo [path]` | pick a project directory (bare opens the picker) |
@@ -157,9 +157,9 @@ feels faster; `/help` lists them all.
 | `/sessions` | list saved sessions (resume any of them from the card) |
 | `/resume [id]` | resume a saved session (bare opens the session list) |
 | `/clear` `/new` | start a fresh conversation (the old session stays saved) |
-| `/goal [text]` | set the task goal (bare opens a text-input card) |
+| `/goal <text>` | set the task goal (bare opens a text-input card) |
 | `/compact` | compact older conversation history |
-| `/feedback [text]` | send feedback (bare opens a text-input card) |
+| `/feedback <text>` | send feedback (bare opens a text-input card) |
 | `/permission [preset]` | switch the permission preset (bare opens the picker) |
 | `/plan [on|off]` | enter or leave plan mode |
 

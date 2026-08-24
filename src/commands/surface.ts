@@ -54,7 +54,7 @@ const HARNESS_COMMANDS: ReadonlyArray<{
   {
     name: 'goal',
     description: 'Set or view the goal for a long-running task (dsh web)',
-    usage: '[text]',
+    usage: '<text>',
     buttonLabel: '🎯 Goal',
   },
   {
@@ -65,7 +65,7 @@ const HARNESS_COMMANDS: ReadonlyArray<{
   {
     name: 'feedback',
     description: 'Send feedback (dsh web)',
-    usage: '[text]',
+    usage: '<text>',
     buttonLabel: '💬 Feedback',
   },
 ];
@@ -197,7 +197,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
   commands.register({
     name: 'group',
     description: 'Create a group chat with you and the bot',
-    usage: '[name]',
+    usage: '<name>',
     category: 'chat',
     buttonLabel: '👥 New group',
     handler: async (invocation) => {
