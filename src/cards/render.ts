@@ -126,6 +126,10 @@ export type SurfaceAction =
   | { readonly kind: 'toggle-rows' }
   | { readonly kind: 'repo-pick' }
   | { readonly kind: 'repo-page' }
+  // Agent preset (Mode) dropdown on a working-directory card: stores the
+  // chosen preset for the chat; the choice arrives in the callback's
+  // `option` field (the dropdown stamps the marker only).
+  | { readonly kind: 'preset-pick' }
   | { readonly kind: 'command'; readonly name: string }
   | { readonly kind: 'resume-session'; readonly sessionId: string }
   | { readonly kind: 'panel-page'; readonly page: string }
@@ -204,6 +208,52 @@ export function repoOptionLabel(project: ProjectInfo, roots: readonly string[]):
   return `${rel} (${project.branch})${project.type === 'worktree' ? ' [worktree]' : ''}`;
 }
 
+/** One agent-preset option the working-directory Mode dropdown shows. */
+export interface AgentPresetView {
+  /** The preset id passed as `meta.agentPreset` when a session's agent is
+   *  created. */
+  readonly id: string;
+  /** Human label (falls back to the id). */
+  readonly name: string;
+  /** Whether this preset is the deployment default (`isDefault`). */
+  readonly isDefault: boolean;
+}
+
+/**
+ * The Mode `select_static` for a working-directory card: a single-choice
+ * dropdown (repo-picker pattern — a `select_static` DIRECTLY inside an
+ * `action` container; v1 cards drop it inside a `form`) whose change fires
+ * `preset-pick`, the chosen id arriving in the callback's `option` field.
+ * Preselected to `currentPreset ?? the default id`. Returns `undefined` when
+ * the roster is empty — no Mode is rendered (the flow is unchanged).
+ * @param presets - the roster.
+ * @param currentPreset - the chat's chosen preset, or `undefined`.
+ * @returns the Mode action element, or `undefined`.
+ */
+export function buildModeSelect(
+  presets: readonly AgentPresetView[],
+  currentPreset: string | undefined,
+): CardElement | undefined {
+  if (presets.length === 0) return undefined;
+  const defaultId = presets.find((preset) => preset.isDefault)?.id;
+  const initial = currentPreset ?? defaultId;
+  return {
+    tag: 'action',
+    actions: [
+      {
+        tag: 'select_static',
+        placeholder: { tag: 'plain_text', content: 'Choose a mode…' },
+        ...(initial !== undefined ? { initial_option: initial } : {}),
+        options: presets.map((preset) => ({
+          text: { tag: 'plain_text', content: preset.name },
+          value: preset.id,
+        })),
+        value: { kind: 'preset-pick' },
+      },
+    ],
+  };
+}
+
 /**
  * Build the interactive repo-picker card. With up to
  * {@link REPO_SELECT_MAX_OPTIONS} projects, selection is a `select_static`
@@ -216,12 +266,17 @@ export function repoOptionLabel(project: ProjectInfo, roots: readonly string[]):
  * @param projects - candidate projects (recursively scanned).
  * @param roots - repoRoots, used to show relative paths in labels.
  * @param page - zero-based page index (button fallback only).
+ * @param presets - the agent-preset roster for a Mode dropdown (empty → no
+ *   Mode rendered; the flow is unchanged).
+ * @param currentPreset - the chat's chosen preset id, or `undefined`.
  * @returns Feishu interactive card JSON (v1 layout).
  */
 export function buildRepoPickerCard(
   projects: readonly ProjectInfo[],
   roots: readonly string[],
   page = 0,
+  presets: readonly AgentPresetView[] = [],
+  currentPreset?: string,
 ): CardJson {
   const elements: CardElement[] = [
     {
@@ -231,6 +286,13 @@ export function buildRepoPickerCard(
     },
     { tag: 'hr' },
   ];
+  // Mode dropdown (agent-preset-selection): a separate action container
+  // BEFORE the project dropdown, only when the roster is non-empty. An
+  // untouched Mode (never picked) preselects the deployment default.
+  if (presets.length > 0) {
+    const mode = buildModeSelect(presets, currentPreset);
+    if (mode !== undefined) elements.push(mode);
+  }
   if (projects.length > 0 && projects.length <= REPO_SELECT_MAX_OPTIONS) {
     // Dropdown primary (botmux `repo_switch` pattern): the select lives
     // inside an `action` container, not a `form`.
@@ -912,40 +974,54 @@ export interface PanelInputCardOptions {
  * holds ONLY input+button; labels stay outside, or the whole card renders
  * empty), followed by a Back action row. The submit callback carries
  * `formValue[fieldName]` and the command marker in `value`.
+ *
+ * The `/cd` card additionally carries a Mode `select_static` OUTSIDE the
+ * form (the form stays input+submit only — botmux rule): a change fires
+ * `preset-pick`, and the submit binds the chosen preset to the new session.
+ * When `presets` is empty no Mode is rendered (the flow is unchanged).
  */
-export function buildInputCard(options: PanelInputCardOptions): CardJson {
+export function buildInputCard(
+  options: PanelInputCardOptions,
+  presets: readonly AgentPresetView[] = [],
+  currentPreset?: string,
+): CardJson {
+  const elements: CardElement[] = [
+    { tag: 'markdown', content: options.hint },
+    { tag: 'hr' },
+    {
+      tag: 'form',
+      name: 'panel-input',
+      elements: [
+        {
+          tag: 'input',
+          name: options.fieldName,
+          placeholder: { tag: 'plain_text', content: options.placeholder },
+        },
+        {
+          tag: 'button',
+          text: { tag: 'plain_text', content: options.submitLabel },
+          type: 'primary',
+          // Feishu requires a name for form-container buttons (ErrCode
+          // 200530, user-tested).
+          name: 'panel-input-submit',
+          action_type: 'form_submit',
+          value: actionValue({
+            kind: 'panel-input-submit',
+            command: options.command,
+            ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
+          }),
+        },
+      ],
+    },
+  ];
+  if (presets.length > 0) {
+    const mode = buildModeSelect(presets, currentPreset);
+    if (mode !== undefined) elements.push(mode);
+  }
   return {
     config: { wide_screen_mode: true },
     header: { title: { tag: 'plain_text', content: options.title }, template: 'wathet' },
-    elements: [
-      { tag: 'markdown', content: options.hint },
-      { tag: 'hr' },
-      {
-        tag: 'form',
-        name: 'panel-input',
-        elements: [
-          {
-            tag: 'input',
-            name: options.fieldName,
-            placeholder: { tag: 'plain_text', content: options.placeholder },
-          },
-          {
-            tag: 'button',
-            text: { tag: 'plain_text', content: options.submitLabel },
-            type: 'primary',
-            // Feishu requires a name for form-container buttons (ErrCode
-            // 200530, user-tested).
-            name: 'panel-input-submit',
-            action_type: 'form_submit',
-            value: actionValue({
-              kind: 'panel-input-submit',
-              command: options.command,
-              ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
-            }),
-          },
-        ],
-      },
-    ],
+    elements,
   };
 }
 

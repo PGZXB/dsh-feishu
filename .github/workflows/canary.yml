@@ -85,6 +85,10 @@ jobs:
         env:
           DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-turn-produced-files
         run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
+      - name: Prepare integration-test profile (agent-preset-selection)
+        env:
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-agent-preset-selection
+        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
       - name: Prepare scenario integration-test profile
         env:
           DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-scenarios

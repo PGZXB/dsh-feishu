@@ -34,6 +34,7 @@ import z from '@deepseek-ai/schemastery';
 import { pickAttachmentFileName } from './attachment-naming.js';
 import {
   type AgentDefaultModelService,
+  type AgentPresetsService,
   type AgentStore,
   type ApprovalRequestLike,
   type AskQuestionsRequestLike,
@@ -460,14 +461,14 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
       });
       return agent;
     },
-    create: async (sessionId, cwd) => {
+    create: async (sessionId, cwd, agentPreset) => {
       const agents = ctx.get('agents');
       if (agents === undefined) {
         throw new Error('agents service unavailable; cannot create a session');
       }
       const { agent } = await agents.create({
         sessionId: sessionId as unknown as SessionId,
-        meta: { cwd },
+        meta: { cwd, ...(agentPreset !== undefined ? { agentPreset } : {}) },
         ...(resolvedAgentOptions !== undefined ? { agentOptions: resolvedAgentOptions } : {}),
       });
       // Attach the new session to the workspace owning `cwd` (dsh web parity),
@@ -575,6 +576,15 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
       ? { agentDefaultModel: ctx.get('agentDefaultModel') as AgentDefaultModelService }
       : {}),
     ...(ctx.get('llm') !== undefined ? { llm: ctx.get('llm') as LlmService } : {}),
+    // Agent-presets roster seam (agent-preset-selection): an optionally
+    // mounted host service listing the composed presets a fresh session can
+    // be bound to (`meta.agentPreset`). Resolved lazily (like the workspace
+    // registry) because the service may initialize after apply; absent, the
+    // working-directory cards render no Mode dropdown.
+    getAgentPresets: () => {
+      const service = ctx.get('agentPresets');
+      return service === undefined ? undefined : (service as AgentPresetsService);
+    },
   });
   logger.debug(
     `[feishu] host services: sessionTitle=${ctx.get('sessionTitle') !== undefined} ` +

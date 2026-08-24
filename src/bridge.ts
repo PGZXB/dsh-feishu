@@ -141,8 +141,13 @@ export interface AgentStore {
    * create. Throws when no persisted log exists for the id.
    */
   resume(sessionId: string): Promise<Agent>;
-  /** Create an agent (and its session) for the given id and working directory. */
-  create(sessionId: string, cwd: string): Promise<Agent>;
+  /**
+   * Create an agent (and its session) for the given id and working directory.
+   * @param agentPreset - optional agent-preset id to compose the NEW session's
+   *   agent from (`meta.agentPreset`), or `undefined` for the deployment
+   *   default. Bound only to the freshly created session (durable per session).
+   */
+  create(sessionId: string, cwd: string, agentPreset?: string): Promise<Agent>;
 }
 
 /** One `/sessions` row as the surface lists it (structural subset of dsh's
@@ -174,6 +179,40 @@ export interface PermissionPresetService {
   current(events: readonly unknown[]): string;
   /** Record a changed preset and apply its sandbox/approval bundle. */
   set(session: unknown, name: string): void;
+}
+
+/** One agent-preset the working-directory cards list as a Mode option
+ *  (structural subset of the host `agentPresets` roster row). */
+export interface AgentPresetView {
+  /** The preset id passed as `meta.agentPreset` when a session's agent is
+   *  created. */
+  readonly id: string;
+  /** Human label (falls back to the id). */
+  readonly name: string;
+  /** Whether this preset is the deployment default (`isDefault`). */
+  readonly isDefault: boolean;
+}
+
+/** Structural subset of `ctx.agentPresets` (an optionally-mounted host
+ *  service): the roster of composed agent presets. Kept local so the plugin
+ *  compiles without a dependency on the package; `ctx.get('agentPresets')`
+ *  returns the full service at runtime. An absent service renders no Mode
+ *  dropdown (the working-directory flow is unchanged). */
+export interface AgentPresetsService {
+  /** List the roster. `broken` rows are dropped by the surface — a broken
+   *  composition degrades (drops the preset) rather than wedging a session. */
+  list(): Promise<{
+    readonly presets: readonly {
+      readonly id: string;
+      readonly trust?: string;
+      readonly isDefault?: boolean;
+      readonly name?: string;
+      readonly description?: string;
+      readonly broken?: boolean;
+    }[];
+    readonly authorable?: boolean;
+    readonly hasDocument?: boolean;
+  }>;
 }
 
 /** Structural subset of `ctx.planMode` (`@deepseek-ai/dsh-plan-mode`). */
@@ -432,6 +471,15 @@ export interface BridgeOptions {
    * directories. Empty means `/repo` lists nothing (use `/cd <path>`).
    */
   readonly repoRoots?: readonly string[];
+  /**
+   * Agent-presets roster seam (`ctx.agentPresets`, optionally mounted by the
+   * host): lists the composed agent presets a fresh session can be bound to
+   * via `meta.agentPreset`. Resolved lazily like `getWorkspaceRegistry`
+   * because the service may initialize asynchronously after apply. Absent (or
+   * an empty roster), the working-directory cards render NO Mode dropdown
+   * and the flow is unchanged (the deployment default applies).
+   */
+  readonly getAgentPresets?: () => AgentPresetsService | undefined;
 }
 
 /** Whether a group is a 1-person-1-bot solo group (mention gate relaxation). */
@@ -540,6 +588,15 @@ export class Bridge {
    * persisted: a restart drops queued messages (accepted trade-off).
    */
   private readonly queued = new Map<string, QueueCardEntry[]>();
+  /**
+   * Per-chat explicitly-chosen agent preset id (agent-preset-selection). Set
+   * ONLY when the user picks a Mode on a working-directory card (or passes
+   * `/cd <path> --preset <id>`); an untouched Mode dropdown never binds a
+   * preset — the deployment default applies. Binds ONLY to the chat's NEXT
+   * fresh session (created on remint); existing/resumed sessions keep their
+   * durable preset.
+   */
+  private readonly selectedPreset = new Map<string, string>();
 
   /**
    * The user to proactively @ for a chat: the last accepted sender, only in
@@ -570,6 +627,49 @@ export class Bridge {
   private liveAgent(chatId: string): Agent | undefined {
     const sessionId = this.options.sessionMap.get(chatId);
     return sessionId === undefined ? undefined : this.options.agentStore.get(sessionId);
+  }
+
+  /** The chat's explicitly-chosen agent preset id, or `undefined` when the
+   *  user never picked a Mode (an untouched dropdown → deployment default).
+   *  @param chatId - the chat.
+   *  @returns the chosen preset id, or `undefined`. */
+  selectedAgentPreset(chatId: string): string | undefined {
+    return this.selectedPreset.get(chatId);
+  }
+
+  /** Record an explicitly-chosen agent preset id for a chat. The preset binds
+   *  ONLY to the chat's NEXT fresh session; a later working-directory choice
+   *  with no Mode touch leaves the prior choice in place (never implicit).
+   *  @param chatId - the chat.
+   *  @param id - the chosen preset id. */
+  setSelectedAgentPreset(chatId: string, id: string): void {
+    this.selectedPreset.set(chatId, id);
+  }
+
+  /** Load the agent-preset roster for the working-directory Mode dropdown.
+   *  Returns `[]` when the roster service is absent, the roster is empty, or
+   *  the list fails — the cards then render NO Mode dropdown and the flow is
+   *  unchanged. `broken` rows are dropped (a broken composition degrades,
+   *  never wedges a session).
+   *  @returns the roster as `{id, name, isDefault}` views.
+   */
+  private async loadAgentPresets(): Promise<readonly AgentPresetView[]> {
+    const service = this.options.getAgentPresets?.();
+    if (service === undefined) return [];
+    try {
+      const roster = await service.list();
+      this.options.logger.debug(`agent presets: ${roster.presets.length} preset(s)`);
+      return roster.presets
+        .filter((preset) => preset.broken !== true)
+        .map((preset) => ({
+          id: preset.id,
+          name: preset.name ?? preset.id,
+          isDefault: preset.isDefault === true,
+        }));
+    } catch (error: unknown) {
+      this.options.logger.warn(`agent presets load failed: ${String(error)}`);
+      return [];
+    }
   }
   private readonly disposeEvents: () => void;
   private readonly commands = new CommandRegistry();
@@ -619,7 +719,8 @@ export class Bridge {
       agentStore: this.options.agentStore,
       defaultCwd: this.options.defaultCwd,
       reactions: this.options.reactions,
-      resolveAgent: (chatId, sessionId, cwd) => this.resolveAgent(chatId, sessionId, cwd),
+      resolveAgent: (chatId, sessionId, cwd) =>
+        this.resolveAgent(chatId, sessionId, cwd, this.selectedAgentPreset(chatId)),
       resolveContextWindow: (chatId, sessionId, cwd) =>
         this.resolveContextWindow(chatId, sessionId, cwd),
       textMentionFor: (chatId) => this.textMentionFor(chatId),
@@ -662,6 +763,8 @@ export class Bridge {
       loadModelOptions: () => this.loadModelOptions(),
       currentModelSelection: (chatId) => this.currentModelSelection(chatId),
       ensureAgent: (chatId) => this.ensureAgent(chatId),
+      loadAgentPresets: () => this.loadAgentPresets(),
+      selectedAgentPreset: (chatId) => this.selectedAgentPreset(chatId),
       permissionPresets: () => this.options.permissionPresets,
       canMutateSessions:
         this.options.sessionTitle !== undefined || this.options.getWorkspaceRegistry !== undefined,
@@ -709,7 +812,9 @@ export class Bridge {
       isWorking: (chatId) => this.refuseWhileWorking(chatId),
       allowedWhileWorking: (kind) => Bridge.ALLOWED_WHILE_WORKING.has(kind),
       findCommand: (name) => this.commands.find(name),
-      ensureAgent: (chatId) => this.ensureAgent(chatId),
+      ensureAgent: (chatId, preset) => this.ensureAgent(chatId, preset),
+      selectedAgentPreset: (chatId) => this.selectedAgentPreset(chatId),
+      setSelectedAgentPreset: (chatId, id) => this.setSelectedAgentPreset(chatId, id),
       liveAgent: (chatId) => this.liveAgent(chatId),
       resumeSession: (chatId, sessionId, cwd) => this.resumeSession(chatId, sessionId, cwd),
       exportSessionLog: (chatId, sessionId) => this.exportSessionLog(chatId, sessionId),
@@ -1347,9 +1452,11 @@ export class Bridge {
    * panel view could not be rendered" and every later panel button went
    * dead).
    * @param chatId - the chat.
+   * @param agentPreset - optional agent-preset id to compose the NEW session's
+   *   agent from (`meta.agentPreset`); `undefined` for the deployment default.
    * @returns a live agent bound to the chat's session.
    */
-  private async ensureAgent(chatId: string): Promise<Agent> {
+  private async ensureAgent(chatId: string, agentPreset?: string): Promise<Agent> {
     const sessionId = this.options.sessionMap.ensure(chatId);
     const live = this.options.agentStore.get(sessionId);
     if (live !== undefined) return live;
@@ -1360,13 +1467,13 @@ export class Bridge {
       this.options.logger.warn(`resume of session ${sessionId} failed: ${String(resumeError)}`);
     }
     try {
-      return await this.options.agentStore.create(sessionId, cwd);
+      return await this.options.agentStore.create(sessionId, cwd, agentPreset);
     } catch (createError: unknown) {
       this.options.logger.error(
         `session ${sessionId} unusable (${String(createError)}); rebinding a fresh session`,
       );
       const freshId = this.options.sessionMap.remint(chatId);
-      return this.options.agentStore.create(freshId, cwd);
+      return this.options.agentStore.create(freshId, cwd, agentPreset);
     }
   }
 
@@ -1448,7 +1555,12 @@ export class Bridge {
     await this.streaming.beginTurn(message.chatId, message.messageId, turnTitle(message.text));
     const sessionId = this.options.sessionMap.ensure(message.chatId);
     const cwd = this.options.sessionMap.cwdFor(message.chatId) ?? this.options.defaultCwd;
-    const agent = await this.resolveAgent(message.chatId, sessionId, cwd);
+    const agent = await this.resolveAgent(
+      message.chatId,
+      sessionId,
+      cwd,
+      this.selectedAgentPreset(message.chatId),
+    );
     this.options.logger.info(`delivering message ${message.messageId} to agent`);
     agent.followup(
       createUserMessage({
@@ -1721,7 +1833,7 @@ export class Bridge {
     await this.streaming.beginTurn(chatId, source.messageId, turnTitle(item.text));
     const sessionId = this.options.sessionMap.ensure(chatId);
     const cwd = this.options.sessionMap.cwdFor(chatId) ?? this.options.defaultCwd;
-    const agent = await this.resolveAgent(chatId, sessionId, cwd);
+    const agent = await this.resolveAgent(chatId, sessionId, cwd, this.selectedAgentPreset(chatId));
     this.options.logger.info(`delivering queued message ${item.message.id} to agent`);
     agent.followup(item.message);
     this.options.logger.debug(`queue drain (chat ${chatId}): delivered ${item.message.id} -> sent`);
@@ -2091,9 +2203,18 @@ export class Bridge {
    * create. The ladder keeps the chat usable across restarts.
    * @param chatId - the Feishu chat id.
    * @param sessionId - the mapped session id.
+   * @param agentPreset - optional agent-preset id for a freshly created agent
+   *   (`meta.agentPreset`), applied only when the agent is actually created
+   *   here (a live/resumed agent keeps its durable preset — binding is
+   *   per-session, not per-chat).
    * @returns the agent to deliver into.
    */
-  private async resolveAgent(chatId: string, sessionId: string, cwd: string): Promise<Agent> {
+  private async resolveAgent(
+    chatId: string,
+    sessionId: string,
+    cwd: string,
+    agentPreset?: string,
+  ): Promise<Agent> {
     const live = this.options.agentStore.get(sessionId);
     if (live !== undefined) {
       this.options.logger.debug(`agent resolve ${chatId}: live agent for session ${sessionId}`);
@@ -2111,14 +2232,14 @@ export class Bridge {
       `agent resolve ${chatId}: resume failed, creating session ${sessionId}`,
     );
     try {
-      return await this.options.agentStore.create(sessionId, cwd);
+      return await this.options.agentStore.create(sessionId, cwd, agentPreset);
     } catch (createError: unknown) {
       this.options.logger.error(
         `session ${sessionId} unusable (${String(createError)}); rebinding a fresh session`,
       );
       const freshId = this.options.sessionMap.remint(chatId);
       this.options.logger.debug(`agent resolve ${chatId}: rebinding fresh session ${freshId}`);
-      return this.options.agentStore.create(freshId, cwd);
+      return this.options.agentStore.create(freshId, cwd, agentPreset);
     }
   }
 
@@ -2178,6 +2299,7 @@ export class Bridge {
       }
       case 'repo-pick':
       case 'repo-page':
+      case 'preset-pick':
       case 'panel':
       case 'panel-page':
       case 'panel-back':
@@ -2294,12 +2416,15 @@ export class Bridge {
       pushPanel: async (chatId, view) => {
         await bridge.panel.openPanelView(chatId, view);
       },
-      ensureAgent: (chatId) => bridge.ensureAgent(chatId),
+      ensureAgent: (chatId, preset) => bridge.ensureAgent(chatId, preset),
       resumeSession: (chatId, sessionId, cwd) => bridge.resumeSession(chatId, sessionId, cwd),
       isWorking: (chatId) => bridge.refuseWhileWorking(chatId),
       resetChat: (chatId) => bridge.resetChatState(chatId),
       lastOutput: (chatId) => bridge.streaming.lastOutput(chatId),
       liveAgent: (chatId) => bridge.liveAgent(chatId),
+      getAgentPresets: () => bridge.options.getAgentPresets?.(),
+      selectedAgentPreset: (chatId) => bridge.selectedAgentPreset(chatId),
+      setSelectedAgentPreset: (chatId, id) => bridge.setSelectedAgentPreset(chatId, id),
     };
   }
 }

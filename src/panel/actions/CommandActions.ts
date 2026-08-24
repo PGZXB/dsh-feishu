@@ -181,7 +181,21 @@ export class PanelInputSubmitAction extends PanelAction {
     }
     const command = ctx.findCommand(commandName);
     if (command === undefined) return;
-    return runCommand(action.chatId, action.operatorOpenId, command, rawInput);
+    const result = runCommand(action.chatId, action.operatorOpenId, command, rawInput);
+    // A `/cd` submit reminted a fresh session; bind an explicitly-chosen
+    // Mode preset to that session's agent (agent-preset-selection). The cd
+    // handler itself only does setCwd + remint — the binding happens here.
+    if (commandName === 'cd') {
+      return (async () => {
+        const final = await result;
+        if (final.kind === 'success') {
+          const preset = ctx.selectedAgentPreset(action.chatId);
+          if (preset !== undefined) await ctx.ensureAgent(action.chatId, preset);
+        }
+        return final;
+      })();
+    }
+    return result;
   }
   protected override async finish(ctx: PanelActionContext, action: CardAction): Promise<void> {
     const commandName = action.value.command;

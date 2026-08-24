@@ -14,6 +14,7 @@
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import type {
   AgentDefaultModelService,
+  AgentPresetsService,
   AgentStore,
   BridgeLogger,
   LlmService,
@@ -70,6 +71,24 @@ const HARNESS_COMMANDS: ReadonlyArray<{
   },
 ];
 
+/**
+ * Split a `/cd` raw argument into a working-directory path and an optional
+ * trailing `--preset <id>` flag. The remaining text (before the flag) is the
+ * path; an absent flag leaves `preset` undefined.
+ * @param raw - the raw command input (already trimmed).
+ * @returns the path and the optional preset id.
+ */
+export function parseCdPreset(raw: string): {
+  readonly path: string;
+  readonly preset: string | undefined;
+} {
+  const match = /--preset\s+(\S+)\s*$/.exec(raw);
+  if (match === null) return { path: raw.trim(), preset: undefined };
+  const preset = match[1];
+  const path = raw.slice(0, match.index).trim();
+  return { path, preset };
+}
+
 /** Mirror the harness /plan command's outcome wording for a toggle. */
 export function planModeResultText(
   target: boolean,
@@ -123,8 +142,9 @@ export interface SurfaceCommandHost {
   openPanel(chatId: string): Promise<string>;
   /** PUSH a panel sub-view (pickers / sessions list). */
   pushPanel(chatId: string, view: PanelView): Promise<void>;
-  /** Ensure a live agent exists for the chat (harness passthrough). */
-  ensureAgent(chatId: string): Promise<Agent>;
+  /** Ensure a live agent exists for the chat (harness passthrough). The
+   *  optional preset composes a freshly created agent from `meta.agentPreset`. */
+  ensureAgent(chatId: string, agentPreset?: string): Promise<Agent>;
   /** The shared /resume flow (slash line and /sessions Resume button). */
   resumeSession(chatId: string, sessionId: string, cwd?: string): Promise<CommandResult>;
   /** Whether a turn is running (the working-state gate). */
@@ -135,6 +155,14 @@ export interface SurfaceCommandHost {
   lastOutput(chatId: string): string | undefined;
   /** The live agent for a chat, or `undefined`. */
   liveAgent(chatId: string): Agent | undefined;
+  /** The agent-presets roster service (agent-preset-selection), or
+   *  `undefined` when not mounted. Absent, `--preset` is accepted but only
+   *  applied when the roster (if any) knows the id. */
+  getAgentPresets?(): AgentPresetsService | undefined;
+  /** The chat's explicitly-chosen agent preset id, or `undefined`. */
+  selectedAgentPreset?(chatId: string): string | undefined;
+  /** Record an explicitly-chosen agent preset id for a chat. */
+  setSelectedAgentPreset?(chatId: string, id: string): void;
 }
 
 /**
@@ -246,12 +274,33 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
         await options.pushPanel(invocation.chatId, { kind: 'input', command: 'cd' });
         return { kind: 'success', text: '' };
       }
-      const resolved = resolveDirectory(target);
+      // `/cd <path> --preset <id>` binds the fresh session to the preset.
+      const { path: cdPath, preset } = parseCdPreset(target);
+      // Validate an explicit preset against the roster BEFORE any cwd change
+      // (an unknown id is a usage error, never a partial change). A
+      // roster-less deployment accepts `--preset` but applies nothing (the
+      // id cannot be validated — only applied when the roster knows it).
+      const service = options.getAgentPresets?.();
+      if (preset !== undefined && service !== undefined) {
+        const roster = await service.list();
+        const known = roster.presets.some((entry) => entry.id === preset && entry.broken !== true);
+        if (!known) return { kind: 'error', text: `unknown agent preset: ${preset}` };
+      }
+      const resolved = resolveDirectory(cdPath);
       if (!resolved.ok) return { kind: 'error', text: resolved.error };
       options.sessionMap.setCwd(invocation.chatId, resolved.path);
       // A live session keeps its old cwd; rebind so the next message starts
       // a fresh session in the new directory (mirrors botmux /cd).
       options.sessionMap.remint(invocation.chatId);
+      if (preset !== undefined && service !== undefined) {
+        // Bind the chosen preset to the fresh session's agent NOW (with the
+        // stored chat state so a subsequent mode change stays coherent).
+        const bind = options.setSelectedAgentPreset;
+        if (bind !== undefined) {
+          bind(invocation.chatId, preset);
+          await options.ensureAgent(invocation.chatId, preset);
+        }
+      }
       return {
         kind: 'success',
         text: `Working directory set to ${resolved.path} (session restarts on your next message).`,

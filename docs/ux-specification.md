@@ -1617,3 +1617,66 @@ would show the pre-switch model (the `#40 display bug`). It falls back to
 - Future dsh without `installModelSelection`: the import would fail at load;
   documented as version-coupled to the dsh family bump.
 4d2ba302 (feat: /model switches the current session's model immediately (and sets the default))
+
+## Part: agent-preset-selection
+
+> Select an agent preset when choosing a working directory
+
+Reference: dsh web's per-session agent preset (the host `agentPresets` roster
+→ `list({})` → `{ presets: [{ id, label, isDefault, trust }], authorable,
+hasDocument }`; `select({ sessionId, agentPreset })` recomposes a session's
+agent, allowed only while the session is blank, else `agent-preset-locked`).
+The preset is a string id (`standard`, `minimal`, `cordis`, …) passed as
+`meta.agentPreset` when a session's agent is created; it is durable (it decides
+the session's tools + prompt), so a resumed session keeps its original preset.
+
+### Intended behavior
+
+Choosing a working directory for a fresh session can also select the agent
+preset that session is composed from. The preset binds **only to the NEW
+session** created after the working-directory choice (remint); an existing /
+resumed session keeps its durable preset.
+
+- **Trigger:** the working-directory picker card (`/repo` bare or `/repo
+  <path>` — both open the project picker; `/cd` bare opens the path-input
+  card) carries a **Mode** dropdown loaded from the `agentPresets` roster,
+  pre-selected to the deployment default (`isDefault`). A direct
+  `/cd <path> --preset <id>` also binds a preset.
+- **States & transitions (per chat `selectedPreset`):**
+  - catalog absent (`agentPresets` service missing / empty roster) → **no Mode
+    dropdown**; the pick/submit omits `agentPreset` (deployment default).
+  - catalog present, dropdown untouched → the pick/submit omits
+    `agentPreset` (deployment default) unless a preset was explicitly chosen.
+  - an explicit **Mode change** on the card (`preset-pick` action) stores the
+    chosen preset id for the chat; the card re-renders with `★ current: <label>`
+    and the dropdown's `initial_option` updated.
+  - **repo-pick** / **cd submit** create the new session with
+    `meta.agentPreset = selectedPreset` (omitted when not explicitly chosen).
+  - a pick on a card whose Mode was changed binds that preset; one where it
+    wasn't touches nothing (deployment default).
+- **Card/panel shape:**
+  - The `/repo` picker card adds a **Mode** `select_static` (options = catalog
+    `id/label`, `initial_option` = default/current) alongside the existing
+    project dropdown; its change fires `preset-pick`.
+  - The `/cd` input card adds the **Mode** `select_static` OUTSIDE the form
+    (form holds only input + submit — botmux rule); its change fires
+    `preset-pick`.
+  - `session.create`/agent `create` receives `meta.agentPreset`.
+- **Failure modes:**
+  - `agentPresets` service absent → no Mode dropdown; the flow is unchanged
+    (deployment default).
+  - empty roster (no composed preset) → no dropdown; deployment default.
+  - an invalid/`broken` preset id → the roster row carries `broken`; the pick
+    degrades (drops the preset) rather than wedging the session (the host
+    rejects an unloadable composition).
+  - a direct `/cd <path> --preset <id>` with an unknown id → usage error, no
+    cwd change.
+- **Acceptance:**
+  - Choosing a working dir on the card (with or without touching Mode) creates
+    a session; an explicit Mode binds it, an untouched Mode uses the
+    deployment default.
+  - `/cd <path> --preset <id>` binds; `/cd <path>` alone uses the default.
+  - Existing/resumed sessions keep their preset. No catalog → no dropdown.
+  - `meta.agentPreset` is the string id; a `broken`/invalid preset degrades
+    loudly, never wedges.
+
