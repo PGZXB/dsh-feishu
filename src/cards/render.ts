@@ -990,10 +990,7 @@ export function buildPanelNoticeCard(options: {
   return {
     config: { wide_screen_mode: true },
     header: { title: { tag: 'plain_text', content: options.title }, template: 'wathet' },
-    elements: [
-      { tag: 'markdown', content: options.hint },
-      { tag: 'hr' },
-    ],
+    elements: [{ tag: 'markdown', content: options.hint }, { tag: 'hr' }],
   };
 }
 

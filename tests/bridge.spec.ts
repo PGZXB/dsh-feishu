@@ -1859,11 +1859,12 @@ describe('working directory commands', () => {
       option: join(root, 'proj-b'),
     });
     expect(h.sessionMap.cwdFor('oc_chat')).toBe(join(root, 'proj-b'));
-    // The pick lands, notifies as a result card, and the panel returns to
-    // the menu root.
+    // The pick lands, notifies as a result card, and — because this card was
+    // seeded by a typed command (a standalone root) — it STAYS on its current
+    // view instead of returning to the panel menu.
     expect(resultCardTexts(h).some((t) => t.includes('Working directory set to'))).toBe(true);
-    const menu = h.transport.updatedCards.at(-1);
-    expect(menu?.header?.title.content).toBe('⚙️ dsh-feishu panel');
+    const stay = h.transport.updatedCards.at(-1);
+    expect(stay?.header?.title.content).toBe('📚 Pick a project');
   });
 
   it('/repo with an empty root list posts an empty picker (no crash, no dropdown)', async () => {
@@ -2563,9 +2564,10 @@ describe('panel command palette', () => {
       value: { kind: 'panel-input-submit', command: 'cd' },
       formValue: { path: '' },
     });
-    // /cd with no argument → usage error as a result card, and the panel
-    // returns to menu.
-    expect(resultCardTexts(h).some((t) => t.includes('usage: /cd'))).toBe(true);
+    // /cd with no argument no longer raises a usage error (the handler now
+    // opens the text-input card for a bare /cd); the panel-button flow still
+    // returns to the menu after the submit.
+    expect(resultCardTexts(h).some((t) => t.includes('usage: /cd'))).toBe(false);
     expect(h.transport.updatedCards.at(-1)?.header?.title.content).toBe('⚙️ dsh-feishu panel');
   });
 
@@ -3348,8 +3350,9 @@ describe('stateful web wrappers (/permission picker, /plan toggle)', () => {
       option: 'read-only',
     });
     expect(service.applied).toEqual(['read-only']);
-    // The panel returns to the menu root.
-    expect(h.transport.updatedCards.at(-1)?.header?.title.content).toBe('⚙️ dsh-feishu panel');
+    // A typed-command card STAYS on its result (the permission picker is
+    // redrawn) instead of returning to the panel menu.
+    expect(h.transport.updatedCards.at(-1)?.header?.title.content).toBe('🔐 Permission presets');
   });
 
   it('a permission pick while a turn runs is refused', async () => {
@@ -3594,6 +3597,15 @@ describe('/model picker', () => {
     // A different card-opening command also opens its own fresh card.
     await h.bridge.handleMessage(message({ messageId: 'om_msg3', text: '/repo' }));
     expect(h.transport.sentCards.length).toBe(before + 3);
+  });
+
+  it('a typed-command picker card renders NO Back (it has no parent to return to)', async () => {
+    const llm = new FakeLlmService();
+    const h = makeHarness({ llm, agentDefaultModel: new FakeAgentDefaultModelService() });
+    await h.bridge.handleMessage(message({ text: '/model' }));
+    const card = h.transport.updatedCards.at(-1) ?? h.transport.sentCards.at(-1);
+    // The picker card is a standalone seed (stack depth 1) → no ⬅ Back.
+    expect(JSON.stringify(card?.elements ?? [])).not.toContain('⬅ Back');
   });
 
   it('a bare /model opens the picker card with the model catalog', async () => {

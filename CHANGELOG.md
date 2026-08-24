@@ -30,6 +30,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   session-switched `ref.current` (dsh web parity), falling back to `agent.options`
   then the deployment default. See `docs/ux-specification.md` →
   "Part: model-switch-current".
+- **Panel: each typed command opens a fresh, independent card (never reuses an
+  earlier one), and a standalone card shows no Back / stays on its result.** A
+  typed slash command used to "pilot" the chat's latest panel card (push onto
+  its stack), so a second `/model` refreshed the first card and `/repo`
+  `/resume` turned the same card into a different view; panel sub-views always
+  rendered `⬅ Back`; and a completed pick/command always jumped back to the
+  panel menu. Now a typed command opens its OWN fresh card (independent state
+  machine); the `⬅ Back` button is appended centrally only when the card's
+  stack can return (a typed-command card — depth one — shows none); a completed
+  action on a standalone card stays on its result (no jump to the menu); and a
+  bare `/cd` opens the same text-input card as the panel's "Change dir" button.
+  See `docs/ux-specification.md` → "Part: surface panel".
 
 ### Added
 
