@@ -15,6 +15,7 @@ import {
   buildPermissionPickerCard,
   buildQuestionAnsweredCard,
   buildQuestionCard,
+  buildQueueItemCard,
   buildRepoPickedCard,
   buildRepoPickerCard,
   buildRowDetailsCard,
@@ -108,6 +109,12 @@ describe('rowLine', () => {
     expect(rowLine(row)).toBe('✅ Bash · ls -la');
   });
 
+  it('renders a steering row as Steer · preview', () => {
+    expect(rowLine({ kind: 'steering', id: 'm1', text: 'rebuild the frontend' })).toBe(
+      '💬 Steer · rebuild the frontend',
+    );
+  });
+
   it('uses the stored summary even when the args were truncated', () => {
     // A long command truncates mid-JSON; the summary was computed from the
     // full arguments at capture time and must not degrade to the raw JSON.
@@ -148,6 +155,23 @@ describe('collapseSequence', () => {
       },
     ];
     expect(collapseSequence(rows)).toBe('think → bash → read');
+  });
+
+  it('reads a steering row as steer in the sequence', () => {
+    const rows = [
+      { kind: 'think' as const, id: 't1', text: '', settled: false },
+      { kind: 'steering' as const, id: 'm1', text: 'rebuild the frontend' },
+      {
+        kind: 'tool' as const,
+        id: 'c1',
+        name: 'bash',
+        status: 'done' as const,
+        summary: '',
+        args: '',
+        result: '',
+      },
+    ];
+    expect(collapseSequence(rows)).toBe('think → steer → bash');
   });
 
   it('shows the full sequence — no truncation (feedback)', () => {
@@ -445,6 +469,15 @@ describe('buildRowDetailsCard', () => {
       (el): el is Extract<CardElement, { tag: 'markdown' }> => el.tag === 'markdown',
     );
     expect(markdowns[1]?.content).toContain('{not json');
+  });
+
+  it('shows the full steered message text for a steering row', () => {
+    const card = buildRowDetailsCard({ kind: 'steering', id: 'm1', text: 'rebuild the frontend' });
+    expect(card.header?.title.content).toBe('💬 Steer');
+    const markdowns = card.elements.filter(
+      (el): el is Extract<CardElement, { tag: 'markdown' }> => el.tag === 'markdown',
+    );
+    expect(markdowns[0]?.content).toBe('```\nrebuild the frontend\n```');
   });
 });
 
@@ -952,5 +985,83 @@ describe('interaction cards (approvals/questions)', () => {
     expect(content).toContain('notes.txt');
     expect(content).not.toContain('awaiting your instruction');
     expect(content).toContain('Tell me what to do with it.');
+  });
+
+  it('a queued item card shows the preview plus Steer/Edit/Remove while a turn runs', () => {
+    const card = buildQueueItemCard({ id: 'm1', text: 'run the build', status: 'queued' }, true);
+    expect(card.header?.title.content).toBe('⏳ run the build');
+    const labels = card.elements.flatMap((el) =>
+      el.tag === 'action'
+        ? el.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
+        : el.tag === 'form'
+          ? el.elements.filter((e) => e.tag === 'button').map((e) => e.text.content)
+          : [],
+    );
+    expect(labels).toContain('➡️ Steer');
+    expect(labels).toContain('✏️ Edit');
+    expect(labels).toContain('🗑️ Remove');
+    expect(JSON.stringify(card.elements)).toContain('run the build');
+    // No edit form rendered in the `queued` state.
+    expect(card.elements.some((el) => el.tag === 'form')).toBe(false);
+  });
+
+  it('a queued item card omits Steer and shows a hint when idle', () => {
+    const card = buildQueueItemCard({ id: 'm1', text: 'first', status: 'queued' }, false);
+    // No Steer button anywhere; an idle hint explains why.
+    const labels = card.elements.flatMap((el) =>
+      el.tag === 'action'
+        ? el.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
+        : el.tag === 'form'
+          ? el.elements.filter((e) => e.tag === 'button').map((e) => e.text.content)
+          : [],
+    );
+    expect(labels).not.toContain('➡️ Steer');
+    expect(labels).toContain('✏️ Edit');
+    expect(labels).toContain('🗑️ Remove');
+    const allContent = JSON.stringify(card.elements);
+    expect(allContent).toContain('➡️ Steer unavailable — no turn is running.');
+    expect(allContent).toContain('first');
+  });
+
+  it('an editing item card renders a single edit form with Submit + a Cancel row and no default_value', () => {
+    const card = buildQueueItemCard({ id: 'm1', text: 'first', status: 'editing' }, true);
+    const form = card.elements.find((el) => el.tag === 'form');
+    expect(form !== undefined && form.tag === 'form').toBe(true);
+    if (form !== undefined && form.tag === 'form') {
+      expect(form.name).toBe('queue-edit');
+      // Exactly one input; the input must NOT carry a default_value (the
+      // verified buildInputCard shape — a default_value produced the 400).
+      const inputs = form.elements.filter((e) => e.tag === 'input');
+      expect(inputs).toHaveLength(1);
+      expect('default_value' in inputs[0]!).toBe(false);
+      // The form holds ONLY the submit button (botmux v1 rule); the Cancel
+      // button lives in its own action row OUTSIDE the form.
+      const buttons = form.elements.filter((e) => e.tag === 'button');
+      expect(buttons.map((b) => b.text.content)).toEqual(['✏️ Submit']);
+      expect(buttons[0]?.action_type).toBe('form_submit');
+      expect(buttons[0]?.value.kind).toBe('queue-edit-submit');
+    }
+    const cancelAction = card.elements.find(
+      (el): el is Extract<CardElement, { tag: 'action' }> => el.tag === 'action',
+    );
+    const cancel = cancelAction?.actions.find((a) => a.tag === 'button');
+    expect(cancel?.tag === 'button' ? cancel.text.content : undefined).toBe('↩️ Cancel');
+    expect(cancel?.tag === 'button' ? cancel.value.kind : undefined).toBe('queue-edit-cancel');
+  });
+
+  it.each([
+    ['steering', '💬 Steering…', '⏳ Steering…'],
+    ['steered', '✅ Steered', '⏳ Steered'],
+    ['sent', '📤 Sent', '⏳ Sent'],
+    ['removed', '🗑️ Removed', '⏳ Removed'],
+  ] as const)('a %s item card shows its marker with no buttons', (status, marker, title) => {
+    const card = buildQueueItemCard({ id: 'm1', text: 'run the build', status }, true);
+    expect(card.header?.title.content).toBe(title);
+    const content = JSON.stringify(card.elements);
+    expect(content).toContain(marker);
+    expect(content).toContain('run the build');
+    // No action buttons and no form in marker-only states.
+    expect(card.elements.some((el) => el.tag === 'action')).toBe(false);
+    expect(card.elements.some((el) => el.tag === 'form')).toBe(false);
   });
 });

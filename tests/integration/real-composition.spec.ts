@@ -157,6 +157,17 @@ function resultCardTexts(): string[] {
     );
 }
 
+/** Whether an outbox record is a per-item queue card (message-queue): it
+ *  carries a `queue-edit` form OR a header title starting with `⏳` (every
+ *  lifecycle state's card is `⏳`-titled — queued/editing/steering/steered/
+ *  sent/removed). */
+function isQueueCardRecord(record: MemoryOutboxRecord): boolean {
+  const card = record.card;
+  if (card === undefined) return false;
+  if (card.header?.title.content.startsWith('⏳')) return true;
+  return card.elements.some((el) => el.tag === 'form' && el.name === 'queue-edit');
+}
+
 /** Drop one inbound message into the message channel. */
 /** Drop a GROUP message with the given mention open ids (mention-gate
  *  tests). An un-@ group message is ignored under the default `always`
@@ -318,6 +329,99 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         ),
       ).toBe(true);
       expect(server.completionRequests()).toBeGreaterThanOrEqual(1);
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    }
+  }, 150_000);
+
+  it('message-queue: a message while a turn runs posts its OWN item card, not an interrupting turn', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    try {
+      // Hold the first LLM response so the agent stays running while the
+      // second message arrives — the queue gate must see a working turn.
+      server.holdNextResponse();
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_queue_${Date.now()}`;
+      await pinWorkingDir(chatId);
+      // First message starts a turn (agent held running by the mock).
+      sendMessage(chatId, 'make the first turn run');
+      await waitFor(
+        'the running streaming card',
+        () => readOutbox().some((r) => r.kind === 'card'),
+        30_000,
+      );
+      await server.waitForHold();
+
+      // Second message while running is queued onto its OWN per-item card
+      // (one card per queued message), never delivered as an interrupting turn.
+      sendMessage(chatId, 'queued while running');
+      await waitFor(
+        'the queue item card',
+        () => readOutbox().some((r) => isQueueCardRecord(r)),
+        30_000,
+      );
+      const queueCard = readOutbox().find((r) => isQueueCardRecord(r))?.card;
+      expect(JSON.stringify(queueCard?.elements ?? [])).toContain('queued while running');
+      // A per-item card carries the `⏳` queue header (its preview folded in).
+      expect(queueCard?.header?.title.content).toContain('⏳');
+
+      // Release the first turn; it must complete (not be interrupted).
+      server.release();
+      await waitFor(
+        'the first turn green card',
+        () => readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'green'),
+        90_000,
+      );
+      // The first turn's answer completes normally — the queued message did
+      // NOT interrupt it. (Patch records carry no chatId in the memory
+      // transport, so assert on the green terminal card without a chatId
+      // filter; the queue card is `wathet`, so a green patch is the turn.)
+      expect(
+        readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'green'),
+      ).toBe(true);
+
+      // The central fix: the queued non-steer message must NOT be lost. After
+      // the first turn ends the surface drains it as its OWN turn — a SECOND
+      // streaming card opens (a `card` record that is not the per-item queue
+      // card) and the queue card flips to Sent. (Card records carry no chatId
+      // in the memory transport, so count non-queue `card` records; the first
+      // turn's card + the drained card = 2.)
+      await waitFor(
+        'the drained queued message opens its own streaming card',
+        () =>
+          readOutbox().filter((r) => r.kind === 'card' && !isQueueCardRecord(r)).length >= 2 &&
+          readOutbox().some(
+            (r) =>
+              isQueueCardRecord(r) && JSON.stringify(r.card?.elements ?? []).includes('📤 Sent'),
+          ),
+        90_000,
+      );
     } catch (error) {
       throw new Error(
         `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,

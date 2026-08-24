@@ -14,7 +14,7 @@
 
 import { basename } from 'node:path';
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
-import type { CardElement, CardJson } from '../feishu/types.js';
+import type { ButtonAction, CardElement, CardJson } from '../feishu/types.js';
 import type { ProjectInfo } from '../projects.js';
 import { markdownToElements } from './markdown.js';
 import { toolRowTitle } from './tool-summary.js';
@@ -53,8 +53,18 @@ export interface ToolRow {
   readonly result: string;
 }
 
+/** One steering row: a user message steered into the running turn. Line =
+ *  `💬 Steer · <preview>`; the expand card shows the full steered text. */
+export interface SteeringRow {
+  readonly kind: 'steering';
+  /** The steered message id (stable, pairs the trace row with the source). */
+  readonly id: string;
+  /** The full steered user message text (for the expand card). */
+  readonly text: string;
+}
+
 /** Any chronological row on the live card. */
-export type TurnRow = ThinkRow | ToolRow;
+export type TurnRow = ThinkRow | ToolRow | SteeringRow;
 
 /** Everything the card shows for one turn. */
 export interface CardSnapshot {
@@ -143,7 +153,13 @@ export type SurfaceAction =
   | { readonly kind: 'session-find' }
   | { readonly kind: 'session-archive'; readonly sessionId: string }
   | { readonly kind: 'session-rename'; readonly sessionId: string }
-  | { readonly kind: 'session-export'; readonly sessionId: string };
+  | { readonly kind: 'session-export'; readonly sessionId: string }
+  // Dedicated queue card (message-queue) per-item mutations.
+  | { readonly kind: 'queue-steer'; readonly id: string }
+  | { readonly kind: 'queue-edit'; readonly id: string }
+  | { readonly kind: 'queue-edit-submit'; readonly id: string }
+  | { readonly kind: 'queue-edit-cancel'; readonly id: string }
+  | { readonly kind: 'queue-remove'; readonly id: string };
 
 /**
  * Projects per picker card page (the button-based fallback, used only when
@@ -411,6 +427,12 @@ export function rowLine(row: TurnRow): string {
     // throttled card patches; the full text lives in the expand card.
     return '☁️ Think · Thinking';
   }
+  if (row.kind === 'steering') {
+    // A steered user message injected into the running turn. The line shows
+    // the compact label + a preview; the full text lives in the expand card.
+    const preview = truncateTail(row.text, QUEUE_PREVIEW_CHARS).replace(/\n+/g, ' ');
+    return `💬 Steer · ${preview}`;
+  }
   const icon = row.status === 'running' ? '🔧' : row.status === 'done' ? '✅' : '❌';
   return `${icon} ${toolRowTitle(row.name)} · ${row.summary}`;
 }
@@ -421,8 +443,12 @@ export function rowLine(row: TurnRow): string {
  * their tool name. The full sequence is shown — no truncation.
  */
 export function collapseSequence(rows: readonly TurnRow[]): string {
-  const names = rows.map((row) => stripAngleBrackets(row.kind === 'think' ? 'think' : row.name));
-  return names.join(' → ');
+  const names = rows.map((row) => {
+    if (row.kind === 'think') return 'think';
+    if (row.kind === 'steering') return 'steer';
+    return row.name;
+  });
+  return names.map(stripAngleBrackets).join(' → ');
 }
 
 /** One card row: the line text plus its expand button (opens row details). */
@@ -624,7 +650,14 @@ function formatArgs(args: string): string {
  */
 export function buildRowDetailsCard(row: TurnRow): CardJson {
   const elements: CardElement[] = [];
-  if (row.kind === 'think') {
+  if (row.kind === 'steering') {
+    const text = row.text.trim();
+    elements.push({
+      tag: 'markdown',
+      content:
+        text === '' ? '_(empty steered message)_' : fencedCode(truncateHead(text, MAX_CARD_CHARS)),
+    });
+  } else if (row.kind === 'think') {
     const text = row.text.trim();
     elements.push({
       tag: 'markdown',
@@ -657,7 +690,12 @@ export function buildRowDetailsCard(row: TurnRow): CardJson {
     header: {
       title: {
         tag: 'plain_text',
-        content: row.kind === 'think' ? '☁️ Think' : `🔧 ${toolRowTitle(row.name)}`,
+        content:
+          row.kind === 'steering'
+            ? '💬 Steer'
+            : row.kind === 'think'
+              ? '☁️ Think'
+              : `🔧 ${toolRowTitle(row.name)}`,
       },
       template: 'wathet',
     },
@@ -1485,5 +1523,136 @@ export function buildStatusCard(view: StatusView): CardJson {
         ].join('\n'),
       },
     ],
+  };
+}
+
+/** Lifecycle state of ONE queue item's dedicated card (message-queue). Every
+ *  queued message is its own card with its own lifecycle; a state machine per
+ *  card, not a shared card. */
+export type QueueItemStatus = 'queued' | 'editing' | 'steering' | 'steered' | 'sent' | 'removed';
+
+/** One queued item rendered as its OWN dedicated card (message-queue). */
+export interface QueueItemView {
+  /** The inbox message id (the action target for steer/edit/remove). */
+  readonly id: string;
+  /** The text preview shown on the card (and the edit form's input). */
+  readonly text: string;
+  /** The item's lifecycle state — determines the card's actions/marker. */
+  readonly status: QueueItemStatus;
+}
+
+/** Longest item preview shown on a queue card. */
+export const QUEUE_PREVIEW_CHARS = 200;
+
+/** Longest preview folded into a queue-card header. */
+const QUEUE_HEADER_CHARS = 40;
+
+/** Header label per non-queued lifecycle state (message-queue). */
+const QUEUE_STATUS_TITLE: Record<Exclude<QueueItemStatus, 'queued'>, string> = {
+  editing: 'Editing',
+  steering: 'Steering…',
+  steered: 'Steered',
+  sent: 'Sent',
+  removed: 'Removed',
+};
+
+/** The status marker shown on a terminal/in-progress queue card. */
+const QUEUE_STATUS_MARKER: Partial<Record<QueueItemStatus, string>> = {
+  steering: '💬 Steering…',
+  steered: '✅ Steered',
+  sent: '📤 Sent',
+  removed: '🗑️ Removed',
+};
+
+/**
+ * Build ONE queue item's dedicated card (message-queue): a card per queued
+ * message, a state machine per card — no shared "N queued" card and no
+ * recall/re-post single-card invariant. The card renders the item's preview
+ * plus the actions (only while `queued`) or the lifecycle marker (steering /
+ * steered / sent / removed). The inline edit form is shown only in the
+ * `editing` state: a single `input` + a `form_submit` Submit + a Cancel
+ * button, with NO `default_value` (the verified `buildInputCard` shape — a
+ * `default_value` on the input is what produced the Feishu 400).
+ * @param item - the queue item to render.
+ * @param running - whether a turn is currently running (Steer availability).
+ * @returns Feishu interactive card JSON (v1 layout).
+ */
+export function buildQueueItemCard(item: QueueItemView, running: boolean): CardJson {
+  const title =
+    item.status === 'queued'
+      ? `⏳ ${truncateTail(item.text, QUEUE_HEADER_CHARS)}`
+      : `⏳ ${QUEUE_STATUS_TITLE[item.status]}`;
+  const elements: CardElement[] = [];
+  const marker = QUEUE_STATUS_MARKER[item.status];
+  if (marker !== undefined) elements.push({ tag: 'markdown', content: marker });
+  if (!running && item.status === 'queued') {
+    elements.push({
+      tag: 'markdown',
+      content: '➡️ Steer unavailable — no turn is running.',
+    });
+  }
+  elements.push({ tag: 'markdown', content: truncateTail(item.text, QUEUE_PREVIEW_CHARS) });
+  elements.push({ tag: 'hr' });
+  if (item.status === 'queued') {
+    const buttons: ButtonAction[] = [];
+    if (running) {
+      buttons.push({
+        tag: 'button',
+        text: { tag: 'plain_text', content: '➡️ Steer' },
+        value: actionValue({ kind: 'queue-steer', id: item.id }),
+      });
+    }
+    buttons.push({
+      tag: 'button',
+      text: { tag: 'plain_text', content: '✏️ Edit' },
+      value: actionValue({ kind: 'queue-edit', id: item.id }),
+    });
+    buttons.push({
+      tag: 'button',
+      text: { tag: 'plain_text', content: '🗑️ Remove' },
+      type: 'default',
+      value: actionValue({ kind: 'queue-remove', id: item.id }),
+    });
+    elements.push({ tag: 'action', actions: buttons });
+  } else if (item.status === 'editing') {
+    // The edit form holds ONLY input + form_submit (botmux v1 rule — other
+    // elements render the whole card empty); the Cancel button lives in its
+    // own action row OUTSIDE the form (same split as buildInputCard).
+    elements.push({
+      tag: 'form',
+      name: 'queue-edit',
+      elements: [
+        {
+          tag: 'input',
+          name: 'text',
+          placeholder: { tag: 'plain_text', content: 'Edit queued text' },
+        },
+        {
+          tag: 'button',
+          text: { tag: 'plain_text', content: '✏️ Submit' },
+          type: 'primary',
+          // Feishu requires a name for form-container buttons (ErrCode 200530).
+          name: 'queue-edit-submit',
+          action_type: 'form_submit',
+          value: actionValue({ kind: 'queue-edit-submit', id: item.id }),
+        },
+      ],
+    });
+    elements.push({
+      tag: 'action',
+      actions: [
+        {
+          tag: 'button',
+          text: { tag: 'plain_text', content: '↩️ Cancel' },
+          type: 'default',
+          value: actionValue({ kind: 'queue-edit-cancel', id: item.id }),
+        },
+      ],
+    });
+  }
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: title }, template: 'wathet' },
+    elements,
   };
 }

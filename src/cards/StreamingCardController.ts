@@ -25,6 +25,7 @@ import {
   buildRowDetailsCard,
   type CardSnapshot,
   type CardStatus,
+  type SteeringRow,
   type ThinkRow,
   type ToolRow,
   type TurnRow,
@@ -260,6 +261,11 @@ export class StreamingCardController {
     string,
     { readonly messageId: string; readonly reactionId: string | undefined }
   >();
+  /** Steered message ids per chat awaiting the agent's `user/message` event
+   *  (message-queue). When the driver consumes a steered message at a step
+   *  boundary it emits a `user/message`; the id here lets the trace add a
+   *  steering row exactly where it was injected. */
+  private readonly pendingSteers = new Map<string, Set<string>>();
 
   constructor(private readonly host: StreamingCardHost) {}
 
@@ -304,11 +310,27 @@ export class StreamingCardController {
     // drop the tracking entry (the stale emoji may remain on the old
     // message — cosmetic only).
     this.pendingReactions.delete(chatId);
+    // Any steered message awaiting its consuming `user/message` event is
+    // being discarded with the conversation.
+    this.pendingSteers.delete(chatId);
   }
 
   /** Remember the prompt for the retry button. */
   rememberPrompt(chatId: string, text: string): void {
     this.lastPrompts.set(chatId, text);
+  }
+
+  /** Register a steered message id (message-queue). Called by the bridge
+   *  right before `agent.steer`; when the driver later emits that message's
+   *  `user/message` event, the trace adds a steering row where it was
+   *  injected. */
+  noteSteer(chatId: string, messageId: string): void {
+    let set = this.pendingSteers.get(chatId);
+    if (set === undefined) {
+      set = new Set();
+      this.pendingSteers.set(chatId, set);
+    }
+    set.add(messageId);
   }
 
   /**
@@ -506,6 +528,27 @@ export class StreamingCardController {
       }
     }
     switch (event.type) {
+      case 'user/message': {
+        // A user-role message on the model-visible surface. This is only a
+        // STEERING injection when it arrives mid-turn AND we were the ones
+        // who steered it (message-queue): the bridge registered the id via
+        // noteSteer when the user clicked Steer. Add a steering row to the
+        // trace so the user sees where their steered message was injected.
+        const steered = this.pendingSteers.get(chatId)?.delete(event.data.id) === true;
+        if (steered) {
+          this.host.logger.debug(
+            `streaming steering ${chatId}: message ${event.data.id} injected at step boundary`,
+          );
+          settleOpenThink(state);
+          upsertRow(state, {
+            kind: 'steering',
+            id: event.data.id,
+            text: assistantText(event.data.content),
+          } satisfies SteeringRow);
+          this.syncCard(chatId);
+        }
+        break;
+      }
       case 'turn/start': {
         // Session-scoped turn accounting mirrors the web whole-log
         // `sessionStats`; it is NOT reset per turn.

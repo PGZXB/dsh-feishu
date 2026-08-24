@@ -16,7 +16,12 @@
 
 import { Readable } from 'node:stream';
 import type { Agent } from '@deepseek-ai/dsh-agent';
-import { type ContentBlock, createUserMessage } from '@deepseek-ai/dsh-llm';
+import {
+  type ContentBlock,
+  createUserMessage,
+  MessageId,
+  type UserMessage,
+} from '@deepseek-ai/dsh-llm';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
 import {
   InteractionCardController,
@@ -25,9 +30,11 @@ import {
 import {
   buildInboundFileCard,
   buildPanelCard,
+  buildQueueItemCard,
   buildResultCard,
   type ModelOptionView,
   type PanelCommand,
+  type QueueItemStatus,
 } from './cards/render.js';
 import {
   StreamingCardController,
@@ -445,6 +452,40 @@ function stripMentions(text: string): string {
 }
 
 /**
+ * The user-visible text of one queued message (message-queue): the joined
+ * `text` blocks of its content, used for the queue-card row preview and the
+ * edit default. Empty when a message carries only non-text blocks.
+ */
+function queueMessageText(message: { readonly content: readonly ContentBlock[] }): string {
+  return message.content
+    .filter((block) => block.type === 'text')
+    .map((block) => block.text)
+    .join('\n');
+}
+
+/** One queue item's dedicated-card lifecycle entry (message-queue). */
+interface QueueCardEntry {
+  /** The posted card's message id (`undefined` until the first post lands —
+   *  a failed first post falls back to a fresh `sendCard`). */
+  cardMessageId: string | undefined;
+  /** The item's lifecycle state. */
+  status: QueueItemStatus;
+  /** The item's text (kept after it leaves the active queue so the retained
+   *  marker card can still show the preview). */
+  text: string;
+  /** The resolved user message for the queued item. The surface owns the queue
+   *  (NOT the agent inbox), so this is what the surface later re-delivers as a
+   *  normal turn (`deliverQueuedTurn` → `followup`) after the owning turn ends,
+   *  or steers into the running turn (`agent.steer`). An edit rewrites the
+   *  content but keeps the same identity, so the card actions stay stable. */
+  message: UserMessage;
+  /** The original inbound message (identity + sender + chat type), kept so the
+   *  re-delivered turn can open its streaming card with the real ack id and
+   *  restore the proactive @-mention target. */
+  feishu: FeishuMessage;
+}
+
+/**
  * Scan the configured roots for candidate projects. Recursive (botmux
  * semantics: up to depth 3, skipping dot/dependency directories, budgeted),
  * so nested checkouts like `~/src/<repo>` are surfaced.
@@ -480,6 +521,24 @@ export class Bridge {
    * into its turn, in order. Not persisted across restarts.
    */
   private readonly pendingInbound = new Map<string, PendingInboundFile[]>();
+  /**
+   * The per-item queue card registry (message-queue). One dedicated card per
+   * queued message, one lifecycle state per card — NO shared "N queued" card
+   * and NO recall/re-post single-card invariant. `Map<chatId, Map<itemId,
+   * entry>>`; the entry carries the owning card's message id (for in-place
+   * `updateCard`), the item's lifecycle state, and its text (needed to render
+   * the retained marker card after the item leaves the inbox).
+   */
+  private readonly queueCards = new Map<string, Map<string, QueueCardEntry>>();
+  /**
+   * The surface-owned, in-memory queue of a chat's pending non-steer messages
+   * (message-queue). Unlike `inbox.nextTurn` — which the agent loop auto-claims
+   * at its own step boundary and would bypass `deliverTurn` — these items are
+   * never handed to the inbox: after the current turn ends the surface delivers
+   * them ITSELF via `deliverQueuedTurn`, which opens each streaming card. Not
+   * persisted: a restart drops queued messages (accepted trade-off).
+   */
+  private readonly queued = new Map<string, QueueCardEntry[]>();
 
   /**
    * The user to proactively @ for a chat: the last accepted sender, only in
@@ -1328,6 +1387,36 @@ export class Bridge {
       );
       return;
     }
+    // The message-queue gate: a message that arrives while a turn is running
+    // is NOT delivered as an interrupting turn — it is kept in the surface's
+    // OWN queue (never `inbox.nextTurn`, which the agent loop auto-claims at
+    // its step boundary and would bypass `deliverTurn`) and surfaced on its OWN
+    // queue card. When the owning turn ends the surface delivers it as a normal
+    // turn (opening its streaming card). Degrade to a normal turn when no live
+    // agent (or no inbox) exists (today's behavior).
+    const live = this.liveAgent(message.chatId);
+    if (
+      live !== undefined &&
+      live.inbox !== undefined &&
+      this.streaming.isWorking(message.chatId)
+    ) {
+      const queued = createUserMessage({
+        content: await this.inboundContent(message),
+        source: { kind: 'user' },
+      });
+      const entry: QueueCardEntry = {
+        cardMessageId: undefined,
+        status: 'queued',
+        text: queueMessageText(queued),
+        message: queued,
+        feishu: message,
+      };
+      this.queueCardEntries(message.chatId).set(queued.id, entry);
+      this.queuedFor(message.chatId).push(entry);
+      await this.renderQueueItem(message.chatId, queued.id, entry);
+      this.options.logger.debug(`message ${message.messageId} -> queued (chat ${message.chatId})`);
+      return;
+    }
     this.streaming.rememberPrompt(message.chatId, message.text);
     // Remember the accepted sender and chat type: proactive @-mentions in
     // groups (error notices, approval cards, question cards) target the user
@@ -1356,6 +1445,351 @@ export class Bridge {
         source: { kind: 'user' },
       }),
     );
+  }
+
+  /**
+   * The queue-item card registry for a chat (get-or-create). One dedicated
+   * card per queued message, keyed by its message id.
+   * @param chatId - the chat.
+   * @returns the per-chat item→entry map.
+   */
+  private queueCardEntries(chatId: string): Map<string, QueueCardEntry> {
+    let entries = this.queueCards.get(chatId);
+    if (entries === undefined) {
+      entries = new Map();
+      this.queueCards.set(chatId, entries);
+    }
+    return entries;
+  }
+
+  /**
+   * The surface-owned pending queue for a chat (get-or-create), in arrival
+   * order (message-queue). The SOURCE OF TRUTH for which non-steer queued
+   * messages are still waiting to be delivered; {@link queueCardEntries} is the
+   * per-item card registry (which also retains terminal/sent/removed marker
+   * cards).
+   * @param chatId - the chat.
+   * @returns the ordered pending queue.
+   */
+  private queuedFor(chatId: string): QueueCardEntry[] {
+    let queue = this.queued.get(chatId);
+    if (queue === undefined) {
+      queue = [];
+      this.queued.set(chatId, queue);
+    }
+    return queue;
+  }
+
+  /** The still-pending queue item for an item id in a chat, or `undefined`
+   *  when the item was already delivered/steered/removed (message-queue).
+   *  @param chatId - the chat.
+   *  @param itemId - the item's (stable) message id.
+   *  @returns the pending entry, or `undefined` when not in the active queue. */
+  private queuedItem(chatId: string, itemId: MessageId): QueueCardEntry | undefined {
+    return this.queued.get(chatId)?.find((entry) => entry.message.id === itemId);
+  }
+
+  /** Take one item out of a chat's pending surface queue (message-queue). The
+   *  per-item card registry keeps the entry, so the retained card still renders.
+   *  @param chatId - the chat.
+   *  @param itemId - the item's (stable) message id. */
+  private removeQueued(chatId: string, itemId: MessageId): void {
+    const queue = this.queued.get(chatId);
+    if (queue === undefined) return;
+    const index = queue.findIndex((entry) => entry.message.id === itemId);
+    if (index >= 0) queue.splice(index, 1);
+  }
+
+  /**
+   * Render one queue item's dedicated card (message-queue) from its registry
+   * entry. When the card was already posted, it is updated IN PLACE via
+   * `updateCard` (never delete+send); a first-post failure falls back to a
+   * fresh `sendCard`. Card-render failures log and leave the registry state
+   * untouched (the next mutation re-renders).
+   * @param chatId - the chat.
+   * @param itemId - the item's message id.
+   * @param entry - the item's lifecycle entry.
+   */
+  private async renderQueueItem(
+    chatId: string,
+    itemId: string,
+    entry: QueueCardEntry,
+  ): Promise<void> {
+    const card = buildQueueItemCard(
+      { id: itemId, text: entry.text, status: entry.status },
+      this.streaming.isWorking(chatId),
+    );
+    if (entry.cardMessageId !== undefined) {
+      try {
+        await this.options.transport.updateCard(entry.cardMessageId, card);
+      } catch (error: unknown) {
+        this.options.logger.warn(
+          `queue item card update failed (chat ${chatId}): ${String(error)}`,
+        );
+      }
+      return;
+    }
+    try {
+      const sent = await this.options.transport.sendCard(chatId, card);
+      entry.cardMessageId = sent.messageId;
+    } catch (error: unknown) {
+      this.options.logger.warn(`queue item card send failed (chat ${chatId}): ${String(error)}`);
+    }
+  }
+
+  /**
+   * One queue-item card button callback (message-queue). Each queued message
+   * has its OWN card with its OWN lifecycle state: Steer (only while a turn
+   * runs) marks the item `steering` and steers the running turn (via
+   * `agent.steer` — the surface queue no longer feeds the agent inbox); Edit
+   * opens the inline edit form (`editing`); Edit submit replaces the text and
+   * returns to `queued`; Edit cancel returns to `queued` unchanged; Remove
+   * marks the item `removed`. The item stays in the surface queue (pending
+   * delivery) for every non-terminal state. Terminal state cards (steered/sent/
+   * removed) are RETAINED with their marker — never recalled. When the item
+   * raced the drain a notice posts.
+   * @param action - the normalized card callback.
+   */
+  private async handleQueueCardAction(action: CardAction): Promise<void> {
+    // A live agent is needed only for Steer (`agent.steer`); edit/remove act on
+    // the surface queue alone. Degrade loudly when the agent is gone.
+    const agent = this.liveAgent(action.chatId);
+    if (agent === undefined) {
+      this.options.logger.warn(
+        `queue card action ${action.value.kind} ignored: no live agent for chat ${action.chatId}`,
+      );
+      return;
+    }
+    const kind = action.value.kind;
+    const id = action.value.id;
+    if (id === undefined) {
+      this.options.logger.warn(`queue card action ${kind} ignored: missing item id`);
+      return;
+    }
+    const messageId = MessageId(id);
+    const entry = this.queueCardEntries(action.chatId).get(id);
+    if (entry === undefined) {
+      this.options.logger.warn(
+        `queue card action ${kind} ignored: unknown item ${id} (chat ${action.chatId})`,
+      );
+      return;
+    }
+    // The item is still waiting in the surface queue (pending delivery). Once
+    // it leaves (delivered/steered/removed) the action raced the drain.
+    const pending = this.queuedItem(action.chatId, messageId) !== undefined;
+    switch (kind) {
+      case 'queue-steer': {
+        // Steer is available only while a turn runs (mirror the web
+        // `steer-unavailable` guard); when idle the card renders a disabled
+        // hint and this never fires.
+        if (!this.streaming.isWorking(action.chatId)) {
+          this.options.logger.info(`queue steer ignored: no turn running (chat ${action.chatId})`);
+          await this.renderQueueItem(action.chatId, id, entry);
+          break;
+        }
+        if (pending) {
+          // Take the item out of the pending surface queue and steer it into
+          // the running turn. `agent.steer` routes to the next-step boundary,
+          // NOT the next-turn list — so it never auto-claims a streaming card.
+          this.removeQueued(action.chatId, messageId);
+          this.streaming.noteSteer(action.chatId, id);
+          entry.status = 'steering';
+          agent.steer(entry.message);
+          this.options.logger.debug(
+            `queue steer ${id} -> running turn, card steering (chat ${action.chatId})`,
+          );
+        } else {
+          await this.markItemConsumed(action.chatId, id, entry);
+        }
+        await this.renderQueueItem(action.chatId, id, entry);
+        break;
+      }
+      case 'queue-edit': {
+        // Open the inline edit form on THIS card. The item must still be
+        // pending; otherwise it raced the drain.
+        if (pending) {
+          entry.status = 'editing';
+          this.options.logger.debug(`queue edit open ${id} (chat ${action.chatId})`);
+          await this.renderQueueItem(action.chatId, id, entry);
+        } else {
+          await this.markItemConsumed(action.chatId, id, entry);
+        }
+        break;
+      }
+      case 'queue-edit-submit': {
+        const text = action.value.text ?? action.formValue?.text;
+        if (text === undefined || text === '') {
+          this.options.logger.warn(
+            `queue edit submit ${id} ignored: no replacement text (chat ${action.chatId})`,
+          );
+          await this.renderQueueItem(action.chatId, id, entry);
+          break;
+        }
+        if (pending) {
+          // Rewrite the queued content but keep the SAME identity — the card's
+          // action buttons reference that stable id, and the pending queue key
+          // stays valid. The re-delivered turn uses the edited content.
+          const stableId = entry.message.id;
+          const rewritten = createUserMessage({
+            content: [{ type: 'text', text }],
+            source: { kind: 'user' },
+          });
+          entry.message = { ...rewritten, id: stableId };
+          entry.text = text;
+          entry.status = 'queued';
+          this.options.logger.debug(`queue edit ${id} -> queued (chat ${action.chatId})`);
+          await this.renderQueueItem(action.chatId, id, entry);
+        } else {
+          await this.markItemConsumed(action.chatId, id, entry);
+        }
+        break;
+      }
+      case 'queue-edit-cancel': {
+        entry.status = 'queued';
+        this.options.logger.debug(`queue edit cancel ${id} -> queued (chat ${action.chatId})`);
+        await this.renderQueueItem(action.chatId, id, entry);
+        break;
+      }
+      case 'queue-remove': {
+        if (pending) {
+          this.removeQueued(action.chatId, messageId);
+          entry.status = 'removed';
+          this.options.logger.debug(`queue remove ${id} -> removed (chat ${action.chatId})`);
+          await this.renderQueueItem(action.chatId, id, entry);
+        } else {
+          await this.markItemConsumed(action.chatId, id, entry);
+        }
+        break;
+      }
+      default: {
+        this.options.logger.warn(`unknown queue card action kind: ${kind}`);
+      }
+    }
+  }
+
+  /**
+   * An item-steering/editing/removing action raced the surface drain — the
+   * item was already delivered (or consumed another way). Mark it `sent` (if
+   * still queued/editing) and render its retained marker card.
+   * @param chatId - the chat.
+   * @param itemId - the item's message id.
+   * @param entry - the item's lifecycle entry.
+   */
+  private async markItemConsumed(
+    chatId: string,
+    itemId: string,
+    entry: QueueCardEntry,
+  ): Promise<void> {
+    if (entry.status === 'queued' || entry.status === 'editing') {
+      entry.status = 'sent';
+    }
+    await this.options.transport.sendText(chatId, '⚠️ That queued message was already consumed.');
+    await this.renderQueueItem(chatId, itemId, entry);
+  }
+
+  /**
+   * Deliver one queued item as its own turn (message-queue). Called from
+   * {@link drainQueue} on `turn/end` when the surface-owned queue for a chat is
+   * non-empty; the item goes out as a normal turn (rememberPrompt → beginTurn →
+   * followup) so it opens its OWN streaming card, exactly like a freshly
+   * arrived message. The queue gate and working-directory gate are deliberately
+   * bypassed — a queued message must go out regardless of cwd (today's
+   * behavior) and must never be re-queued. Uses the resolved content already
+   * built when it was queued (no re-download of attachments, no duplicate
+   * receipt card).
+   * @param chatId - the chat.
+   * @param item - the queued item to deliver.
+   */
+  private async deliverQueuedTurn(chatId: string, item: QueueCardEntry): Promise<void> {
+    const source = item.feishu;
+    // Keep the proactive @-mention target for this chat: the queued message's
+    // sender started the turn that now runs.
+    this.requesterOpenIds.set(chatId, source.senderOpenId);
+    this.chatTypes.set(chatId, source.chatType === 'group' ? 'group' : 'p2p');
+    this.streaming.rememberPrompt(chatId, item.text);
+    await this.streaming.beginTurn(chatId, source.messageId, turnTitle(item.text));
+    const sessionId = this.options.sessionMap.ensure(chatId);
+    const cwd = this.options.sessionMap.cwdFor(chatId) ?? this.options.defaultCwd;
+    const agent = await this.resolveAgent(chatId, sessionId, cwd);
+    this.options.logger.info(`delivering queued message ${item.message.id} to agent`);
+    agent.followup(item.message);
+    this.options.logger.debug(`queue drain (chat ${chatId}): delivered ${item.message.id} -> sent`);
+  }
+
+  /**
+   * Release a chat's pending surface queue (message-queue). Called on
+   * `turn/end`: the owning turn is over, so any queued non-steer message can
+   * now run as its own turn. One item is delivered per turn/end — a delivery
+   * (followup) starts a turn, and delivering the next immediately would put it
+   * in the agent inbox where the loop auto-claims it without a streaming card.
+   * The chain continues on the next turn/end. Each delivered item is marked
+   * `sent` (retained marker) and removed from the pending queue.
+   * @param chatId - the chat.
+   */
+  private async drainQueue(chatId: string): Promise<void> {
+    const queue = this.queued.get(chatId);
+    if (queue === undefined || queue.length === 0) return;
+    const item = queue[0];
+    if (item === undefined) return;
+    if (item.status !== 'queued' && item.status !== 'editing') {
+      // A terminal-status item should never sit in the pending queue; drop it.
+      queue.shift();
+      return;
+    }
+    try {
+      await this.deliverQueuedTurn(chatId, item);
+      item.status = 'sent';
+    } catch (error: unknown) {
+      // Unlikely (resolveAgent rebinds on creation errors, beginTurn is best
+      // effort); fail loud and drop the item so it does not wedge the queue.
+      this.options.logger.error(`queue drain delivery failed: ${String(error)}`);
+      item.status = 'removed';
+    }
+    queue.shift();
+    await this.renderQueueItem(chatId, item.message.id, item);
+  }
+
+  /**
+   * Reconcile the per-item queue cards after a session event (message-queue).
+   * Three transitions the surface observes here: (a) on `turn/end` it drains the
+   * surface-owned queue — each queued non-steer message is delivered as its own
+   * turn (opening its streaming card) and its card is marked `sent`; (b) on a
+   * turn boundary the running state flips, so a pending card's Steer
+   * availability re-renders; (c) a steered message's `user/message` event (the
+   * trace got its steering row) marks the steered item's card `steered`.
+   * Best-effort — fires only when the chat has a queue-card registry.
+   * @param chatId - the chat.
+   * @param event - the session event just rendered.
+   */
+  private async syncQueueAfterEvent(chatId: string, event: SessionEvent): Promise<void> {
+    const entries = this.queueCards.get(chatId);
+    if (entries === undefined || entries.size === 0) return;
+    // (a) The owning turn ended: release the surface queue in order — the agent
+    // loop no longer auto-claims inbox next-turn, so the surface delivers each
+    // queued message itself (opening its streaming card).
+    if (event.type === 'turn/end') {
+      await this.drainQueue(chatId);
+    }
+    const turnBoundary = event.type === 'turn/start' || event.type === 'turn/end';
+    for (const [itemId, entry] of [...entries]) {
+      // (b) On a turn boundary the running state flips; keep the pending card's
+      // Steer availability accurate (Steer shows only while a turn runs).
+      if (turnBoundary && (entry.status === 'queued' || entry.status === 'editing')) {
+        await this.renderQueueItem(chatId, itemId, entry);
+      }
+    }
+    // (c) A steered message was consumed into the running turn.
+    if (event.type === 'user/message') {
+      const itemId = event.data.id;
+      const entry = entries.get(itemId);
+      if (entry !== undefined && entry.status === 'steering') {
+        this.options.logger.debug(
+          `queue steered (chat ${chatId}): message ${itemId} consumed into the turn`,
+        );
+        entry.status = 'steered';
+        await this.renderQueueItem(chatId, itemId, entry);
+      }
+    }
   }
 
   /**
@@ -1685,6 +2119,15 @@ export class Bridge {
   async handleEvent(sessionId: string, event: SessionEvent): Promise<void> {
     this.options.logger.debug(`session event ${event.type} from ${sessionId}`);
     await this.streaming.handleEvent(sessionId, event);
+    // message-queue: reconcile the per-item queue cards after the event — on
+    // `turn/end` the surface drains its own queue (delivering each queued
+    // message as its own turn, marking the items `sent`) and a steered
+    // message's `user/message` event marks its item `steered`. Best-effort —
+    // fires only when a queue-card registry exists for this chat.
+    const chatId = this.options.sessionMap.chatFor(sessionId);
+    if (chatId !== undefined && this.queueCards.has(chatId)) {
+      await this.syncQueueAfterEvent(chatId, event);
+    }
   }
 
   /**
@@ -1757,6 +2200,16 @@ export class Bridge {
         // Approval/question interactions are handled by the interaction
         // controller (they settle pending card interactions).
         await this.interactions.handleCardAction(action);
+        break;
+      }
+      case 'queue-steer':
+      case 'queue-edit':
+      case 'queue-edit-submit':
+      case 'queue-edit-cancel':
+      case 'queue-remove': {
+        // Queue-card actions drive each queued item's OWN card state machine
+        // (message-queue).
+        await this.handleQueueCardAction(action);
         break;
       }
       default: {

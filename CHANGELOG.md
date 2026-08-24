@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Message-queue: queued non-steer messages open their streaming card.** A
+  message arriving while a turn runs was appended to the agent inbox's
+  `nextTurn` list, which the agent loop auto-claims at its own step boundary —
+  bypassing `deliverTurn`, so the user saw the "Sent" marker on the queue card
+  but no streaming card with the agent's work. Queued non-steer messages now
+  live in the SURFACE's own in-memory queue (never `inbox.nextTurn`); after the
+  owning turn ends (`turn/end`) the surface drains it, delivering each queued
+  message as its own turn (`beginTurn` → `followup`), which opens its streaming
+  card exactly like a freshly arrived message, and marks the item card `sent`.
+  Steer still routes via `agent.steer` (the next-step boundary, never the
+  `nextTurn` list). Trade-off: the in-memory queue is not persisted, so a
+  restart drops queued messages (the inbox no longer holds non-steer queued
+  messages). See `docs/ux-specification.md` → "Part: message-queue".
+
 ### Added
 
 - **Session stats line + context occupancy on the terminal streaming card.**
@@ -19,6 +35,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `turn/start`/`assistant/message`/`tool/call` events into a session-scoped
   accumulator (survives per-turn card re-creation) and renders the line only
   on the terminal card.
+- **Message queue: turn messages no longer interrupt a running turn.** When a
+  user message arrives while a turn is running, it is appended to the agent
+  inbox's next-turn queue (never `deliverTurn`) and surfaced on its OWN
+  dedicated card — one card per queued message, one lifecycle state machine
+  per card (`queued / editing / steering / steered / sent / removed`). The
+  shared "N queued" card and its recall/re-post single-card invariant are gone:
+  each card is updated in place (`updateCard`) as its state changes, terminal
+  cards (steered/sent/removed) are retained showing their status marker, and
+  nothing is ever recalled. A steered message marks its card "💬 Steering…",
+  then the next `user/message` event flips it to "✅ Steered"; the streaming
+  trace adds a `steer` row (collapsed = "steer", expanded = the full steered
+  text) so the user sees where their steered message was injected. The edit
+  form uses the verified no-`default_value` input shape (the prior per-item
+  `default_value` form produced a Feishu 400). When the agent has no inbox the
+  message degrades to a normal turn. See `docs/ux-specification.md` →
+  "Part: message-queue".
 
 - **`dsh-version-track` infra: a structured A/B source of truth + a
   diagnosis/adaptation skill.** `dsh-version.json` (repo root) records the
