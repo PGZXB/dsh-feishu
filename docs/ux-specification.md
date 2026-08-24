@@ -1410,3 +1410,41 @@ tool ran (`M steps · T tools`). No timing group is ever shown.
   (`inputTokens`/`outputTokens`/`cacheReadTokens`/`cacheWriteTokens`) and
   `LlmResolvedModelInfo.context.contextWindow` — the host-visible data.
 
+
+## Part: model-switch-current
+
+Switch the current session's model immediately when /model picks one (also set the default).
+
+Reference: dsh web's `/model` (client `dsh-client-ui-model-selection` →
+`session.selectModel` RPC; host `dsh-host-apiproxy` → `selectionFor(agent)` +
+`installModelSelection`, plus `saveDefaultModelSelection`).
+
+### Intended behavior
+
+`/model` (typed `<provider>/<model>` or a picker pick) now does **both** (the
+maintainer's "B"):
+
+1. Saves the selection as the **deployment default** (`agentDefaultModel.saveSelection`)
+   so future sessions default to it.
+2. Couples a mutable `ModelSelection` to the **current session's live agent**
+   (`installModelSelection(agent.ctx, ref)` once, then `ref.current = selection`),
+   so the NEXT turn in that chat assembles with the picked provider/model.
+
+The reply text is `Model set to <provider> · <model> (this session + default).`
+
+### Seam
+
+- `ctx.agentDefaultModel.saveSelection` — default (existing).
+- `installModelSelection(agent.ctx, ref)` — per-session switch (runtime import
+  from `@deepseek-ai/dsh-agent`; a deliberate exception to the repo's
+  "type-only `@deepseek-ai/*` imports" convention, maintainer decision).
+  `@deepseek-ai/dsh-agent` moves to `dependencies`.
+
+### Failure modes
+
+- Live agent absent (no session yet): the switch is a no-op (`applySessionModelSwitch(undefined)`
+  returns early); the default is still saved. Reply still reports the model is set.
+- `agentDefaultModel` not mounted: `/model` errors (unchanged).
+- Future dsh without `installModelSelection`: the import would fail at load;
+  documented as version-coupled to the dsh family bump.
+4d2ba302 (feat: /model switches the current session's model immediately (and sets the default))

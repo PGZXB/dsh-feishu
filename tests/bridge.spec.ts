@@ -3499,7 +3499,7 @@ describe('/model command', () => {
     expect(service.saved).toEqual([{ provider: 'pi-ai', model: 'deepseek-r1' }]);
     expect(
       h.transport.sentTexts.some(
-        (t) => t.text === 'Default model set to pi-ai · deepseek-r1 (applies to new sessions).',
+        (t) => t.text === 'Model set to pi-ai · deepseek-r1 (this session + default).',
       ),
     ).toBe(true);
   });
@@ -3604,7 +3604,7 @@ describe('/model picker', () => {
     expect(defaults.saved).toEqual([{ provider: 'deepseek-official', model: 'deepseek-r1' }]);
     expect(
       resultCardTexts(h).some((t) =>
-        t.includes('Default model set to deepseek-official · deepseek-r1'),
+        t.includes('Model set to deepseek-official · deepseek-r1 (this session + default)'),
       ),
     ).toBe(true);
   });
