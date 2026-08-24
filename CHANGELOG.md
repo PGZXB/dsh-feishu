@@ -19,6 +19,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `turn/start`/`assistant/message`/`tool/call` events into a session-scoped
   accumulator (survives per-turn card re-creation) and renders the line only
   on the terminal card.
+- **Message queue: turn messages no longer interrupt a running turn.** When a
+  user message arrives while a turn is running, it is appended to the agent
+  inbox's next-turn queue (never `deliverTurn`) and surfaced on a single
+  dedicated `⏳ N queued` card (one per chat). Every queue mutation — append,
+  edit, remove, steer — recalls the prior card and re-posts a fresh one, so a
+  chat never holds two live queue cards; when the queue empties the card is
+  recalled only. Each queued item row carries Steer (only while a turn runs),
+  a text-input Edit, and Remove, all mapped to the agent inbox
+  (`inbox.replace`/`remove` + `agent.steer`). When the agent has no inbox the
+  message degrades to a normal turn. See `docs/ux-specification.md` →
+  "Part: message-queue".
 
 - **`dsh-version-track` infra: a structured A/B source of truth + a
   diagnosis/adaptation skill.** `dsh-version.json` (repo root) records the

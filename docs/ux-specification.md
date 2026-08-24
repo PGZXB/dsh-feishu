@@ -1409,6 +1409,108 @@ tool ran (`M steps · T tools`). No timing group is ever shown.
   carries `usage?: TokenUsage`; `dsh-llm` `TokenUsage`
   (`inputTokens`/`outputTokens`/`cacheReadTokens`/`cacheWriteTokens`) and
   `LlmResolvedModelInfo.context.contextWindow` — the host-visible data.
+## Part: message-queue
+
+> Messages received while a turn runs no longer interrupt it — they queue in
+> a single managed card that is recalled and re-posted on every queue change,
+> so the chat always holds exactly one live queue card. Each queued item can
+> be steered (interrupted), edited, or removed, mirroring the DSH web
+> `QueueDock`.
+
+### Intended behavior
+
+**Why a single managed queue card, not rows on the streaming card** — the
+DSH web surfaces queued input in a `QueueDock` that is a dock (a fixed
+element), and the production concern (user report): a message sent while a
+turn runs must be *visibly accepted*, otherwise the streaming card looks
+"dead" (no new bubble under the user's message). Posting a dedicated queue
+card that confirms "queued" makes acceptance unambiguous. Only ONE queue card
+may exist per chat at a time, so every queue change recalls the prior card
+and re-posts a fresh one (never a stack of stale queue cards).
+
+**Trigger** — a user message arriving while the chat's turn is running
+(`streaming.isWorking(chatId)`). Such a message is NOT delivered as a new
+turn immediately; it is appended to the chat's inbox queue (`inbox.append`),
+and the queue card is re-posted.
+
+**Queue data / state** — the queue is the agent inbox's `nextTurn` list, read
+through the host's `agent.inbox`. It is session-owned (not card-owned), so a
+card re-render never loses it. Each item is `{ id, text, preview,
+placement: 'queued' }`.
+
+**Card/panel shape** — one dedicated queue card (markdown + per-item action
+buttons):
+- Header: `⏳ N queued` (or the single item's preview when N === 1).
+- One row per item: preview + actions per item:
+  - `➡️ Steer` (interrupt into the running turn) — enabled only while a turn
+    runs; disabled (with a hint) when idle.
+  - `✏️ Edit` — re-post the item with new text (`inbox.replace`).
+  - `🗑️ Remove` — drop the item (`inbox.remove`).
+
+**Single-card invariant** — `sendCard` for a NEW queue state, `deleteMessage`
+for a CLEARED queue. On every queue *mutation* (append/edit/remove/steer) the
+previous queue card is recalled (`deleteMessage`) and a fresh one posted
+(`sendCard`), guaranteeing at most one live queue card. On queue empty the
+card is recalled only.
+
+**Actions** (all map to the agent inbox, mirroring the web `updateQueue`):
+- `queue-card` (re-post): recalled + re-posted when queue content changes.
+- Per-item `steer`: only when a turn is running; `inbox.remove` the item then
+  `agent.steer(message)` — the driver consumes it at its NEXT STEP boundary
+  (a running driver does not interrupt mid-step; an idle driver starts a
+  turn). Mirrors the web `steer-unavailable` guard (`target === 'next-turn'`
+  AND `agent.status === 'running'`).
+- Per-item `edit`: `inbox.replace(itemId, newContent)` — re-post the card.
+- Per-item `remove`: `inbox.remove(itemId)` — re-post the card.
+
+**Queue consumption** — the agent loop consumes the inbox `nextTurn` list at
+its own turn boundary (`claim('next-turn')`), so queued messages are processed
+in arrival order without the surface draining them manually. When the queue
+empties the surface recalls the queue card.
+
+**Failure modes**:
+- No inbox (agent absent / `agent.inbox` unavailable): the message is
+  delivered as a normal turn (degrade to today's behavior), logged — never a
+  broken queue.
+- Steer while idle (`agent.status !== 'running'`): the button is disabled
+  (hint "steer unavailable — no turn running"); no card action fires.
+- Queue item already consumed (turn boundary raced the click): the action
+  reports "no longer pending", re-posts the card to the now-current queue.
+- Card post failure while re-posting: logged; the queue state is unchanged
+  (the inbox still holds the items) — the next mutation re-posts.
+- A chat with no pinned cwd: the working-directory gate still refuses the
+  FIRST turn; a queued message that reaches a turn picks up the cwd as today.
+
+**Acceptance checklist**:
+- [ ] A message sent while a turn runs is queued (inbox `nextTurn`), not
+      delivered as an interrupting turn; exactly one queue card posts (unit +
+      integration).
+- [ ] A second queued message re-posts a single queue card (recall + re-post),
+      never two cards (unit + integration).
+- [ ] Each item row offers Steer / Edit / Remove; Steer is disabled when no
+      turn runs; Edit/Remove re-post the card (unit).
+- [ ] Steer while running removes the item and calls `agent.steer` (consumed
+      at next step boundary) (unit).
+- [ ] Queue empty → the queue card is recalled (unit + integration).
+- [ ] Agent inbox absent → degrade to a normal turn, logged loudly (unit).
+- [ ] The queue card does not interfere with the streaming card / produced
+      chips / stats line (integration).
+
+### Reference
+
+- DSH web `packages/client/ui-conversation/src/client/queue/QueueDock.tsx`:
+  renders the queue as a dock, `{ kind: 'edit' | 'remove' | 'steer' }` actions
+  via `updateQueue`, a collapsible count header (single item renders directly),
+  and a `queueMutable` gate when a subagent owns the session.
+- DSH web `packages/client/runtime/src/client/sessions/session.ts`
+  (`updateQueue`) + `packages/host/apiproxy/src/api-proxy.ts`: the queue
+  action mapping — `edit` → `inbox.replace`, else `inbox.remove` then
+  `agent.steer(message)` for `steer`; steer requires `target === 'next-turn'`
+  AND `agent.status === 'running'` (else `steer-unavailable`).
+- dsh `@deepseek-ai/dsh-agent` `Inbox` (`inbox.d.ts`): `nextTurn` list,
+  `append`/`prepend`/`replace`/`remove`/`clear`, and `Agent.steer` (`runtime-types.ts`):
+  a running driver consumes steering at its NEXT STEP boundary, never
+  mid-step.
 
 
 ## Part: model-switch-current

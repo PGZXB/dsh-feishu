@@ -751,3 +751,86 @@ turn 重置——整会话累计，镜像 web 的 whole-log `sessionStats`）：
   `usage?: TokenUsage`；`dsh-llm` `TokenUsage`
   （`inputTokens`/`outputTokens`/`cacheReadTokens`/`cacheWriteTokens`）与
   `LlmResolvedModelInfo.context.contextWindow`——宿主可见数据。
+## Part: message-queue
+
+> turn 运行期间收到的消息不再打断它——它们进入一张被管理的队列卡；每次队列
+> 变更都先撤回旧卡再重发新卡，所以一个聊天始终只保留一张活队列卡。每条排队
+> 消息可被插话（steer）、编辑或删除，镜像 DSH web 的 `QueueDock`。
+
+### 意图行为
+
+**为什么是一张独立队列卡，而不是流式卡上的行** —— DSH web 把排队输入放在
+`QueueDock`（一个固定 dock）里，生产问题（用户反馈）：turn 运行期间发送的消息
+必须*被看见接受*，否则流式卡会显得"死掉"（用户消息下没有新气泡）。发一张
+确认"已排队"的独立队列卡让接受无歧义。每个聊天任何时候只能有一张队列卡，所以
+每次队列变更都撤回旧卡并重发新卡（绝不叠一堆过期队列卡）。
+
+**触发** —— 一条用户消息在聊天 turn 运行期间到达（
+`streaming.isWorking(chatId)`）。这条消息不立即作为新 turn 投递；而是追加到聊天
+的 inbox 队列（`inbox.append`），并重发队列卡。
+
+**队列数据 / 状态** —— 队列就是 agent inbox 的 `nextTurn` 列表，通过宿主的
+`agent.inbox` 读取。它是会话所有的（不是卡片所有的），所以卡片重渲染不会丢。
+每项为 `{ id, text, preview, placement: 'queued' }`。
+
+**卡片/面板形状** —— 一张独立队列卡（markdown + 每项动作按钮）：
+- 头部：`⏳ N queued`（单条时展示该条预览）。
+- 每项一行：预览 + 动作：
+  - `➡️ Steer`（插话进正在跑的 turn）— 仅在 turn 运行中可用；空闲时禁用（带提示）。
+  - `✏️ Edit` — 用新文本重发该项（`inbox.replace`）。
+  - `🗑️ Remove` — 丢弃该项（`inbox.remove`）。
+
+**单卡不变量** —— 对新的队列状态 `sendCard`，队列清空时 `deleteMessage`。每次队列
+*变更*（append/edit/remove/steer）都先撤回上一张队列卡（`deleteMessage`）再发新卡
+（`sendCard`），保证最多一张活队列卡。队列清空时只撤回不重发。
+
+**动作**（都映射到 agent inbox，镜像 web `updateQueue`）：
+- `queue-card`（重发）：队列内容变化时撤回 + 重发。
+- 每条 `steer`：仅在 turn 运行时；`inbox.remove` 该项然后 `agent.steer(message)` —
+  driver 在下一个 STEP 边界消费它（运行中的 driver 不会打断 step 中途；空闲 driver
+  开启一个新 turn）。镜像 web 的 `steer-unavailable` 守卫（`target === 'next-turn'`
+  且 `agent.status === 'running'`）。
+- 每条 `edit`：`inbox.replace(itemId, newContent)` — 重发卡片。
+- 每条 `remove`：`inbox.remove(itemId)` — 重发卡片。
+
+**队列消费** —— agent loop 在自己的 turn 边界消费 inbox `nextTurn` 列表（
+`claim('next-turn')`），所以排队消息按到达顺序被处理，无需 surface 手动 drain。
+队列清空时 surface 撤回队列卡。
+
+**失败模式**：
+- 无 inbox（agent 缺失 / `agent.inbox` 不可用）：消息按普通 turn 投递（降级为今天
+  的行为），记日志——绝不出现坏队列。
+- 空闲时 steer（`agent.status !== 'running'`）：按钮禁用（提示"steer unavailable —
+  no turn running"）；不触发任何卡片动作。
+- 队列项已被消费（turn 边界与点击竞态）：动作报告"no longer pending"，按当前队列
+  重发卡片。
+- 重发时发卡失败：记日志；队列状态不变（inbox 仍持有这些项）——下一次变更重发。
+- 无固定 cwd 的聊天：工作目录 gate 仍拒绝**第一个** turn；排队消息进入 turn 时按
+  今天的方式取 cwd。
+
+**验收清单**：
+- [ ] turn 运行期间发送的消息被排队（inbox `nextTurn`），不是作为打断 turn 投递；
+      恰好一张队列卡（单测 + 集成）。
+- [ ] 第二条排队消息重发单张队列卡（撤回 + 重发），绝无两张卡（单测 + 集成）。
+- [ ] 每项行提供 Steer / Edit / Remove；无 turn 运行时 Steer 禁用；Edit/Remove 重发
+      卡片（单测）。
+- [ ] 运行中 steer 移除该项并调用 `agent.steer`（下一个 STEP 边界消费）（单测）。
+- [ ] 队列清空 → 队列卡被撤回（单测 + 集成）。
+- [ ] agent inbox 缺失 → 降级为普通 turn，大声记日志（单测）。
+- [ ] 队列卡不干扰流式卡 / 产出 chips / 统计行（集成）。
+
+### Reference
+
+- DSH web `packages/client/ui-conversation/src/client/queue/QueueDock.tsx`：把队列渲染
+  为 dock，`{ kind: 'edit' | 'remove' | 'steer' }` 动作经 `updateQueue`，可折叠计数头
+  （单条直接渲染），以及子代理拥有会话时的 `queueMutable` 门。
+- DSH web `packages/client/runtime/src/client/sessions/session.ts`
+  （`updateQueue`）+ `packages/host/apiproxy/src/api-proxy.ts`：队列动作映射 —
+  `edit` → `inbox.replace`，其余先 `inbox.remove` 再 `agent.steer(message)` 用于
+  `steer`；steer 要求 `target === 'next-turn'` 且 `agent.status === 'running'`
+  （否则 `steer-unavailable`）。
+- dsh `@deepseek-ai/dsh-agent` `Inbox`（`inbox.d.ts`）：`nextTurn` 列表、
+  `append`/`prepend`/`replace`/`remove`/`clear`，以及 `Agent.steer`
+  （`runtime-types.ts`）：运行中的 driver 在下一个 STEP 边界消费 steering，绝不
+  中途插入。
+

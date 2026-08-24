@@ -15,6 +15,7 @@ import {
   buildPermissionPickerCard,
   buildQuestionAnsweredCard,
   buildQuestionCard,
+  buildQueueCard,
   buildRepoPickedCard,
   buildRepoPickerCard,
   buildRowDetailsCard,
@@ -952,5 +953,47 @@ describe('interaction cards (approvals/questions)', () => {
     expect(content).toContain('notes.txt');
     expect(content).not.toContain('awaiting your instruction');
     expect(content).toContain('Tell me what to do with it.');
+  });
+
+  it('queue card header folds a single item preview and shows its actions', () => {
+    const card = buildQueueCard([{ id: 'm1', text: 'run the build' }], true);
+    expect(card.header?.title.content).toBe('⏳ run the build');
+    const labels = card.elements.flatMap((el) =>
+      el.tag === 'action'
+        ? el.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
+        : el.tag === 'form'
+          ? el.elements.filter((e) => e.tag === 'button').map((e) => e.text.content)
+          : [],
+    );
+    expect(labels).toContain('➡️ Steer');
+    expect(labels).toContain('✏️ Edit');
+    expect(labels).toContain('🗑️ Remove');
+    expect(JSON.stringify(card.elements)).toContain('run the build');
+  });
+
+  it('queue card shows the count header and no Steer button when idle', () => {
+    const card = buildQueueCard(
+      [
+        { id: 'm1', text: 'first' },
+        { id: 'm2', text: 'second' },
+      ],
+      false,
+    );
+    expect(card.header?.title.content).toBe('⏳ 2 queued');
+    // No Steer button anywhere; an idle hint explains why.
+    const labels = card.elements.flatMap((el) =>
+      el.tag === 'action'
+        ? el.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
+        : el.tag === 'form'
+          ? el.elements.filter((e) => e.tag === 'button').map((e) => e.text.content)
+          : [],
+    );
+    expect(labels).not.toContain('➡️ Steer');
+    expect(labels).toContain('✏️ Edit');
+    expect(labels).toContain('🗑️ Remove');
+    const allContent = JSON.stringify(card.elements);
+    expect(allContent).toContain('➡️ Steer unavailable — no turn is running.');
+    expect(allContent).toContain('first');
+    expect(allContent).toContain('second');
   });
 });

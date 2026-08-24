@@ -16,7 +16,7 @@
 
 import { Readable } from 'node:stream';
 import type { Agent } from '@deepseek-ai/dsh-agent';
-import { type ContentBlock, createUserMessage } from '@deepseek-ai/dsh-llm';
+import { type ContentBlock, createUserMessage, MessageId } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
 import {
   InteractionCardController,
@@ -25,9 +25,11 @@ import {
 import {
   buildInboundFileCard,
   buildPanelCard,
+  buildQueueCard,
   buildResultCard,
   type ModelOptionView,
   type PanelCommand,
+  type QueueItemView,
 } from './cards/render.js';
 import {
   StreamingCardController,
@@ -445,6 +447,18 @@ function stripMentions(text: string): string {
 }
 
 /**
+ * The user-visible text of one queued message (message-queue): the joined
+ * `text` blocks of its content, used for the queue-card row preview and the
+ * edit default. Empty when a message carries only non-text blocks.
+ */
+function queueMessageText(message: { readonly content: readonly ContentBlock[] }): string {
+  return message.content
+    .filter((block) => block.type === 'text')
+    .map((block) => block.text)
+    .join('\n');
+}
+
+/**
  * Scan the configured roots for candidate projects. Recursive (botmux
  * semantics: up to depth 3, skipping dot/dependency directories, budgeted),
  * so nested checkouts like `~/src/<repo>` are surfaced.
@@ -480,6 +494,13 @@ export class Bridge {
    * into its turn, in order. Not persisted across restarts.
    */
   private readonly pendingInbound = new Map<string, PendingInboundFile[]>();
+  /**
+   * The live queue-card message id per chat (message-queue). The single-card
+   * invariant: a chat never holds more than one queue card — every mutation
+   * recalls the prior id and re-posts a fresh card; the entry is cleared when
+   * the queue empties.
+   */
+  private readonly queueCardIds = new Map<string, string>();
 
   /**
    * The user to proactively @ for a chat: the last accepted sender, only in
@@ -1328,6 +1349,37 @@ export class Bridge {
       );
       return;
     }
+    // The message-queue gate: a message that arrives while a turn is running
+    // is NOT delivered as an interrupting turn — it is appended to the chat's
+    // inbox queue (next-turn) and the queue card is re-posted, so the running
+    // turn is never interrupted. Degrade to a normal turn when no live agent
+    // (or no inbox) exists (today's behavior), logged loudly.
+    const live = this.liveAgent(message.chatId);
+    if (
+      live !== undefined &&
+      live.inbox !== undefined &&
+      this.streaming.isWorking(message.chatId)
+    ) {
+      const queued = createUserMessage({
+        content: await this.inboundContent(message),
+        source: { kind: 'user' },
+      });
+      try {
+        live.inbox.append('next-turn', queued);
+      } catch (appendError: unknown) {
+        this.options.logger.warn(
+          `queue append failed for message ${message.messageId}: ${String(appendError)}`,
+        );
+        await this.options.transport.sendText(
+          message.chatId,
+          '⚠️ Could not queue that message — try again.',
+        );
+        return;
+      }
+      await this.postQueueCard(message.chatId);
+      this.options.logger.debug(`message ${message.messageId} -> queued (chat ${message.chatId})`);
+      return;
+    }
     this.streaming.rememberPrompt(message.chatId, message.text);
     // Remember the accepted sender and chat type: proactive @-mentions in
     // groups (error notices, approval cards, question cards) target the user
@@ -1356,6 +1408,138 @@ export class Bridge {
         source: { kind: 'user' },
       }),
     );
+  }
+
+  /**
+   * The queued messages (message-queue) for a chat, in arrival order, or
+   * `undefined` when the chat has no live agent (degrade to a normal turn).
+   * @param chatId - the chat.
+   * @returns the queue item views, or `undefined` when no live agent.
+   */
+  private queueItems(chatId: string): QueueItemView[] | undefined {
+    const agent = this.liveAgent(chatId);
+    if (agent === undefined || agent.inbox === undefined) return undefined;
+    return agent.inbox.nextTurn.map((message) => ({
+      id: message.id,
+      text: queueMessageText(message),
+    }));
+  }
+
+  /**
+   * Re-post the queue card for a chat following the single-card invariant:
+   * recall the prior queue card (if any), then — when the queue still holds
+   * items — post a fresh card reflecting the current queue; when the queue is
+   * empty the card is recalled only. Card-post failures log and leave the
+   * inbox state untouched (the next mutation re-posts).
+   * @param chatId - the chat.
+   */
+  private async postQueueCard(chatId: string): Promise<void> {
+    const priorId = this.queueCardIds.get(chatId);
+    this.queueCardIds.delete(chatId);
+    if (priorId !== undefined) {
+      try {
+        await this.options.transport.deleteMessage(priorId);
+      } catch (error: unknown) {
+        this.options.logger.warn(`queue card recall failed (chat ${chatId}): ${String(error)}`);
+      }
+    }
+    const items = this.queueItems(chatId);
+    if (items === undefined || items.length === 0) return;
+    const card = buildQueueCard(items, this.streaming.isWorking(chatId));
+    try {
+      const sent = await this.options.transport.sendCard(chatId, card);
+      this.queueCardIds.set(chatId, sent.messageId);
+    } catch (error: unknown) {
+      this.options.logger.warn(`queue card send failed (chat ${chatId}): ${String(error)}`);
+    }
+  }
+
+  /**
+   * One queue-card button callback (message-queue). Steer removes the item
+   * then steers the running turn (never while idle); Edit replaces the item's
+   * text; Remove drops it. Each action re-posts the queue card; when the item
+   * was already consumed (raced the turn boundary) a notice posts and the
+   * card re-posts to the now-current queue.
+   * @param action - the normalized card callback.
+   */
+  private async handleQueueCardAction(action: CardAction): Promise<void> {
+    const agent = this.liveAgent(action.chatId);
+    if (agent === undefined || agent.inbox === undefined) {
+      this.options.logger.warn(
+        `queue card action ${action.value.kind} ignored: no live agent for chat ${action.chatId}`,
+      );
+      return;
+    }
+    const kind = action.value.kind;
+    const id = action.value.id;
+    if (id === undefined) {
+      this.options.logger.warn(`queue card action ${kind} ignored: missing item id`);
+      return;
+    }
+    const messageId = MessageId(id);
+    if (kind === 'queue-steer') {
+      // Steer is available only while a turn runs (mirror the web
+      // `steer-unavailable` guard); when idle the card renders a disabled
+      // hint and this never fires.
+      if (!this.streaming.isWorking(action.chatId)) {
+        this.options.logger.info(`queue steer ignored: no turn running (chat ${action.chatId})`);
+        await this.postQueueCard(action.chatId);
+        return;
+      }
+      const pending = agent.inbox.nextTurn.find((m) => m.id === messageId);
+      if (pending !== undefined && agent.inbox.remove(messageId)) {
+        agent.steer(pending);
+        this.options.logger.debug(
+          `queue steer ${messageId} -> running turn (chat ${action.chatId})`,
+        );
+      } else {
+        await this.reportQueueConsumed(action.chatId);
+      }
+      await this.postQueueCard(action.chatId);
+      return;
+    }
+    if (kind === 'queue-edit') {
+      const text = action.value.text ?? action.formValue?.text;
+      if (text === undefined || text === '') {
+        this.options.logger.warn(
+          `queue edit ${messageId} ignored: no replacement text (chat ${action.chatId})`,
+        );
+        await this.postQueueCard(action.chatId);
+        return;
+      }
+      if (
+        agent.inbox.replace(
+          messageId,
+          createUserMessage({
+            content: [{ type: 'text', text }],
+            source: { kind: 'user' },
+          }),
+        )
+      ) {
+        this.options.logger.debug(`queue edit ${messageId} (chat ${action.chatId})`);
+      } else {
+        await this.reportQueueConsumed(action.chatId);
+      }
+      await this.postQueueCard(action.chatId);
+      return;
+    }
+    if (kind === 'queue-remove') {
+      if (agent.inbox.remove(messageId)) {
+        this.options.logger.debug(`queue remove ${messageId} (chat ${action.chatId})`);
+      } else {
+        await this.reportQueueConsumed(action.chatId);
+      }
+      await this.postQueueCard(action.chatId);
+    }
+  }
+
+  /**
+   * Notice that a queue-card action raced the turn boundary — the item is no
+   * longer pending — and let the now-current queue re-post.
+   * @param chatId - the chat.
+   */
+  private async reportQueueConsumed(chatId: string): Promise<void> {
+    await this.options.transport.sendText(chatId, '⚠️ That queued message was already consumed.');
   }
 
   /**
@@ -1685,6 +1869,19 @@ export class Bridge {
   async handleEvent(sessionId: string, event: SessionEvent): Promise<void> {
     this.options.logger.debug(`session event ${event.type} from ${sessionId}`);
     await this.streaming.handleEvent(sessionId, event);
+    // message-queue: the agent loop auto-consumes the inbox `nextTurn` list at
+    // its own turn boundary (the "drain" path). When it does, the surface
+    // must recall the now-empty queue card; otherwise a stale "N queued" card
+    // lingers after the messages were already processed. Best-effort — only
+    // fires when a queue card actually exists for this chat.
+    const chatId = this.options.sessionMap.chatFor(sessionId);
+    if (chatId !== undefined && this.queueCardIds.has(chatId)) {
+      const items = this.queueItems(chatId);
+      if (items !== undefined && items.length === 0) {
+        this.options.logger.debug(`queue auto-consumed (chat ${chatId}) — recalling queue card`);
+        await this.postQueueCard(chatId);
+      }
+    }
   }
 
   /**
@@ -1757,6 +1954,14 @@ export class Bridge {
         // Approval/question interactions are handled by the interaction
         // controller (they settle pending card interactions).
         await this.interactions.handleCardAction(action);
+        break;
+      }
+      case 'queue-steer':
+      case 'queue-edit':
+      case 'queue-remove': {
+        // Queue-card actions mutate the agent inbox and re-post the single
+        // queue card (message-queue).
+        await this.handleQueueCardAction(action);
         break;
       }
       default: {

@@ -143,7 +143,11 @@ export type SurfaceAction =
   | { readonly kind: 'session-find' }
   | { readonly kind: 'session-archive'; readonly sessionId: string }
   | { readonly kind: 'session-rename'; readonly sessionId: string }
-  | { readonly kind: 'session-export'; readonly sessionId: string };
+  | { readonly kind: 'session-export'; readonly sessionId: string }
+  // Dedicated queue card (message-queue) per-item mutations.
+  | { readonly kind: 'queue-steer'; readonly id: string }
+  | { readonly kind: 'queue-edit'; readonly id: string }
+  | { readonly kind: 'queue-remove'; readonly id: string };
 
 /**
  * Projects per picker card page (the button-based fallback, used only when
@@ -1485,5 +1489,101 @@ export function buildStatusCard(view: StatusView): CardJson {
         ].join('\n'),
       },
     ],
+  };
+}
+
+/** One queued item rendered on the queue card (message-queue). */
+export interface QueueItemView {
+  /** The inbox message id (the action target for steer/edit/remove). */
+  readonly id: string;
+  /** The text preview shown on the row (and the edit default). */
+  readonly text: string;
+}
+
+/** Longest item preview shown on a queue row. */
+export const QUEUE_PREVIEW_CHARS = 200;
+
+/** Longest preview folded into the queue-card header when exactly one item. */
+const QUEUE_HEADER_CHARS = 40;
+
+/**
+ * Build the dedicated queue card (message-queue): one card per chat that
+ * lists the agent inbox's queued next-turn messages. Every queue mutation
+ * recalls the prior card and re-posts a fresh one, so a chat never holds two
+ * live queue cards. Each item row carries its preview plus Steer (only while
+ * a turn runs), a text-input Edit form (re-posts with new text), and Remove.
+ * When idle the Steer button is omitted and a hint explains why — the action
+ * never fires without a running turn.
+ * @param items - the queued messages, in arrival order.
+ * @param running - whether a turn is currently running (Steer availability).
+ * @returns Feishu interactive card JSON (v1 layout).
+ */
+export function buildQueueCard(items: readonly QueueItemView[], running: boolean): CardJson {
+  const count = items.length;
+  const first = items[0];
+  // Single-item header folds the item preview; otherwise show the count.
+  const title =
+    count === 1 && first !== undefined && first.text !== ''
+      ? `⏳ ${truncateTail(first.text, QUEUE_HEADER_CHARS)}`
+      : `⏳ ${count} queued`;
+  const elements: CardElement[] = [];
+  if (!running) {
+    elements.push({
+      tag: 'markdown',
+      content: '➡️ Steer unavailable — no turn is running.',
+    });
+  }
+  elements.push({ tag: 'hr' });
+  for (const [index, item] of items.entries()) {
+    elements.push({
+      tag: 'markdown',
+      content: `**${index + 1}.** ${truncateTail(item.text, QUEUE_PREVIEW_CHARS)}`,
+    });
+    const buttons: Array<{
+      readonly tag: 'button';
+      readonly text: { readonly tag: 'plain_text'; readonly content: string };
+      readonly type?: 'primary' | 'danger' | 'default';
+      readonly value: Record<string, string>;
+    }> = [];
+    if (running) {
+      buttons.push({
+        tag: 'button',
+        text: { tag: 'plain_text', content: '➡️ Steer' },
+        value: actionValue({ kind: 'queue-steer', id: item.id }),
+      });
+    }
+    buttons.push({
+      tag: 'button',
+      text: { tag: 'plain_text', content: '🗑️ Remove' },
+      type: 'default',
+      value: actionValue({ kind: 'queue-remove', id: item.id }),
+    });
+    elements.push({ tag: 'action', actions: buttons });
+    elements.push({
+      tag: 'form',
+      name: 'queue-edit',
+      elements: [
+        {
+          tag: 'input',
+          name: 'text',
+          default_value: item.text,
+          placeholder: { tag: 'plain_text', content: 'Edit queued text' },
+        },
+        {
+          tag: 'button',
+          text: { tag: 'plain_text', content: '✏️ Edit' },
+          type: 'primary',
+          // Feishu requires a name for form-container buttons (ErrCode 200530).
+          name: 'queue-edit-submit',
+          action_type: 'form_submit',
+          value: actionValue({ kind: 'queue-edit', id: item.id }),
+        },
+      ],
+    });
+  }
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: title }, template: 'wathet' },
+    elements,
   };
 }

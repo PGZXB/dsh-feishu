@@ -25,7 +25,7 @@ Feature list for dsh-feishu. ✅ = shipped, 📋 = planned
 | Subagent manager | Tree view of subagents (parent→child, status, tokens, duration), open or cancel one | Panel tree view | 📋 |
 | Settings panel | View models/providers, manage API keys, review default cwd/preset | Panel settings view | 📋 |
 | Turn produced files | Files a turn produced surface at the end of the turn | Chips row at the card bottom; tap a chip to receive the file | ✅ |
-| Message queue | Messages sent while a turn runs queue visibly; edit / delete / steer them | Collapsed "N queued" row on the streaming card; expand to edit/delete/steer | 📋 |
+| Message queue | Messages sent while a turn runs queue visibly; edit / delete / steer them | Dedicated "⏳ N queued" card (one per chat) with per-item Steer/Edit/Remove; recalled + re-posted on every change | ✅ |
 | Model retry line | Model auto-retries surface instead of staying silent | Card status line "retrying (2/3) · 3s", expand for delay/reason | 📋 |
 | Session stats line | Durable per-session usage: turns, steps, tool calls, tokens (input/output/cache) | One small line at the card bottom, rendered on the terminal card | ✅ |
 | Context occupancy | Current session's context-window usage | Percent on the card bottom, rendered on the terminal card with the stats line | ✅ |
