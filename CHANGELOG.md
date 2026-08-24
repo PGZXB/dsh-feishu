@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `nextTurn` list). Trade-off: the in-memory queue is not persisted, so a
   restart drops queued messages (the inbox no longer holds non-steer queued
   messages). See `docs/ux-specification.md` → "Part: message-queue".
+- **`/model` shows the session-switched model immediately (not the stale static
+  one).** After a `/model` pick/typed switch, the model picker's current
+  preselection and the no-catalog `/model` text display read the live agent's
+  static `options` (never mutated by the switch) instead of the session-switched
+  selection, so they showed the pre-switch model. Both now prefer the
+  session-switched `ref.current` (dsh web parity), falling back to `agent.options`
+  then the deployment default. See `docs/ux-specification.md` →
+  "Part: model-switch-current".
 
 ### Added
 

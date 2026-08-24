@@ -54,6 +54,7 @@ import type {
 } from './feishu/types.js';
 import { MessageDeduplicator } from './message-dedup.js';
 import { parseModelArg } from './model-args.js';
+import { sessionSelection } from './model-switch.js';
 import type { PanelActionContext } from './panel/actions/PanelAction.js';
 import { buildPanelActionRegistry } from './panel/actions/registry.js';
 import { PanelController, type PanelHost } from './panel/PanelController.js';
@@ -1261,6 +1262,15 @@ export class Bridge {
   /** The chat's current model as a `provider/model` selection arg. */
   private currentModelSelection(chatId: string): string | undefined {
     const live = this.liveAgent(chatId);
+    // A session-switched model (via `/model`, dsh web parity) takes precedence:
+    // applySessionModelSwitch writes `selection.current` into the agent's coupled
+    // ref, but the agent's static `options` is NOT mutated, so reading it first
+    // would show the pre-switch model (the #40 display bug). Fall back to the
+    // agent's static options, then the deployment default.
+    const switched = sessionSelection(live?.ctx)?.current;
+    if (switched !== undefined) {
+      return `${switched.provider}/${switched.model}`;
+    }
     if (live?.options?.provider !== undefined && live?.options?.model !== undefined) {
       return `${live.options.provider}/${live.options.model}`;
     }

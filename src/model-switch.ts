@@ -46,6 +46,21 @@ export function sessionSelectionFor(agentCtx: Context): ModelSelectionRef {
 }
 
 /**
+ * Read the live agent's coupled selection ref WITHOUT installing it (the
+ * `#40 display bug`). `sessionSelectionFor` couples the waterfall listeners on
+ * first use (a write path); a read path — e.g. the panel's "current model" —
+ * must never install listeners just to inspect a value, so it reads the cached
+ * ref directly and returns `undefined` when no `/model` switch ran yet.
+ * @param agentCtx - the live agent's scoped context (or `undefined` for none).
+ * @returns the coupled selection ref (its `current` is the switched model), or
+ *   `undefined` when no session switch was applied to this context.
+ */
+export function sessionSelection(agentCtx: Context | undefined): ModelSelectionRef | undefined {
+  if (agentCtx === undefined) return undefined;
+  return refs.get(agentCtx);
+}
+
+/**
  * Switch the model for one live agent's session (`next` becomes the model the
  * next turn assembles). No-op when `agentCtx` is undefined (already handled by
  * the caller). Does not touch the deployment default — the caller saves that

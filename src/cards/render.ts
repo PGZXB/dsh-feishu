@@ -1217,7 +1217,7 @@ export function buildModelPickerCard(
     {
       tag: 'markdown',
       content:
-        '**Choose a model** — sets the default for new sessions (the current session keeps its model).',
+        '**Choose a model** — the pick switches THIS session’s model immediately and saves the default for new sessions.',
     },
     { tag: 'hr' },
   ];
