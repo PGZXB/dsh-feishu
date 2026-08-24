@@ -34,7 +34,9 @@ export class RepoPickAction extends PanelAction {
     };
   }
   protected override async finish(ctx: PanelActionContext, action: CardAction): Promise<void> {
-    await ctx.popToMenu(action.chatId);
+    // A standalone card (seeded by a typed command) stays on its result; only
+    // a navigation card (has a parent) pops back to the menu.
+    if (ctx.canReturn(action.chatId)) await ctx.popToMenu(action.chatId);
   }
 }
 
@@ -69,7 +71,9 @@ export class PermissionPickAction extends PanelAction {
     };
   }
   protected override async finish(ctx: PanelActionContext, action: CardAction): Promise<void> {
-    await ctx.popToMenu(action.chatId);
+    // A standalone card (seeded by a typed command) stays on its result; only
+    // a navigation card (has a parent) pops back to the menu.
+    if (ctx.canReturn(action.chatId)) await ctx.popToMenu(action.chatId);
   }
 }
 
@@ -105,7 +109,9 @@ export class ModelPickAction extends PanelAction {
     };
   }
   protected override async finish(ctx: PanelActionContext, action: CardAction): Promise<void> {
-    await ctx.popToMenu(action.chatId);
+    // A standalone card (seeded by a typed command) stays on its result; only
+    // a navigation card (has a parent) pops back to the menu.
+    if (ctx.canReturn(action.chatId)) await ctx.popToMenu(action.chatId);
   }
 }
 

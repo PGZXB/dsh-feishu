@@ -28,7 +28,7 @@
  * @module @dsh-feishu/dsh-feishu/panel/PanelController
  */
 
-import { buildPanelBusyCard, buildPanelNoticeCard } from '../cards/render.js';
+import { actionValue, buildPanelBusyCard, buildPanelNoticeCard } from '../cards/render.js';
 import type { CommandResult } from '../commands.js';
 import type { CardJson, FeishuTransport } from '../feishu/types.js';
 import type { PanelView } from './types.js';
@@ -250,6 +250,27 @@ export class PanelController {
       await this.host.text(chatId, '⚠️ The panel view could not be rendered — see the bot log.');
       return { messageId };
     }
+    // A card with a parent (its stack is deeper than one) can return to it:
+    // append the ⬅ Back row. A standalone card seeded directly by a typed
+    // command (depth one) has no parent and renders no Back.
+    if (stack.length > 1) {
+      card = {
+        ...card,
+        elements: [
+          ...card.elements,
+          {
+            tag: 'action',
+            actions: [
+              {
+                tag: 'button',
+                text: { tag: 'plain_text', content: '⬅ Back' },
+                value: actionValue({ kind: 'panel-back' }),
+              },
+            ],
+          },
+        ],
+      };
+    }
     await this.postPanelCard(chatId, messageId, card);
     this.host.syncCard(chatId);
     return { messageId };
@@ -406,5 +427,12 @@ export class PanelController {
   panelViewFor(chatId: string, messageId: string): PanelView {
     const stack = this.stackFor(chatId, messageId);
     return stack[stack.length - 1] ?? { kind: 'menu', page: 0 };
+  }
+
+  /** Whether one (chat, card) has a parent to return to (its view stack is
+   *  deeper than one). A standalone card seeded directly by a typed slash
+   *  command is at depth one → cannot pop. */
+  canReturn(chatId: string, messageId: string): boolean {
+    return this.stackFor(chatId, messageId).length > 1;
   }
 }

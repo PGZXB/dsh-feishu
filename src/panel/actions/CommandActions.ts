@@ -96,7 +96,7 @@ export class CommandAction extends PanelAction {
     return runCommand(action.chatId, action.operatorOpenId, command, '');
   }
   protected override async finish(ctx: PanelActionContext, action: CardAction): Promise<void> {
-    await ctx.popToMenu(action.chatId);
+    if (ctx.canReturn(action.chatId)) await ctx.popToMenu(action.chatId);
   }
 }
 
@@ -182,10 +182,10 @@ export class PanelInputSubmitAction extends PanelAction {
   protected override async finish(ctx: PanelActionContext, action: CardAction): Promise<void> {
     const commandName = action.value.command;
     if (commandName === 'rename-session') {
-      await ctx.popToDetail(action.chatId);
+      if (ctx.canReturn(action.chatId)) await ctx.popToDetail(action.chatId);
       return;
     }
-    await ctx.popToMenu(action.chatId);
+    if (ctx.canReturn(action.chatId)) await ctx.popToMenu(action.chatId);
   }
 
   /** The typed value from the form callback for this command's field. */
@@ -219,7 +219,7 @@ export class PanelConfirmAction extends PanelAction {
     return runCommand(action.chatId, action.operatorOpenId, command, '');
   }
   protected override async finish(ctx: PanelActionContext, action: CardAction): Promise<void> {
-    await ctx.popToMenu(action.chatId);
+    if (ctx.canReturn(action.chatId)) await ctx.popToMenu(action.chatId);
   }
 }
 

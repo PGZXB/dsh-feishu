@@ -698,6 +698,7 @@ export class Bridge {
       replacePanel: (chatId, view) => this.replacePanel(chatId, messageId, view),
       popPanel: (chatId) => this.popPanel(chatId, messageId),
       popToMenu: (chatId) => this.popToMenu(chatId, messageId),
+      canReturn: (chatId) => this.panel.canReturn(chatId, messageId),
       popToDetail: (chatId) => this.popToDetail(chatId, messageId),
       panelViewFor: (chatId) => this.panelViewFor(chatId, messageId),
       panelStack: (chatId) => this.panelStack(chatId, messageId),

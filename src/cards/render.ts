@@ -289,17 +289,6 @@ export function buildRepoPickerCard(
       elements.push({ tag: 'action', actions: nav });
     }
   }
-  // Every panel sub-view can return to the menu root (stack semantics).
-  elements.push({
-    tag: 'action',
-    actions: [
-      {
-        tag: 'button',
-        text: { tag: 'plain_text', content: '⬅ Back' },
-        value: actionValue({ kind: 'panel-back' }),
-      },
-    ],
-  });
   return {
     config: { wide_screen_mode: true },
     header: { title: { tag: 'plain_text', content: '📚 Pick a project' }, template: 'wathet' },
@@ -956,16 +945,6 @@ export function buildInputCard(options: PanelInputCardOptions): CardJson {
           },
         ],
       },
-      {
-        tag: 'action',
-        actions: [
-          {
-            tag: 'button',
-            text: { tag: 'plain_text', content: '⬅ Back' },
-            value: actionValue({ kind: 'panel-back' }),
-          },
-        ],
-      },
     ],
   };
 }
@@ -992,11 +971,6 @@ export function buildConfirmCard(options: {
             type: 'primary',
             value: actionValue({ kind: 'panel-confirm', command: options.command }),
           },
-          {
-            tag: 'button',
-            text: { tag: 'plain_text', content: '⬅ Back' },
-            value: actionValue({ kind: 'panel-back' }),
-          },
         ],
       },
     ],
@@ -1019,16 +993,6 @@ export function buildPanelNoticeCard(options: {
     elements: [
       { tag: 'markdown', content: options.hint },
       { tag: 'hr' },
-      {
-        tag: 'action',
-        actions: [
-          {
-            tag: 'button',
-            text: { tag: 'plain_text', content: '⬅ Back' },
-            value: actionValue({ kind: 'panel-back' }),
-          },
-        ],
-      },
     ],
   };
 }
@@ -1168,16 +1132,6 @@ export function buildPermissionPickerCard(presets: readonly PermissionPresetView
       },
     ],
   });
-  elements.push({
-    tag: 'action',
-    actions: [
-      {
-        tag: 'button',
-        text: { tag: 'plain_text', content: '⬅ Back' },
-        value: actionValue({ kind: 'panel-back' }),
-      },
-    ],
-  });
   return {
     config: { wide_screen_mode: true },
     header: { title: { tag: 'plain_text', content: '🔐 Permission presets' }, template: 'wathet' },
@@ -1290,16 +1244,6 @@ export function buildModelPickerCard(
               ? 'No model selected yet.'
               : `★ current: ${currentSelection}`
             : `★ current: ${current.label}`,
-      },
-    ],
-  });
-  elements.push({
-    tag: 'action',
-    actions: [
-      {
-        tag: 'button',
-        text: { tag: 'plain_text', content: '⬅ Back' },
-        value: actionValue({ kind: 'panel-back' }),
       },
     ],
   });

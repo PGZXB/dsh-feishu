@@ -226,7 +226,10 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     handler: async (invocation) => {
       const target = invocation.rawInput.trim();
       if (target === '') {
-        return { kind: 'error', text: 'usage: /cd <absolute-or-~ path>' };
+        // Consistency: a bare /cd opens the same text-input card the panel's
+        // "Change dir" button shows (the user types the absolute path).
+        await options.pushPanel(invocation.chatId, { kind: 'input', command: 'cd' });
+        return { kind: 'success', text: '' };
       }
       const resolved = resolveDirectory(target);
       if (!resolved.ok) return { kind: 'error', text: resolved.error };

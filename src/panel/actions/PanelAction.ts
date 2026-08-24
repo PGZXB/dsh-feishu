@@ -79,6 +79,11 @@ export interface PanelActionContext {
   popPanel(chatId: string): Promise<void>;
   popToMenu(chatId: string): Promise<void>;
   popToDetail(chatId: string): Promise<void>;
+  /** Whether the panel card this action runs on has a parent to return to
+   *  (its view stack is deeper than one). A standalone card seeded directly
+   *  by a typed slash command has no parent, so a completed action should
+   *  stay on it rather than pop to the menu. */
+  canReturn(chatId: string): boolean;
   panelViewFor(chatId: string): PanelView;
   panelStack(chatId: string): PanelView[];
   /** THE single async-operation wrapper (patch-first guarantee). */
