@@ -177,7 +177,7 @@ Development, tests, and release: [docs/development.md](docs/development.md).
 
 Join the dsh-feishu community group on Feishu:
 
-![dsh-feishu community group QR code](docs/assets/feishu-group-qr-code.png)
+<img src="docs/assets/feishu-group-qr-code.png" alt="dsh-feishu community group QR code" width="220">
 
 ## Credits
 

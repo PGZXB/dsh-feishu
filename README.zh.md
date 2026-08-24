@@ -155,7 +155,7 @@ rm -rf ~/.dsh/profiles/feishu ~/.dsh/feishu
 
 扫码加入 dsh-feishu 飞书交流群：
 
-![dsh-feishu 交流群二维码](docs/assets/feishu-group-qr-code.png)
+<img src="docs/assets/feishu-group-qr-code.png" alt="dsh-feishu 交流群二维码" width="220">
 
 ## 致谢
 
