@@ -283,7 +283,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
       const service = options.getAgentPresets?.();
       if (preset !== undefined && service !== undefined) {
         const roster = await service.list();
-        const known = roster.presets.some((entry) => entry.id === preset && entry.broken !== true);
+        const known = roster.some((entry) => entry.id === preset && entry.broken === undefined);
         if (!known) return { kind: 'error', text: `unknown agent preset: ${preset}` };
       }
       const resolved = resolveDirectory(cdPath);

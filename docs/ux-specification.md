@@ -1623,12 +1623,16 @@ would show the pre-switch model (the `#40 display bug`). It falls back to
 > Select an agent preset when choosing a working directory
 
 Reference: dsh web's per-session agent preset (the host `agentPresets` roster
-→ `list({})` → `{ presets: [{ id, label, isDefault, trust }], authorable,
-hasDocument }`; `select({ sessionId, agentPreset })` recomposes a session's
-agent, allowed only while the session is blank, else `agent-preset-locked`).
-The preset is a string id (`standard`, `minimal`, `cordis`, …) passed as
-`meta.agentPreset` when a session's agent is created; it is durable (it decides
-the session's tools + prompt), so a resumed session keeps its original preset.
+→ `list(): AgentPreset[]` with `get defaultId`; `resolve(id?)`; and
+`mount(agentCtx, id?)`, which composes an agent from a preset by ensuring its
+standing mount and parenting the agent's scope key to it — called from the
+agent factory's `setup`). The preset is a string id (`standard`, `minimal`,
+`cordis`, …) passed as `meta.agentPreset` when a session's agent is created and
+is durable (it decides the session's tools + prompt), so a resumed session
+keeps its original preset. Binding has two halves: the id is **recorded**
+(`meta.agentPreset`, what the session header carries) and the agent is
+**composed** from it (`AgentPresets.mount` inside the agent-factory `setup`) —
+the runtime records the id but does NOT apply it, so the surface must mount.
 
 ### Intended behavior
 
@@ -1661,7 +1665,10 @@ resumed session keeps its durable preset.
   - The `/cd` input card adds the **Mode** `select_static` OUTSIDE the form
     (form holds only input + submit — botmux rule); its change fires
     `preset-pick`.
-  - `session.create`/agent `create` receives `meta.agentPreset`.
+  - `session.create`/agent `create` receives `meta.agentPreset`, and the agent
+    is composed from it by calling `AgentPresets.mount(agentCtx, id)` in the
+    agent-factory `setup` (create and resume alike, reading the durable
+    header id on resume).
 - **Failure modes:**
   - `agentPresets` service absent → no Mode dropdown; the flow is unchanged
     (deployment default).
@@ -1673,10 +1680,13 @@ resumed session keeps its durable preset.
     cwd change.
 - **Acceptance:**
   - Choosing a working dir on the card (with or without touching Mode) creates
-    a session; an explicit Mode binds it, an untouched Mode uses the
-    deployment default.
-  - `/cd <path> --preset <id>` binds; `/cd <path>` alone uses the default.
-  - Existing/resumed sessions keep their preset. No catalog → no dropdown.
+    a session; an explicit Mode binds it (records `meta.agentPreset` AND
+    composes the agent via `AgentPresets.mount`), an untouched Mode uses the
+    deployment default (no `agentPreset`, no mount).
+  - `/cd <path> --preset <id>` binds + composes; `/cd <path>` alone uses the
+    default.
+  - Existing/resumed sessions keep their preset (re-`mount`ed from the durable
+    header id on resume). No catalog → no dropdown.
   - `meta.agentPreset` is the string id; a `broken`/invalid preset degrades
     loudly, never wedges.
 

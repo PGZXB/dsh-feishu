@@ -27,6 +27,15 @@
     - id: schedule
       name: '@deepseek-ai/dsh-schedule'
 
+    # The agent-preset roster (web surface parity): lets the working-directory
+    # picker (/repo, /cd) expose a Mode dropdown and bind the chosen preset to
+    # a fresh session (meta.agentPreset). dsh-base does not mount it; the
+    # web-app bundle does.
+    - id: agent-presets
+      name: '@deepseek-ai/dsh-agent-presets'
+      config:
+        default: standard
+
     # Durable workspace registry (session archive/restore, web-visible).
     # The workspace registry persists through the storage domain, so a
     # rename/archive on Feishu is observed by the dsh web UI sharing the

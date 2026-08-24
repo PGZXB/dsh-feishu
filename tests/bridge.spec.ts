@@ -4764,17 +4764,14 @@ describe('agent-preset-selection (Mode dropdown on working-directory cards)', ()
   function getAgentPresets(
     ...rows: { readonly id: string; readonly name?: string; readonly isDefault?: boolean }[]
   ): () => AgentPresetsService {
+    const defaultId = rows.find((row) => row.isDefault === true)?.id ?? '';
     return () => ({
-      list: async () => ({
-        presets: rows.map((row) => ({
+      list: async () =>
+        rows.map((row) => ({
           id: row.id,
           ...(row.name !== undefined ? { name: row.name } : {}),
-          ...(row.isDefault !== undefined ? { isDefault: row.isDefault } : {}),
-          trust: 'trusted',
         })),
-        authorable: false,
-        hasDocument: false,
-      }),
+      defaultId,
     });
   }
 

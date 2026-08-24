@@ -327,11 +327,8 @@ describe('parseCdPreset', () => {
 
 describe('/cd with --preset', () => {
   const roster = (ids: readonly string[]) => () => ({
-    list: async () => ({
-      presets: ids.map((id) => ({ id, name: id, isDefault: id === 'standard', trust: 'trusted' })),
-      authorable: false,
-      hasDocument: false,
-    }),
+    list: async () => ids.map((id) => ({ id, name: id })),
+    defaultId: ids.includes('standard') ? 'standard' : (ids[0] ?? ''),
   });
 
   it('binds the preset to a fresh session after /cd <path> --preset <id>', async () => {

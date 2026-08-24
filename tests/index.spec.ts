@@ -97,6 +97,8 @@ function makeFakeContext(
     credentials?: { resolve: () => Promise<unknown>; set: () => unknown };
     agents?: unknown;
     workspaceRegistry?: unknown;
+    agentPresets?: unknown;
+    sessionQuery?: unknown;
   } = {},
 ): {
   ctx: Context;
@@ -123,6 +125,8 @@ function makeFakeContext(
     if (service === 'credentials') return options.credentials;
     if (service === 'agents') return options.agents;
     if (service === 'workspaceRegistry') return options.workspaceRegistry;
+    if (service === 'agentPresets') return options.agentPresets;
+    if (service === 'sessionQuery') return options.sessionQuery;
     return undefined;
   };
   const on = vi.fn(() => () => {});
@@ -354,6 +358,51 @@ describe('apply', () => {
     expect(workspaceCreate).toHaveBeenCalledWith(process.cwd(), expect.any(String));
     // And the freshly minted `feishu-…` session id was attached to it.
     expect(attachSession).toHaveBeenCalledWith(expect.stringMatching(/^feishu-/));
+  });
+
+  it('a create with an explicit preset passes an agent-factory setup that mounts it', async () => {
+    process.env.FEISHU_APP_ID = 'env_app';
+    process.env.FEISHU_APP_SECRET = 'env_secret';
+    const mount = vi.fn(async () => ({ id: 'standard' }));
+    const agentPresets = {
+      list: vi.fn(async () => [{ id: 'standard', name: 'Standard' }]),
+      mount,
+    };
+    let capturedSetup: ((agentCtx: unknown) => Promise<void>) | undefined;
+    const create = vi.fn(async ({ sessionId, setup }: { sessionId: string; setup?: unknown }) => {
+      capturedSetup = setup as typeof capturedSetup;
+      return { agent: { id: sessionId } };
+    });
+    const agents = {
+      get: () => undefined,
+      resume: vi.fn(async () => {
+        throw new Error('not found');
+      }),
+      create,
+    };
+    const { ctx } = makeFakeContext({ agents, agentPresets });
+    // The surface persists its session map under `$DSH_HOME/feishu`; point it
+    // at a scratch dir so the test never touches the real `~/.dsh`.
+    process.env.DSH_HOME = mkdtempSync(`${tmpdir()}/dsh-feishu-`);
+    const transport = new FakeTransport();
+    apply(ctx, { requireWorkingDir: false }, { createTransport: () => transport });
+    // `/cd <path> --preset standard` validates the preset against the roster,
+    // binds it to the chat, and creates a fresh agent composed from it.
+    transport.emitMessage({
+      messageId: 'om_1',
+      chatId: 'oc_1',
+      chatType: 'p2p',
+      senderOpenId: 'ou_1',
+      text: `/cd ${process.cwd()} --preset standard`,
+      mentions: [],
+      attachments: [],
+      createdAt: 1_700_000_000_000,
+    });
+    await vi.waitFor(() => expect(create).toHaveBeenCalled());
+    expect(capturedSetup).toBeTypeOf('function');
+    const agentCtx = { fakeCtx: true };
+    await capturedSetup?.(agentCtx as never);
+    expect(mount).toHaveBeenCalledWith(agentCtx, 'standard');
   });
 
   it('registers the feishu-status command when the commands service exists', () => {

@@ -3,15 +3,15 @@
  * process booted from a real profile (Feishu mocked via the file-channel
  * memory transport, LLM via the local mock server).
  *
- * NOTE on scope: the `agentPresets` roster service (`ctx.get('agentPresets')`)
- * is NOT mounted by the bundled dsh CLI (verified against the installed
- * @deepseek-ai types in dsh-agent/dsh-session — the `agentPreset` field is
- * present on sessions, but no roster `list()` service exists yet). So a real
- * dsh process exercises the DEGRADED path: no Mode dropdown and `--preset` is
- * accepted-but-not-applied. The binding and Mode-dropdown behavior against a
- * PRESENT roster is covered by the unit tests (a fake roster service); this
- * suite verifies the real-process degradation and that the working-directory
- * flow is unchanged.
+ * NOTE on scope: dsh-feishu's bundle patch (`cordis.patch.yml`) mounts the
+ * `agentPresets` roster service (`ctx.get('agentPresets')`), so a real dsh
+ * process here exercises the FULL path: the /repo and /cd cards render a Mode
+ * dropdown, and `--preset <id>` is validated against the roster and bound to
+ * the freshly created session's agent (`AgentPresets.mount`). The roster rows
+ * come from the service's preset roots; when none are supplied the roster is
+ * empty and the cards degrade to no Mode dropdown — but this suite runs
+ * against the bundle that DOES mount the row, so it asserts the present-roster
+ * behavior.
  *
  * It self-skips without a prepared profile + build + dsh CLI; CI runs it with
  * `FEISHU_INT_REQUIRED=1` so a missing prerequisite there is a hard failure.
@@ -221,7 +221,7 @@ describe.skipIf(!integrationReady)('integration > agent-preset-selection', () =>
     }
   }
 
-  it('roster absent: the /repo picker renders NO Mode dropdown (flow unchanged)', async () => {
+  it('roster present: the /repo picker renders the Mode dropdown', async () => {
     const chatId = await boot();
     sendMessage(chatId, `/repo ${INT_REPO}`);
     await waitFor(
@@ -250,9 +250,9 @@ describe.skipIf(!integrationReady)('integration > agent-preset-selection', () =>
           ? el.actions.filter((a) => a.tag === 'select_static')
           : [],
       ) ?? [];
-    // The bundled dsh does not mount the agentPresets roster, so the card
-    // carries the project dropdown only — never a Mode/preset-pick dropdown.
-    expect(selects.some((s) => s.value.kind === 'preset-pick')).toBe(false);
+    // dsh-feishu's bundle patch mounts the agentPresets roster, so the card
+    // carries BOTH the project dropdown and the Mode/preset-pick dropdown.
+    expect(selects.some((s) => s.value.kind === 'preset-pick')).toBe(true);
     expect(selects.some((s) => s.value.kind === 'repo-pick')).toBe(true);
   }, 150_000);
 
@@ -279,8 +279,8 @@ describe.skipIf(!integrationReady)('integration > agent-preset-selection', () =>
         ),
       30_000,
     );
-    // The flow is unchanged without a roster: the confirmation posts, no
-    // Mode dropdown was offered, no preset was bound.
+    // The project pick without touching Mode binds no preset: the confirmation
+    // posts and the working directory is set, with no Mode change.
     expect(
       readOutbox().some(
         (r) =>
@@ -290,7 +290,7 @@ describe.skipIf(!integrationReady)('integration > agent-preset-selection', () =>
     ).toBe(true);
   }, 150_000);
 
-  it('a /cd of a real directory works alone (no preset) and accepts --preset harmlessly', async () => {
+  it('a /cd of a real directory works alone (no preset) and applies --preset standard', async () => {
     const chatId = await boot();
     sendMessage(chatId, `/cd ${INT_CWD}`);
     await waitFor(
@@ -304,8 +304,9 @@ describe.skipIf(!integrationReady)('integration > agent-preset-selection', () =>
         ),
       30_000,
     );
-    // With no roster mounted, `--preset <id>` is accepted but not applied: no
-    // usage error, the cwd change proceeds, and no preset is bound.
+    // With the roster mounted, `--preset <id>` is validated against it and
+    // bound to the fresh session's agent: a KNOWN id (standard) applies, with
+    // no usage error and the cwd change proceeding.
     sendMessage(chatId, `/cd ${INT_CWD} --preset standard`);
     await waitFor(
       'the second /cd confirmation',

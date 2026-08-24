@@ -199,20 +199,20 @@ export interface AgentPresetView {
  *  returns the full service at runtime. An absent service renders no Mode
  *  dropdown (the working-directory flow is unchanged). */
 export interface AgentPresetsService {
-  /** List the roster. `broken` rows are dropped by the surface — a broken
-   *  composition degrades (drops the preset) rather than wedging a session. */
-  list(): Promise<{
-    readonly presets: readonly {
+  /** List the roster array (structural subset of the host
+   *  `@deepseek-ai/dsh-agent-presets` `AgentPresets` service). `broken` rows are
+   *  dropped by the surface — a broken composition degrades (drops the preset)
+   *  rather than wedging a session. */
+  list(): Promise<
+    readonly {
       readonly id: string;
-      readonly trust?: string;
-      readonly isDefault?: boolean;
       readonly name?: string;
       readonly description?: string;
-      readonly broken?: boolean;
-    }[];
-    readonly authorable?: boolean;
-    readonly hasDocument?: boolean;
-  }>;
+      readonly broken?: string;
+    }[]
+  >;
+  /** The deployment default preset id (`AgentPresets.defaultId`). */
+  readonly defaultId: string;
 }
 
 /** Structural subset of `ctx.planMode` (`@deepseek-ai/dsh-plan-mode`). */
@@ -656,20 +656,30 @@ export class Bridge {
   private async loadAgentPresets(): Promise<readonly AgentPresetView[]> {
     const service = this.options.getAgentPresets?.();
     if (service === undefined) return [];
+    let roster: readonly { id: string; name?: string; broken?: string }[];
+    let defaultId: string | undefined;
     try {
-      const roster = await service.list();
-      this.options.logger.debug(`agent presets: ${roster.presets.length} preset(s)`);
-      return roster.presets
-        .filter((preset) => preset.broken !== true)
-        .map((preset) => ({
-          id: preset.id,
-          name: preset.name ?? preset.id,
-          isDefault: preset.isDefault === true,
-        }));
+      roster = await service.list();
+      // The deployment default comes from the service's own setting
+      // (`AgentPresets.defaultId`), not a per-row flag; a row without one is
+      // not the default.
+      try {
+        defaultId = service.defaultId;
+      } catch {
+        defaultId = undefined;
+      }
     } catch (error: unknown) {
       this.options.logger.warn(`agent presets load failed: ${String(error)}`);
       return [];
     }
+    this.options.logger.debug(`agent presets: ${roster.length} preset(s)`);
+    return roster
+      .filter((preset) => preset.broken === undefined)
+      .map((preset) => ({
+        id: preset.id,
+        name: preset.name ?? preset.id,
+        isDefault: preset.id === defaultId,
+      }));
   }
   private readonly disposeEvents: () => void;
   private readonly commands = new CommandRegistry();
