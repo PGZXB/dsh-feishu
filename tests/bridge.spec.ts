@@ -2549,6 +2549,21 @@ describe('panel command palette', () => {
     );
   });
 
+  it('typing /cd posts the input card directly — no transient menu flash (regression)', async () => {
+    const h = makeHarness();
+    const before = h.transport.sentCards.length;
+    await h.bridge.handleMessage(message({ text: '/cd' }));
+    // The FIRST card posted by the typed /cd is the input card, never the
+    // control panel menu (a sync non-menu seed must not flash the menu).
+    const first = h.transport.sentCards[before];
+    expect(first?.header?.title.content).toBe('📁 Change working directory');
+    expect(
+      h.transport.sentCards
+        .slice(before)
+        .some((c) => c.header?.title.content === '⚙️ dsh-feishu panel'),
+    ).toBe(false);
+  });
+
   it('an empty input submit runs the command with an empty argument', async () => {
     const h = makeHarness();
     await h.bridge.handleCardAction({

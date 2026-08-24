@@ -199,13 +199,18 @@ export class PanelController {
     if (messageId === undefined) {
       const view = seed ?? { kind: 'menu', page: 0 };
       const isMenu = view.kind === 'menu';
-      // Async seeds (sessions/pickers) post a Loading placeholder FIRST on
-      // the fresh card, then the real card updates it in place.
-      const initial = isMenu
-        ? this.host.buildMenuCard(chatId, 0)
-        : this.host.isAsyncView(view)
-          ? this.loadingPanelCard(view)
-          : undefined;
+      // Post ONE initial card: the menu (root), a ⏳ Loading placeholder for
+      // async seeds, or — for a sync non-menu seed (input/confirm) — the
+      // rendered view immediately. A menu fallback would flash the control
+      // panel before the sync view settles (the `/cd` flash bug).
+      let initial: CardJson | undefined;
+      if (isMenu) {
+        initial = this.host.buildMenuCard(chatId, 0);
+      } else if (this.host.isAsyncView(view)) {
+        initial = this.loadingPanelCard(view);
+      } else {
+        initial = await this.host.renderPanelView(chatId, view);
+      }
       const sent = await this.postPanelCard(
         chatId,
         undefined,
@@ -213,9 +218,9 @@ export class PanelController {
       );
       const stack = this.stackFor(chatId, sent.messageId);
       stack[0] = view;
-      // Non-menu seeds (slash commands: picker/sessions) render their view
-      // onto the fresh card in place — no transient menu card.
-      if (!isMenu) {
+      // Async seeds (sessions/pickers) update the Loading placeholder with the
+      // real view; sync seeds were already rendered as the initial card.
+      if (!isMenu && this.host.isAsyncView(view)) {
         let card: CardJson;
         try {
           card = await this.host.renderPanelView(chatId, view);
