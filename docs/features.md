@@ -21,7 +21,7 @@ Feature list for dsh-feishu. ✅ = shipped, 📋 = planned
 | Inbound wait-instruction | A bare file/image message does not start a turn by itself — the bytes land in the workspace, a NEW receipt card posts per file, and the agent waits for the next text message to drain the pending list into one turn | 📎 File received receipt (counts pending files); follow-up text drains them into one turn | ✅ |
 | Inbound rich-text | Feishu rich-text (post) and video messages are no longer dropped: a post is serialized into ordered rich text + attachments (formatting and intra-bubble order preserved), a video is a plain file | Rich-text-with-text posts turn immediately; attachment-only posts / videos register as pending | ✅ |
 | Outbound files/images | The agent can send a workspace file/image to the chat via a `send_file` tool it calls itself | Native Feishu image/file message + 📤 Sent receipt card | ✅ |
-| Agent preset selection | Pick an agent preset (e.g. PTC mode) when choosing a working directory | Mode dropdown on the `/repo` / `/cd` picker card; preset binds to the new session | 📋 |
+| Agent preset selection | Pick an agent preset (e.g. PTC mode) when choosing a working directory | Mode dropdown on the `/repo` / `/cd` picker card; preset records `meta.agentPreset` and composes the agent (`AgentPresets.mount`) for the new session | ✅ |
 | Subagent manager | Tree view of subagents (parent→child, status, tokens, duration), open or cancel one | Panel tree view | 📋 |
 | Settings panel | View models/providers, manage API keys, review default cwd/preset | Panel settings view | 📋 |
 | Turn produced files | Files a turn produced surface at the end of the turn | Chips row at the card bottom; tap a chip to receive the file | ✅ |

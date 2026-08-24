@@ -10,6 +10,7 @@ import {
   buildApprovalDecidedCard,
   buildCard,
   buildInboundFileCard,
+  buildInputCard,
   buildModelPickerCard,
   buildPanelCard,
   buildPermissionPickerCard,
@@ -30,7 +31,7 @@ import {
   truncateTail,
 } from '../../src/cards/render.js';
 import { toolRowSummary, toolRowTitle } from '../../src/cards/tool-summary.js';
-import type { ButtonAction, CardElement, SelectAction } from '../../src/feishu/types.js';
+import type { ButtonAction, CardElement, CardJson, SelectAction } from '../../src/feishu/types.js';
 
 /** Button-only labels of an action element (skips select dropdowns). */
 function buttonLabels(el: CardElement | undefined): string[] {
@@ -563,6 +564,79 @@ describe('buildRepoPickedCard', () => {
       (el): el is Extract<CardElement, { tag: 'markdown' }> => el.tag === 'markdown',
     );
     expect(markdowns[0]?.content).toContain('/work/a');
+  });
+});
+
+describe('agent preset Mode dropdown', () => {
+  const presets = [
+    { id: 'standard', name: 'Standard', isDefault: true },
+    { id: 'minimal', name: 'Minimal', isDefault: false },
+  ];
+  const project = [{ name: 'a', path: '/work/a', type: 'repo', branch: 'main' }] as const;
+
+  function selectsOf(card: CardJson): SelectAction[] {
+    return card.elements.flatMap((el) =>
+      el.tag === 'action' && 'actions' in el
+        ? el.actions.filter((a): a is SelectAction => a.tag === 'select_static')
+        : [],
+    );
+  }
+
+  it('buildRepoPickerCard renders a Mode dropdown BEFORE the project dropdown', () => {
+    const card = buildRepoPickerCard(project, ['/work'], 0, presets);
+    const selects = selectsOf(card);
+    expect(selects[0]?.value).toEqual({ kind: 'preset-pick' });
+    expect(selects[0]?.options.map((o) => o.value)).toEqual(['standard', 'minimal']);
+    expect(selects[1]?.value).toEqual({ kind: 'repo-pick' });
+    // Untouched Mode preselected to the deployment default.
+    expect(selects[0]?.initial_option).toBe('standard');
+  });
+
+  it('buildRepoPickerCard preselects the chat’s chosen preset over the default', () => {
+    const card = buildRepoPickerCard(project, ['/work'], 0, presets, 'minimal');
+    const selects = selectsOf(card);
+    expect(selects[0]?.initial_option).toBe('minimal');
+  });
+
+  it('buildRepoPickerCard renders no Mode dropdown when the roster is empty', () => {
+    const card = buildRepoPickerCard(project, ['/work']);
+    const selects = selectsOf(card);
+    expect(selects).toHaveLength(1);
+    expect(selects[0]?.value).toEqual({ kind: 'repo-pick' });
+  });
+
+  it('buildInputCard renders the Mode dropdown OUTSIDE the form', () => {
+    const card = buildInputCard(
+      {
+        title: '📁 Change working directory',
+        hint: 'h',
+        fieldName: 'path',
+        placeholder: 'p',
+        submitLabel: 'Set directory',
+        command: 'cd',
+      },
+      presets,
+    );
+    const form = card.elements.find((el) => el.tag === 'form');
+    expect(form && 'elements' in form ? form.elements.length : 0).toBe(2); // input + submit
+    // The Mode select is a separate action element, never inside the form.
+    const selects = selectsOf(card);
+    expect(selects).toHaveLength(1);
+    expect(selects[0]?.value).toEqual({ kind: 'preset-pick' });
+    expect(selects[0]?.options.map((o) => o.value)).toEqual(['standard', 'minimal']);
+    expect(selects[0]?.initial_option).toBe('standard');
+  });
+
+  it('buildInputCard renders no Mode dropdown when the roster is empty', () => {
+    const card = buildInputCard({
+      title: 'T',
+      hint: 'h',
+      fieldName: 'f',
+      placeholder: 'p',
+      submitLabel: 's',
+      command: 'cd',
+    });
+    expect(selectsOf(card)).toHaveLength(0);
   });
 });
 

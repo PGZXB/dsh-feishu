@@ -21,7 +21,7 @@ dsh-feishu 的功能列表。✅ = 已实现，📋 = 计划中
 | 入站等待指令 | 裸文件/图片消息不会自己开启 turn——字节落到工作区，每个文件新发一张回执卡，agent 等下一条文字消息把 pending 列表带进一个 turn | 📎 File received 回执（计数 pending 文件）；补发文字把它们带进一个 turn | ✅ |
 | 入站富文本 | 飞书富文本（post）和视频消息不再被丢弃：post 序列化为有序富文本 + 附件（保留格式与气泡内顺序），视频按普通文件处理 | 带文字的富文本立即 turn；纯附件 post / 视频登记为 pending | ✅ |
 | 出站文件/图片 | agent 可通过它自己调用的 `send_file` 工具把工作区文件/图片发送到聊天 | 飞书原生 image/file 消息 + 📤 Sent 回执卡 | ✅ |
-| agent 预设选择 | 选择工作目录时一并选 agent 预设（如 PTC mode） | `/repo` / `/cd` 选择卡加 Mode 下拉；预设绑定新会话 | 📋 |
+| agent 预设选择 | 选择工作目录时一并选 agent 预设（如 PTC mode） | `/repo` / `/cd` 选择卡加 Mode 下拉；预设记录 `meta.agentPreset` 并组装 agent（`AgentPresets.mount`）绑定新会话 | ✅ |
 | 子代理管理 | 子代理树形视图（父→子、状态、token、时长），打开或取消 | 面板树形视图 | 📋 |
 | 设置面板 | 查看模型/provider、管理 API key、查看默认 cwd/preset | 面板设置视图 | 📋 |
 | turn 产出文件 | turn 产出的文件在 turn 结束时呈现 | 卡底部 chips 行；点 chip 收到文件 | ✅ |

@@ -34,6 +34,7 @@ import z from '@deepseek-ai/schemastery';
 import { pickAttachmentFileName } from './attachment-naming.js';
 import {
   type AgentDefaultModelService,
+  type AgentPresetsService,
   type AgentStore,
   type ApprovalRequestLike,
   type AskQuestionsRequestLike,
@@ -225,7 +226,7 @@ type SessionQueryLike = {
     }[]
   >;
   readSession(sessionId: unknown): Promise<{
-    readonly session: { readonly id: unknown };
+    readonly session: { readonly id: unknown; readonly agentPreset?: string };
     readonly events: readonly SessionExportEvent[];
   }>;
   readTitleSnapshots(
@@ -238,6 +239,20 @@ type SessionQueryLike = {
       readonly value: { readonly title?: { readonly title?: string } };
     }[]
   >;
+};
+
+/**
+ * Structural subset of `ctx.agentPresets` used only to COMPOSE an agent from a
+ * chosen preset (`mount`); the bridge reads the roster through `getAgentPresets`.
+ * Kept local — the service is optional (feature-detected with `ctx.get`), and
+ * the harness runtime records `meta.agentPreset` on the session header but does
+ * NOT apply it; the surface must call `mount` inside the agent-factory setup.
+ */
+type AgentPresetsLike = {
+  /** Compose one agent from a preset: ensure the standing mount and parent the
+   *  agent's scope key to it. Called inside the agent-factory `setup`; a broken
+   *  preset rejects and rolls the agent creation back. */
+  mount(agentCtx: Context, id?: string): Promise<{ id: string }>;
 };
 
 /** Resolve the user allowlist: config first, then the `FEISHU_ALLOWED_USERS`
@@ -454,21 +469,57 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
       if (agents === undefined) {
         throw new Error('agents service unavailable; cannot resume a session');
       }
+      // Re-apply the session's durable preset on resume: the binding is
+      // per-session (recorded on the header at create), so read it back and
+      // re-mount inside the agent-factory setup. Best-effort header read — an
+      // absent header/preset simply resumes on the host composition.
+      let durablePreset: string | undefined;
+      const sessionQuery = ctx.get('sessionQuery') as SessionQueryLike | undefined;
+      if (sessionQuery !== undefined) {
+        try {
+          const snapshot = await sessionQuery.readSession(sessionId as unknown as SessionId);
+          durablePreset = snapshot.session.agentPreset;
+        } catch {
+          durablePreset = undefined;
+        }
+      }
+      const presetToMount = durablePreset;
+      const agentPresets = ctx.get('agentPresets') as AgentPresetsLike | undefined;
+      const setup =
+        agentPresets !== undefined && presetToMount !== undefined
+          ? async (agentCtx: Context) => {
+              await agentPresets.mount(agentCtx, presetToMount);
+            }
+          : undefined;
       const { agent } = await agents.resume({
         resumeSessionId: sessionId as unknown as SessionId,
         ...(resolvedAgentOptions !== undefined ? { agentOptions: resolvedAgentOptions } : {}),
+        ...(setup !== undefined ? { setup } : {}),
       });
       return agent;
     },
-    create: async (sessionId, cwd) => {
+    create: async (sessionId, cwd, agentPreset) => {
       const agents = ctx.get('agents');
       if (agents === undefined) {
         throw new Error('agents service unavailable; cannot create a session');
       }
+      // Compose the freshly created agent from the chosen preset (dsh web
+      // parity): the runtime records `meta.agentPreset` on the session header
+      // but does NOT apply it — the surface must `mount()` it in the agent
+      // factory setup. Absent roster/preset → no setup, the host composition
+      // applies unchanged.
+      const agentPresets = ctx.get('agentPresets') as AgentPresetsLike | undefined;
+      const setup =
+        agentPresets !== undefined && agentPreset !== undefined
+          ? async (agentCtx: Context) => {
+              await agentPresets.mount(agentCtx, agentPreset);
+            }
+          : undefined;
       const { agent } = await agents.create({
         sessionId: sessionId as unknown as SessionId,
-        meta: { cwd },
+        meta: { cwd, ...(agentPreset !== undefined ? { agentPreset } : {}) },
         ...(resolvedAgentOptions !== undefined ? { agentOptions: resolvedAgentOptions } : {}),
+        ...(setup !== undefined ? { setup } : {}),
       });
       // Attach the new session to the workspace owning `cwd` (dsh web parity),
       // creating the workspace record when the directory is not yet
@@ -575,6 +626,15 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
       ? { agentDefaultModel: ctx.get('agentDefaultModel') as AgentDefaultModelService }
       : {}),
     ...(ctx.get('llm') !== undefined ? { llm: ctx.get('llm') as LlmService } : {}),
+    // Agent-presets roster seam (agent-preset-selection): an optionally
+    // mounted host service listing the composed presets a fresh session can
+    // be bound to (`meta.agentPreset`). Resolved lazily (like the workspace
+    // registry) because the service may initialize after apply; absent, the
+    // working-directory cards render no Mode dropdown.
+    getAgentPresets: () => {
+      const service = ctx.get('agentPresets');
+      return service === undefined ? undefined : (service as AgentPresetsService);
+    },
   });
   logger.debug(
     `[feishu] host services: sessionTitle=${ctx.get('sessionTitle') !== undefined} ` +

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Working-directory cards carry an agent Mode dropdown (agent preset
+  selection).** Each working-directory choice that creates a fresh session
+  (`/repo` pick or `/cd`) can select the agent preset that session is composed
+  from. The repo picker card and the `/cd` input card render a **Mode**
+  `select_static` (loaded from the host `agentPresets` roster) whose change
+  stores the chat's chosen preset; an untouched Mode omits the preset
+  (deployment default). A chosen preset is **recorded** as `meta.agentPreset`
+  AND **composed** by calling `AgentPresets.mount(agentCtx, id)` in the
+  agent-factory `setup` (create and resume alike — the runtime records the id
+  on the session header but does not apply it, so the surface mounts it).
+  `/cd <path> --preset <id>` also binds a preset. The preset binds ONLY to the
+  NEW session (created on remint) — existing/resumed sessions keep their
+  durable preset. When the roster service is absent, no Mode dropdown renders
+  and the flow is unchanged. See `docs/ux-specification.md` →
+  "Part: agent-preset-selection".
+
 ### Fixed
 
 - **Message-queue: queued non-steer messages open their streaming card.** A

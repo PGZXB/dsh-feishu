@@ -31,7 +31,7 @@ export interface PanelServices {
   readonly agentStore: {
     get(sessionId: string): Agent | undefined;
     resume(sessionId: string): Promise<Agent>;
-    create(sessionId: string, cwd: string): Promise<Agent>;
+    create(sessionId: string, cwd: string, agentPreset?: string): Promise<Agent>;
   };
   readonly logger: {
     info(message: string): void;
@@ -104,7 +104,12 @@ export interface PanelActionContext {
   /** The surface command registry (button handlers == slash handlers). */
   findCommand(name: string): SurfaceCommand | undefined;
   /** Business helpers the actions delegate to (Bridge implements). */
-  ensureAgent(chatId: string): Promise<Agent>;
+  ensureAgent(chatId: string, agentPreset?: string): Promise<Agent>;
+  /** The chat's explicitly-chosen agent preset id (Mode dropdown), or
+   *  `undefined` when untouched. */
+  selectedAgentPreset(chatId: string): string | undefined;
+  /** Record an explicitly-chosen agent preset id for a chat (Mode dropdown). */
+  setSelectedAgentPreset(chatId: string, id: string): void;
   liveAgent(chatId: string): Agent | undefined;
   resumeSession(chatId: string, sessionId: string, cwd?: string): Promise<CommandResult>;
   exportSessionLog(chatId: string, sessionId: string): Promise<CommandResult>;

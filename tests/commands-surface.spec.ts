@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  parseCdPreset,
   planModeResultText,
   registerSurfaceCommands,
   runHarnessCommand,
@@ -301,5 +302,94 @@ describe('planModeResultText', () => {
     expect(planModeResultText(true, 'committed')).toBe('Plan mode on. Use /plan off to leave.');
     expect(planModeResultText(false, 'committed')).toBe('Plan mode off.');
     expect(planModeResultText(true, 'noop')).toBe('Plan mode is already active.');
+  });
+});
+
+describe('parseCdPreset', () => {
+  it('splits off a trailing --preset flag from the path', () => {
+    expect(parseCdPreset('/work/a --preset standard')).toEqual({
+      path: '/work/a',
+      preset: 'standard',
+    });
+  });
+
+  it('returns no preset for a plain path', () => {
+    expect(parseCdPreset('/work/a')).toEqual({ path: '/work/a', preset: undefined });
+  });
+
+  it('trims surrounding whitespace and tolerates spacing', () => {
+    expect(parseCdPreset('  /work/a  --preset  minimal  ')).toEqual({
+      path: '/work/a',
+      preset: 'minimal',
+    });
+  });
+});
+
+describe('/cd with --preset', () => {
+  const roster = (ids: readonly string[]) => () => ({
+    list: async () => ids.map((id) => ({ id, name: id })),
+    defaultId: ids.includes('standard') ? 'standard' : (ids[0] ?? ''),
+  });
+
+  it('binds the preset to a fresh session after /cd <path> --preset <id>', async () => {
+    const { mkdirSync } = await import('node:fs');
+    const target = join(process.cwd(), '_dev', 'test-cmd-cd-preset');
+    mkdirSync(target, { recursive: true });
+    const setPreset = vi.fn();
+    const createPreset = vi.fn();
+    const { commands } = makeCommands({
+      getAgentPresets: roster(['standard']),
+      setSelectedAgentPreset: setPreset,
+      ensureAgent: async (_chatId, preset) => {
+        createPreset(preset);
+        return makeAgent();
+      },
+    });
+    const result = await commands.find('cd')?.handler({
+      chatId: 'oc_chat',
+      senderOpenId: 'ou_user',
+      rawInput: `${target} --preset standard`,
+    });
+    expect(result?.kind).toBe('success');
+    expect(setPreset).toHaveBeenCalledWith('oc_chat', 'standard');
+    expect(createPreset).toHaveBeenCalledWith('standard');
+  });
+
+  it('rejects an unknown preset id (usage error, no cwd change)', async () => {
+    const setPreset = vi.fn();
+    const { commands, host } = makeCommands({
+      getAgentPresets: roster(['standard']),
+      setSelectedAgentPreset: setPreset,
+    });
+    host.sessionMap.setCwd('oc_chat', '/old-dir');
+    const result = await commands.find('cd')?.handler({
+      chatId: 'oc_chat',
+      senderOpenId: 'ou_user',
+      rawInput: '/does/not/matter --preset bogus',
+    });
+    expect(result?.kind).toBe('error');
+    expect(result !== undefined && result.kind === 'error' ? result.text : '').toContain(
+      'unknown agent preset: bogus',
+    );
+    expect(setPreset).not.toHaveBeenCalled();
+    expect(host.sessionMap.cwdFor('oc_chat')).toBe('/old-dir');
+  });
+
+  it('accepts --preset but applies nothing when the roster is absent', async () => {
+    const { mkdirSync } = await import('node:fs');
+    const target = join(process.cwd(), '_dev', 'test-cmd-cd-preset-absent');
+    mkdirSync(target, { recursive: true });
+    const setPreset = vi.fn();
+    const { commands, host } = makeCommands({ setSelectedAgentPreset: setPreset });
+    const result = await commands.find('cd')?.handler({
+      chatId: 'oc_chat',
+      senderOpenId: 'ou_user',
+      rawInput: `${target} --preset standard`,
+    });
+    // Accepted (no usage error) but nothing is bound — the id cannot be
+    // validated against an absent roster.
+    expect(result?.kind).toBe('success');
+    expect(setPreset).not.toHaveBeenCalled();
+    expect(host.sessionMap.cwdFor('oc_chat')).toBe(target);
   });
 });

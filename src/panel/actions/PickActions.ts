@@ -19,7 +19,10 @@ export class RepoPickAction extends PanelAction {
   protected override busyTitle(): string {
     return '📚 Pick a project';
   }
-  protected override work(ctx: PanelActionContext, action: CardAction): CommandResult | undefined {
+  protected override async work(
+    ctx: PanelActionContext,
+    action: CardAction,
+  ): Promise<CommandResult | undefined> {
     const path = action.option ?? action.value.path;
     if (path === undefined || path === '') {
       return { kind: 'error', text: 'Invalid project selection.' };
@@ -28,6 +31,11 @@ export class RepoPickAction extends PanelAction {
     if (!resolved.ok) return { kind: 'error', text: resolved.error };
     ctx.services.sessionMap.setCwd(action.chatId, resolved.path);
     ctx.services.sessionMap.remint(action.chatId);
+    // Bind an explicitly-chosen Mode preset to the fresh session's agent. An
+    // untouched Mode (no preset stored) binds nothing — the deployment
+    // default applies (and the next message's deliverTurn would too).
+    const preset = ctx.selectedAgentPreset(action.chatId);
+    if (preset !== undefined) await ctx.ensureAgent(action.chatId, preset);
     return {
       kind: 'success',
       text: `Working directory set to ${resolved.path} (session restarts on your next message).`,
@@ -43,6 +51,26 @@ export class RepoPickAction extends PanelAction {
     } else {
       await ctx.replacePanel(action.chatId, ctx.panelViewFor(action.chatId));
     }
+  }
+}
+
+/** `preset-pick` — store the chat's chosen agent preset (Mode dropdown on a
+ *  working-directory card) and re-render the card so the dropdown reflects
+ *  the selection. A transition (no busy placeholder): picking a Mode is a
+ *  read-only state choice, allowed even mid-turn. */
+export class PresetPickAction extends PanelAction {
+  readonly kind = 'preset-pick';
+  readonly allowedWhileWorking = true;
+  protected override isTransition(): boolean {
+    return true;
+  }
+  protected override async transition(ctx: PanelActionContext, action: CardAction): Promise<void> {
+    const preset = action.option;
+    if (preset === undefined || preset === '') return;
+    ctx.setSelectedAgentPreset(action.chatId, preset);
+    // Re-render the current card (repo picker or cd input) so the Mode
+    // dropdown shows the updated selection and its initial_option.
+    await ctx.replacePanel(action.chatId, ctx.panelViewFor(action.chatId));
   }
 }
 
@@ -133,9 +161,10 @@ export class ModelPickAction extends PanelAction {
   }
 }
 
-/** All picker apply actions. */
+/** All picker apply actions (including the Mode `preset-pick` store). */
 export const PICK_ACTIONS: readonly PanelAction[] = [
   new RepoPickAction(),
+  new PresetPickAction(),
   new PermissionPickAction(),
   new ModelPickAction(),
 ];

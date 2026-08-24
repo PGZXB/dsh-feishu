@@ -11,6 +11,7 @@
  * @module @dsh-feishu/dsh-feishu/panel/views/PanelViewStates
  */
 
+import type { AgentPresetView } from '../../bridge.js';
 import {
   buildConfirmCard,
   buildInputCard,
@@ -35,15 +36,25 @@ export class MenuViewState implements PanelViewState {
   }
 }
 
-/** `input` — a text-input sub-view (sync; copy lives in types.ts). */
+/** `input` — a text-input sub-view (copy lives in types.ts). Sync for the
+ *  generic commands; the `/cd` input additionally resolves the agent-preset
+ *  roster for its Mode dropdown (an async call awaited in place, no loading
+ *  flash — the roster is `[]` and the dropdown is simply omitted when the
+ *  service is absent). */
 export class InputViewState implements PanelViewState {
   readonly key = 'input';
   readonly asyncData = false;
-  render(_ctx: PanelViewContext, _chatId: string, view: PanelView): Promise<CardJson> {
-    if (view.kind !== 'input') return Promise.resolve(this.fallback());
+  async render(ctx: PanelViewContext, chatId: string, view: PanelView): Promise<CardJson> {
+    if (view.kind !== 'input') return this.fallback();
     const spec = PANEL_INPUT_SPEC[view.command];
-    return Promise.resolve(
-      buildInputCard({
+    let presets: readonly AgentPresetView[] = [];
+    let currentPreset: string | undefined;
+    if (view.command === 'cd') {
+      presets = await ctx.loadAgentPresets();
+      currentPreset = ctx.selectedAgentPreset(chatId);
+    }
+    return buildInputCard(
+      {
         title: spec.title,
         hint: spec.hint,
         fieldName: spec.fieldName,
@@ -53,7 +64,9 @@ export class InputViewState implements PanelViewState {
         ...(view.kind === 'input' && view.sessionId !== undefined
           ? { sessionId: view.sessionId }
           : {}),
-      }),
+      },
+      presets,
+      currentPreset,
     );
   }
   /** Defensive fallback for a malformed view (unreachable in practice). */
@@ -137,18 +150,20 @@ export class SessionDetailViewState implements PanelViewState {
   }
 }
 
-/** `picker:repo` — the project-directory picker (async: scans the roots). */
+/** `picker:repo` — the project-directory picker (async: scans the roots and
+ *  resolves the agent-preset roster for the Mode dropdown). */
 export class RepoPickerViewState implements PanelViewState {
   readonly key = 'picker:repo';
   readonly asyncData = true;
-  async render(ctx: PanelViewContext, _chatId: string, view: PanelView): Promise<CardJson> {
+  async render(ctx: PanelViewContext, chatId: string, view: PanelView): Promise<CardJson> {
     // A typed `/repo <path>` passes a custom root to scan; bare uses the
     // deployment's default repoRoots. Both open the picker card.
     const roots =
       view.kind === 'picker' && view.picker === 'repo' ? (view.roots ?? ctx.repoRoots) : [];
     const page = view.kind === 'picker' && view.picker === 'repo' ? view.page : 0;
     const projects = await ctx.listProjects(roots);
-    return buildRepoPickerCard(projects, roots, page);
+    const presets = await ctx.loadAgentPresets();
+    return buildRepoPickerCard(projects, roots, page, presets, ctx.selectedAgentPreset(chatId));
   }
 }
 

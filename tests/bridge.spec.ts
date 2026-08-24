@@ -16,6 +16,7 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type AgentDefaultModelService,
+  type AgentPresetsService,
   Bridge,
   type BridgeOptions,
   type LlmService,
@@ -137,7 +138,7 @@ class RecordingTransport implements FeishuTransport {
 
 /** A fake agent store: create/resume record agents with followup spies. */
 class FakeAgentStore {
-  readonly created: Array<{ sessionId: string; cwd: string }> = [];
+  readonly created: Array<{ sessionId: string; cwd: string; agentPreset?: string }> = [];
   readonly resumed: string[] = [];
   readonly followups = new Map<string, UserMessage[]>();
   private readonly agents = new Map<string, Agent>();
@@ -163,12 +164,12 @@ class FakeAgentStore {
     return agent;
   }
 
-  async create(sessionId: string, cwd: string): Promise<Agent> {
+  async create(sessionId: string, cwd: string, agentPreset?: string): Promise<Agent> {
     if (this.createFailures > 0) {
       this.createFailures -= 1;
       throw new Error('id collision with persisted log');
     }
-    this.created.push({ sessionId, cwd });
+    this.created.push({ sessionId, cwd, ...(agentPreset !== undefined ? { agentPreset } : {}) });
     const agent = this.makeAgent(sessionId);
     this.agents.set(sessionId, agent);
     return agent;
@@ -251,6 +252,7 @@ function makeHarness(
     readSession?: NonNullable<BridgeOptions['readSession']>;
     sessionTitle?: NonNullable<BridgeOptions['sessionTitle']>;
     getWorkspaceRegistry?: NonNullable<BridgeOptions['getWorkspaceRegistry']>;
+    getAgentPresets?: NonNullable<BridgeOptions['getAgentPresets']>;
     saveInboundFile?: NonNullable<BridgeOptions['saveInboundFile']>;
   } = {},
 ): Harness {
@@ -298,6 +300,7 @@ function makeHarness(
     ...(options.llm !== undefined ? { llm: options.llm } : {}),
     ...(options.reactions !== undefined ? { reactions: options.reactions } : {}),
     ...(options.readSession !== undefined ? { readSession: options.readSession } : {}),
+    ...(options.getAgentPresets !== undefined ? { getAgentPresets: options.getAgentPresets } : {}),
     ...(options.sessionTitle !== undefined ? { sessionTitle: options.sessionTitle } : {}),
     ...(options.getWorkspaceRegistry !== undefined
       ? { getWorkspaceRegistry: options.getWorkspaceRegistry }
@@ -4753,5 +4756,173 @@ describe('compaction lifecycle (user report regression)', () => {
     expect(h.transport.sentTexts.some((t) => t.text.includes('New conversation started'))).toBe(
       true,
     );
+  });
+});
+
+describe('agent-preset-selection (Mode dropdown on working-directory cards)', () => {
+  /** A fake `agentPresets` roster service getter returning the given rows. */
+  function getAgentPresets(
+    ...rows: { readonly id: string; readonly name?: string; readonly isDefault?: boolean }[]
+  ): () => AgentPresetsService {
+    const defaultId = rows.find((row) => row.isDefault === true)?.id ?? '';
+    return () => ({
+      list: async () =>
+        rows.map((row) => ({
+          id: row.id,
+          ...(row.name !== undefined ? { name: row.name } : {}),
+        })),
+      defaultId,
+    });
+  }
+
+  /** Make a git-marked project dir under SCRATCH so /repo lists it. */
+  async function makeProject(name: string): Promise<string> {
+    const { mkdirSync, writeFileSync } = await import('node:fs');
+    const root = join(SCRATCH, 'preset-projects');
+    mkdirSync(join(root, name, '.git'), { recursive: true });
+    writeFileSync(join(root, name, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+    return join(root, name);
+  }
+
+  it('renders a Mode dropdown on the repo picker when the roster is present', async () => {
+    const h = makeHarness({
+      repoRoots: [join(SCRATCH, 'preset-projects')],
+      getAgentPresets: getAgentPresets(
+        { id: 'standard', name: 'Standard', isDefault: true },
+        { id: 'minimal', name: 'Minimal', isDefault: false },
+      ),
+    });
+    await makeProject('proj-a');
+    await h.bridge.handleMessage(message({ text: '/repo' }));
+    const picker = findCardByTitle(h, (title) => title.includes('Pick a project'));
+    const actions = picker?.elements.filter((el) => el.tag === 'action') ?? [];
+    const selects = actions.flatMap((el) =>
+      'actions' in el ? el.actions.filter((a) => a.tag === 'select_static') : [],
+    );
+    // The Mode dropdown comes FIRST (before the project dropdown).
+    expect(selects[0]?.value).toEqual({ kind: 'preset-pick' });
+    expect(selects[0]?.options.map((o) => o.value)).toEqual(['standard', 'minimal']);
+    // Preselected to the deployment default when the user never picked one.
+    expect(selects[0]?.initial_option).toBe('standard');
+    expect(selects[1]?.value).toEqual({ kind: 'repo-pick' });
+  });
+
+  it('renders NO Mode dropdown on the repo picker when the roster is absent', async () => {
+    const h = makeHarness({ repoRoots: [join(SCRATCH, 'preset-projects')] });
+    await makeProject('proj-a');
+    await h.bridge.handleMessage(message({ text: '/repo' }));
+    const picker = findCardByTitle(h, (title) => title.includes('Pick a project'));
+    const selects =
+      picker?.elements.flatMap((el) =>
+        el.tag === 'action' && 'actions' in el
+          ? el.actions.filter((a) => a.tag === 'select_static')
+          : [],
+      ) ?? [];
+    expect(selects).toHaveLength(1);
+    expect(selects[0]?.value).toEqual({ kind: 'repo-pick' });
+  });
+
+  it('preset-pick stores the chosen preset for the chat and re-renders the card', async () => {
+    const h = makeHarness({
+      repoRoots: [join(SCRATCH, 'preset-projects')],
+      getAgentPresets: getAgentPresets(
+        { id: 'standard', name: 'Standard', isDefault: true },
+        { id: 'minimal', name: 'Minimal', isDefault: false },
+      ),
+    });
+    await makeProject('proj-a');
+    await h.bridge.handleMessage(message({ text: '/repo' }));
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'preset-pick' },
+      option: 'minimal',
+    });
+    expect(h.bridge.selectedAgentPreset('oc_chat')).toBe('minimal');
+  });
+
+  it('a repo pick with an explicitly chosen Mode binds the preset to the new session', async () => {
+    const h = makeHarness({
+      repoRoots: [join(SCRATCH, 'preset-projects')],
+      getAgentPresets: getAgentPresets({ id: 'standard', name: 'Standard', isDefault: true }),
+    });
+    const project = await makeProject('proj-b');
+    h.bridge.setSelectedAgentPreset('oc_chat', 'standard');
+    // Force the create path (the fake resume succeeds by default).
+    h.agentStore.resumeFailures = 1;
+    await h.bridge.handleMessage(message({ text: '/repo' }));
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'repo-pick' },
+      option: project,
+    });
+    expect(h.sessionMap.cwdFor('oc_chat')).toBe(project);
+    // The fresh session's agent is composed from the chosen preset.
+    expect(h.agentStore.created).toEqual([
+      { sessionId: 'feishu-session-1', cwd: project, agentPreset: 'standard' },
+    ]);
+  });
+
+  it('a pick with no explicit preset omits agentPreset (deployment default)', async () => {
+    const h = makeHarness({
+      repoRoots: [join(SCRATCH, 'preset-projects')],
+      getAgentPresets: getAgentPresets({ id: 'standard', name: 'Standard', isDefault: true }),
+    });
+    const project = await makeProject('proj-c');
+    await h.bridge.handleMessage(message({ text: '/repo' }));
+    await h.bridge.handleCardAction({
+      messageId: lastCardId(h),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'repo-pick' },
+      option: project,
+    });
+    // No preset stored → the pick itself creates nothing; the next message
+    // creates the agent WITHOUT an agentPreset. Force the create path.
+    h.agentStore.resumeFailures = 1;
+    await h.bridge.handleMessage(message({ messageId: 'om_preset_1', text: 'hello' }));
+    expect(h.agentStore.created).toEqual([{ sessionId: 'feishu-session-1', cwd: project }]);
+    expect(h.agentStore.created[0]?.agentPreset).toBeUndefined();
+  });
+
+  it('a /cd submit with no explicit preset omits agentPreset; with one forwards it', async () => {
+    const { mkdirSync } = await import('node:fs');
+    const target = join(SCRATCH, 'preset-cd-dir');
+    mkdirSync(target, { recursive: true });
+    // Untouched Mode: /cd submit → command runs, no preset is bound.
+    const plain = makeHarness({
+      getAgentPresets: getAgentPresets({ id: 'standard', name: 'Standard', isDefault: true }),
+    });
+    await plain.bridge.handleMessage(message({ messageId: 'om_cd1', text: '/cd' }));
+    await plain.bridge.handleCardAction({
+      messageId: lastCardId(plain),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel-input-submit', command: 'cd' },
+      formValue: { path: target },
+    });
+    expect(plain.sessionMap.cwdFor('oc_chat')).toBe(target);
+    expect(plain.agentStore.created).toHaveLength(0);
+    // Explicit Mode: store a preset, then /cd submit binds it.
+    const bound = makeHarness({
+      getAgentPresets: getAgentPresets({ id: 'standard', name: 'Standard', isDefault: true }),
+    });
+    bound.bridge.setSelectedAgentPreset('oc_chat', 'standard');
+    // Force the create path so the preset is bound on create (not resume).
+    bound.agentStore.resumeFailures = 1;
+    await bound.bridge.handleMessage(message({ messageId: 'om_cd2', text: '/cd' }));
+    await bound.bridge.handleCardAction({
+      messageId: lastCardId(bound),
+      chatId: 'oc_chat',
+      operatorOpenId: 'ou_user',
+      value: { kind: 'panel-input-submit', command: 'cd' },
+      formValue: { path: target },
+    });
+    expect(bound.agentStore.created).toEqual([
+      { sessionId: 'feishu-session-1', cwd: target, agentPreset: 'standard' },
+    ]);
   });
 });
