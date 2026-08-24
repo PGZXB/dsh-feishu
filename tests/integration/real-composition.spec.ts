@@ -405,6 +405,23 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
       expect(
         readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'green'),
       ).toBe(true);
+
+      // The central fix: the queued non-steer message must NOT be lost. After
+      // the first turn ends the surface drains it as its OWN turn — a SECOND
+      // streaming card opens (a `card` record that is not the per-item queue
+      // card) and the queue card flips to Sent. (Card records carry no chatId
+      // in the memory transport, so count non-queue `card` records; the first
+      // turn's card + the drained card = 2.)
+      await waitFor(
+        'the drained queued message opens its own streaming card',
+        () =>
+          readOutbox().filter((r) => r.kind === 'card' && !isQueueCardRecord(r)).length >= 2 &&
+          readOutbox().some(
+            (r) =>
+              isQueueCardRecord(r) && JSON.stringify(r.card?.elements ?? []).includes('📤 Sent'),
+          ),
+        90_000,
+      );
     } catch (error) {
       throw new Error(
         `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
