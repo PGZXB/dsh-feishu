@@ -1433,16 +1433,21 @@ shared card. A single shared card was fragile (built with a per-item `form`
 
 **Trigger** — a user message arriving while the chat's turn is running
 (`streaming.isWorking(chatId)`). Such a message is NOT delivered as a new
-turn immediately; it is appended to the chat's inbox queue (`inbox.append`)
-and posted as its OWN `buildQueueItemCard` (status `queued`).
+turn immediately; it is kept in the surface's OWN in-memory queue and posted
+as its OWN `buildQueueItemCard` (status `queued`).
 
-**Queue data / state** — the queue is the agent inbox's `nextTurn` list, read
-through the host's `agent.inbox`. It is session-owned (not card-owned), so a
-card re-render never loses it. Alongside it, the bridge keeps a per-item card
-registry `Map<chatId, Map<itemId, { cardMessageId, status, text }>>` so each
-item's dedicated card is updated IN PLACE (`updateCard`) as its lifecycle
-state changes — even after the item leaves the inbox (a retained marker card
-still needs its preview text).
+**Queue data / state** — the queue is the SURFACE-OWNED, in-memory
+`Map<chatId, QueueItem[]>` (never the agent inbox's `nextTurn` list, which the
+agent loop auto-claims at its own step boundary and would bypass
+`deliverTurn` — the user sees the "Sent" marker but no streaming card). It is
+surface-owned (not session-owned), so a card re-render never loses it; not
+persisted, so a restart drops queued messages (accepted trade-off). Each item
+carries the resolved `UserMessage` (re-deliver / steer), `text`, `status`, and
+the original inbound message. Alongside it, the bridge keeps a per-item card
+registry `Map<chatId, Map<itemId, { cardMessageId, status, text, message,
+feishu }>>` so each item's dedicated card is updated IN PLACE (`updateCard`)
+as its lifecycle state changes — even after the item leaves the active queue
+(a retained marker card still needs its preview text).
 
 **Item lifecycle states (one state machine per card)**:
 `queued | editing | steering | steered | sent | removed`
@@ -1459,8 +1464,8 @@ still needs its preview text).
   step boundary. Shows "💬 Steering…", no buttons.
 - **steered** — the agent consumed the steering. Shows "✅ Steered", no
   buttons.
-- **sent** — the queued message was auto-dispatched after the turn (non-steer
-  path). Shows "📤 Sent", no buttons.
+- **sent** — the queued message was delivered as its own turn after the owning
+  turn ended (non-steer path). Shows "📤 Sent", no buttons.
 - **removed** — the user removed it. Shows "🗑️ Removed", no buttons.
 
 After a terminal state (`steered` / `sent` / `removed`) the card is RETAINED
@@ -1473,25 +1478,29 @@ message:
   steered/sent/removed).
 - Body: the message preview, then the status marker (steering/steered/sent/
   removed) or the actions (queued) or the edit form (editing).
-- The per-item actions (all mapped to the agent inbox, mirroring the web
+- The per-item actions (driving the SURFACE-owned queue, mirroring the web
   `updateQueue`):
-  - `queue-steer`: only when a turn runs; `inbox.remove` the item then
-    `agent.steer(message)` (the driver consumes it at its NEXT STEP boundary).
-    Mirrors the web `steer-unavailable` guard. Sets the card `steering`; the
-    next `user/message` event for that message flips it to `steered`.
+  - `queue-steer`: only when a turn runs; take the item out of the surface
+    queue then `agent.steer(message)` (the driver consumes it at its NEXT STEP
+    boundary — never the `nextTurn` list). Mirrors the web
+    `steer-unavailable` guard. Sets the card `steering`; the next
+    `user/message` event for that message flips it to `steered`.
   - `queue-edit`: opens the inline edit form (`editing`).
-  - `queue-edit-submit`: `inbox.replace(itemId, newContent)` → `queued`.
+  - `queue-edit-submit`: rewrite the queued content in the surface queue
+    (keeping the SAME identity) → `queued`.
   - `queue-edit-cancel`: → `queued` unchanged.
-  - `queue-remove`: `inbox.remove(itemId)` → `removed`.
+  - `queue-remove`: take the item out of the surface queue → `removed`.
 
-**Queue consumption** — the agent loop consumes the inbox `nextTurn` list at
-its own turn boundary (`claim('next-turn')`), so queued messages are processed
-in arrival order without the surface draining them manually. When a queued item
-is auto-consumed (drain path), the surface marks it `sent` and updates its
-retained card. A steered message flows into the running turn via `agent.steer`
-and is NOT transferred to a new card; the streaming trace adds a `steering`
-row where it was injected (Fix 1), so the user sees exactly the message they
-steered.
+**Queue consumption** — after a turn ends (`turn/end`), the surface drains its
+OWN queue: each queued non-steer message is delivered as its own turn
+(`beginTurn` → `followup`), which opens a streaming card exactly like a
+freshly arrived message. One item is delivered per `turn/end` — delivering the
+next immediately would put it in the agent inbox where the loop auto-claims it
+without a streaming card — so the chain continues on the next `turn/end`. Each
+delivered item is marked `sent` and its retained card updated. A steered
+message flows into the running turn via `agent.steer` and is NOT transferred to
+a new card; the streaming trace adds a `steering` row where it was injected
+(Fix 1), so the user sees exactly the message they steered.
 
 **Streaming trace (steering row)** — when the streaming card receives the
 steered message's `user/message` event (source kind `user`, injected mid-turn
@@ -1515,9 +1524,10 @@ message text — the user always sees where their steered message was inserted.
   FIRST turn; a queued message that reaches a turn picks up the cwd as today.
 
 **Acceptance checklist**:
-- [ ] A message sent while a turn runs is queued (inbox `nextTurn`), not
-      delivered as an interrupting turn; it posts its OWN item card (unit +
-      integration).
+- [ ] A message sent while a turn runs is queued in the SURFACE queue (not the
+      agent inbox `nextTurn`), not delivered as an interrupting turn; it posts
+      its OWN item card, and after `turn/end` it is delivered as its own turn
+      opening a streaming card (unit + integration).
 - [ ] Each queued message gets its own card (one per item); mutations update it
       in place (`updateCard`), never delete+send; no card is ever recalled
       (unit + integration).
@@ -1545,11 +1555,14 @@ message text — the user always sees where their steered message was inserted.
   (`updateQueue`) + `packages/host/apiproxy/src/api-proxy.ts`: the queue
   action mapping — `edit` → `inbox.replace`, else `inbox.remove` then
   `agent.steer(message)` for `steer`; steer requires `target === 'next-turn'`
-  AND `agent.status === 'running'` (else `steer-unavailable`).
+  AND `agent.status === 'running'` (else `steer-unavailable`). The dsh-feishu
+  surface maps these to its OWN queue (the agent inbox is NOT used for
+  non-steer queued messages); only `agent.steer` is delegated.
 - dsh `@deepseek-ai/dsh-agent` `Inbox` (`inbox.d.ts`): `nextTurn` list,
   `append`/`prepend`/`replace`/`remove`/`clear`, and `Agent.steer` (`runtime-types.ts`):
   a running driver consumes steering at its NEXT STEP boundary, never
-  mid-step.
+  mid-step. dsh-feishu uses `agent.steer` only; it never appends non-steer
+  queued messages to the inbox.
 
 
 ## Part: model-switch-current

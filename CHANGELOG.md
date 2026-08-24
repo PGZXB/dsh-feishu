@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Message-queue: queued non-steer messages open their streaming card.** A
+  message arriving while a turn runs was appended to the agent inbox's
+  `nextTurn` list, which the agent loop auto-claims at its own step boundary —
+  bypassing `deliverTurn`, so the user saw the "Sent" marker on the queue card
+  but no streaming card with the agent's work. Queued non-steer messages now
+  live in the SURFACE's own in-memory queue (never `inbox.nextTurn`); after the
+  owning turn ends (`turn/end`) the surface drains it, delivering each queued
+  message as its own turn (`beginTurn` → `followup`), which opens its streaming
+  card exactly like a freshly arrived message, and marks the item card `sent`.
+  Steer still routes via `agent.steer` (the next-step boundary, never the
+  `nextTurn` list). Trade-off: the in-memory queue is not persisted, so a
+  restart drops queued messages (the inbox no longer holds non-steer queued
+  messages). See `docs/ux-specification.md` → "Part: message-queue".
+
 ### Added
 
 - **Session stats line + context occupancy on the terminal streaming card.**
