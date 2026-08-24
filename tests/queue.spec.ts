@@ -1,9 +1,11 @@
 /**
  * Unit tests for the message-queue feature: a user message arriving while a
  * turn runs is appended to the agent inbox's next-turn queue and surfaced on
- * ONE dedicated queue card (single-card invariant: recall + re-post on every
- * mutation, recall only on empty). The card actions map to the inbox
- * (steer/edit/remove) and steer only fires while a turn runs.
+ * its OWN dedicated card (one card per queued message, one lifecycle state
+ * machine per card — NO shared card and NO recall/re-post invariant). The
+ * card actions drive each item's state machine (queued/editing/steering/
+ * steered/sent/removed), mapped to the inbox (steer/edit/remove), and steer
+ * only fires while a turn runs.
  */
 
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -14,14 +16,16 @@ import type { UserMessage } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type AgentStore, Bridge } from '../src/bridge.js';
+import { StreamingCardController } from '../src/cards/StreamingCardController.js';
 import { StreamingCardManager } from '../src/cards/streaming.js';
 import type { CardAction, CardJson, FeishuMessage, FeishuTransport } from '../src/feishu/types.js';
 import type { SessionMap } from '../src/session-map.js';
 import { SessionMap as RealSessionMap } from '../src/session-map.js';
 
-/** A fake Feishu transport recording sent cards, recalled cards, and texts. */
+/** A fake Feishu transport recording sent cards, updated cards, and texts. */
 class RecordingTransport implements FeishuTransport {
   sentCards: Array<{ chatId: string; card: CardJson; messageId: string }> = [];
+  updatedCards: Array<{ messageId: string; card: CardJson }> = [];
   deletedCards: string[] = [];
   sentTexts: Array<{ chatId: string; text: string }> = [];
 
@@ -52,7 +56,9 @@ class RecordingTransport implements FeishuTransport {
     this.sentCards.push({ chatId, card, messageId });
     return { messageId };
   }
-  async updateCard(_messageId: string, _card: CardJson): Promise<void> {}
+  async updateCard(messageId: string, card: CardJson): Promise<void> {
+    this.updatedCards.push({ messageId, card });
+  }
   async deleteMessage(messageId: string): Promise<void> {
     this.deletedCards.push(messageId);
   }
@@ -210,29 +216,26 @@ function queueAction(kind: string, id: string, extra: Record<string, string> = {
   };
 }
 
-/** Whether a card is the dedicated queue card (has a queue action/form). */
+/** Whether a card is a per-item queue card (every lifecycle state's header
+ *  title starts with `⏳`). */
 function isQueueCard(card: CardJson): boolean {
-  return card.elements.some((el) => {
-    if (el.tag === 'action') {
-      return (
-        'actions' in el &&
-        el.actions.some(
-          (a) =>
-            'value' in a &&
-            String((a as { value: Record<string, string> }).value.kind).startsWith('queue-'),
-        )
-      );
-    }
-    return el.tag === 'form' && el.name === 'queue-edit';
-  });
+  return card.header?.title.content.startsWith('⏳') ?? false;
 }
 
-/** The last queue card sent, or `undefined` when none. */
-function lastQueueCard(transport: RecordingTransport): CardJson | undefined {
-  const ids = queueCardMessageIds(transport);
-  const lastId = ids.at(-1);
-  if (lastId === undefined) return undefined;
-  return transport.sentCards.find((entry) => entry.messageId === lastId)?.card;
+/** The message id of the queue card for the N-th queued item (0-indexed), in
+ *  arrival order (one card per item). */
+function queueCardIdForIndex(transport: RecordingTransport, index: number): string {
+  const id = queueCardMessageIds(transport)[index];
+  if (id === undefined) throw new Error(`no queue card at index ${index}`);
+  return id;
+}
+
+/** The CURRENT card for a queue message id (the last in-place update, or the
+ *  original send when never updated). */
+function queueCardFor(messageId: string, transport: RecordingTransport): CardJson | undefined {
+  const updated = transport.updatedCards.filter((u) => u.messageId === messageId).at(-1);
+  if (updated !== undefined) return updated.card;
+  return transport.sentCards.find((e) => e.messageId === messageId)?.card;
 }
 
 /** Count the queue cards sent. */
@@ -245,11 +248,6 @@ function queueCardMessageIds(transport: RecordingTransport): string[] {
   return transport.sentCards
     .filter((entry) => isQueueCard(entry.card))
     .map((entry) => entry.messageId);
-}
-
-/** The message id of the last queue card sent. */
-function lastQueueCardMessageId(transport: RecordingTransport): string | undefined {
-  return queueCardMessageIds(transport).at(-1);
 }
 
 /** All button labels across a queue card's action rows and forms. */
@@ -270,20 +268,14 @@ function queueButtonLabels(card: CardJson): string[] {
   return labels;
 }
 
-/** The item ids targeted by queue actions in a card's action rows. */
-function queueItemIds(card: CardJson): string[] {
-  const ids: string[] = [];
-  for (const el of card.elements) {
-    if (el.tag === 'action') {
-      for (const a of el.actions) {
-        if ('value' in a) {
-          const value = (a as { value: Record<string, string> }).value;
-          if (value.kind?.startsWith('queue-') && value.id !== undefined) ids.push(value.id);
-        }
-      }
-    }
-  }
-  return ids;
+/** Whether the card renders any interactive button row (`queued` state). */
+function hasActionRow(card: CardJson): boolean {
+  return card.elements.some((el) => el.tag === 'action');
+}
+
+/** Whether the card renders the inline edit form (`editing` state). */
+function hasEditForm(card: CardJson): boolean {
+  return card.elements.some((el) => el.tag === 'form' && el.name === 'queue-edit');
 }
 
 /** The text of a queued user message (joined text blocks). */
@@ -294,12 +286,28 @@ function lastText(message: UserMessage): string {
     .join('\n');
 }
 
+/** A `user/message` session event carrying the given message (the surface
+ *  event that records a steered message consumed into the running turn). */
+function userMessageEvent(id: string, text: string): SessionEvent {
+  return {
+    type: 'user/message',
+    seq: 3,
+    time: 0,
+    data: { id, role: 'user', content: [{ type: 'text', text }], source: { kind: 'user' } },
+  } as unknown as SessionEvent;
+}
+
+/** A `turn/start` session event (the agent's turn-boundary drain cue). */
+function turnStartEvent(turn = 1): SessionEvent {
+  return { type: 'turn/start', seq: 1, time: 0, data: { turn } } as unknown as SessionEvent;
+}
+
 describe('message-queue', () => {
   afterEach(() => {
     for (const dir of activeDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
-  it('enqueues a message arriving while a turn runs, onto inbox next-turn + one queue card', async () => {
+  it('enqueues a message arriving while a turn runs, onto inbox next-turn + its own card', async () => {
     const { bridge, transport, inbox, agent } = makeHarness();
     await bridge.handleMessage(inboundMessage('first'));
     expect(agent.followup).toHaveBeenCalledTimes(1);
@@ -307,79 +315,165 @@ describe('message-queue', () => {
     // Not interrupted: no second followup; the message is queued instead.
     expect(agent.followup).toHaveBeenCalledTimes(1);
     expect(inbox.nextTurn.map((m) => lastText(m))).toEqual(['second']);
-    const card = lastQueueCard(transport);
-    expect(card).toBeDefined();
-    expect(card?.header?.title.content).toContain('second');
+    // One dedicated card for the one queued item; the header folds the preview.
     expect(queueCardsSent(transport)).toBe(1);
+    const cardId = queueCardIdForIndex(transport, 0);
+    const card = queueCardFor(cardId, transport) as CardJson;
+    expect(card.header?.title.content).toContain('second');
   });
 
-  it('a second queue mutation re-posts a single card (recall + post, never two live)', async () => {
+  it('each queued message posts its OWN card — no shared card, no recall/re-post', async () => {
     const { bridge, transport, inbox } = makeHarness();
     await bridge.handleMessage(inboundMessage('first'));
     await bridge.handleMessage(inboundMessage('second'));
-    expect(queueCardsSent(transport)).toBe(1);
-    const firstCardId = lastQueueCardMessageId(transport);
     await bridge.handleMessage(inboundMessage('third'));
-    expect(queueCardsSent(transport)).toBe(2);
-    // The prior queue card was recalled; only the latest is live.
-    expect(transport.deletedCards).toContain(firstCardId);
     expect(inbox.nextTurn.map((m) => lastText(m))).toEqual(['second', 'third']);
+    // Two queued items -> two dedicated cards, each a distinct message id.
+    expect(queueCardsSent(transport)).toBe(2);
+    const ids = queueCardMessageIds(transport);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+    // NO single-card invariant: nothing is ever recalled/deleted.
+    expect(transport.deletedCards).toHaveLength(0);
+    // Each card title folds its own item preview.
+    const card0 = queueCardFor(queueCardIdForIndex(transport, 0), transport) as CardJson;
+    const card1 = queueCardFor(queueCardIdForIndex(transport, 1), transport) as CardJson;
+    expect(card0.header?.title.content).toContain('second');
+    expect(card1.header?.title.content).toContain('third');
+    // Each card is updated in place (never deleted+re-sent) on the next action.
+    await bridge.handleCardAction(queueAction('queue-edit', queuedId(inbox), {}));
+    expect(new Set(ids).size).toBe(2);
+    expect(queueCardsSent(transport)).toBe(2);
   });
 
-  it('each item row offers Steer / Edit / Remove while a turn runs', async () => {
-    const { bridge, transport, inbox } = makeHarness();
+  it('each queued item card offers Steer / Edit / Remove while a turn runs', async () => {
+    const { bridge, transport } = makeHarness();
     await bridge.handleMessage(inboundMessage('first'));
     await bridge.handleMessage(inboundMessage('second'));
-    const card = lastQueueCard(transport) as CardJson;
+    const card = queueCardFor(queueCardIdForIndex(transport, 0), transport) as CardJson;
     const labels = queueButtonLabels(card);
     expect(labels).toContain('➡️ Steer');
     expect(labels).toContain('✏️ Edit');
     expect(labels).toContain('🗑️ Remove');
-    expect(queueItemIds(card)).toContain(inbox.nextTurn[0]?.id);
+    expect(hasActionRow(card)).toBe(true);
+    expect(hasEditForm(card)).toBe(false);
   });
 
   it('steer is unavailable when idle: hint shown, and a stray steer never fires', async () => {
     const { bridge, transport, agent, inbox } = makeHarness();
     await bridge.handleMessage(inboundMessage('first'));
     await bridge.handleMessage(inboundMessage('second'));
-    // End the running turn → idle. The queue card is re-posted on the next
-    // mutation (the agent did not claim the queued items in this fake), so a
-    // non-emptying mutation (edit) re-posts it while idle.
-    await bridge.handleEvent('s1', turnEndEvent());
     const id = queuedId(inbox);
-    await bridge.handleCardAction(queueAction('queue-edit', id, { text: 'rewritten' }));
-    const idleCard = lastQueueCard(transport) as CardJson;
+    const cardId = queueCardIdForIndex(transport, 0);
+    // End the running turn → idle. The queued card is re-rendered on the turn
+    // boundary so Steer disappears and a disabled hint explains why.
+    await bridge.handleEvent('s1', turnEndEvent());
+    const idleCard = queueCardFor(cardId, transport) as CardJson;
     expect(queueButtonLabels(idleCard)).not.toContain('➡️ Steer');
-    const hintEl = idleCard.elements[0];
-    expect(hintEl?.tag).toBe('markdown');
-    expect(hintEl !== undefined && 'content' in hintEl ? hintEl.content : '').toContain(
-      'Steer unavailable',
-    );
+    const content = JSON.stringify(idleCard.elements);
+    expect(content).toContain('➡️ Steer unavailable — no turn is running.');
+    expect(content).toContain('second');
     // A stray steer while idle must NOT call agent.steer.
-    const nextId = queuedId(agent.inbox as FakeInbox);
-    await bridge.handleCardAction(queueAction('queue-steer', nextId));
+    await bridge.handleCardAction(queueAction('queue-steer', id));
     expect(agent.steer).not.toHaveBeenCalled();
   });
 
-  it('steer while running removes the item and steers the running turn', async () => {
-    const { bridge, agent, inbox } = makeHarness();
+  it('steer while running marks the card steering (💬 Steering… marker, no buttons)', async () => {
+    const { bridge, transport, agent, inbox } = makeHarness();
     await bridge.handleMessage(inboundMessage('first'));
     await bridge.handleMessage(inboundMessage('second'));
     const id = queuedId(inbox);
+    const cardId = queueCardIdForIndex(transport, 0);
     await bridge.handleCardAction(queueAction('queue-steer', id));
     expect(agent.steer).toHaveBeenCalledTimes(1);
     expect(inbox.nextTurn).toHaveLength(0);
+    // The card is UPDATED in place (same message id, not a fresh send) to the
+    // steering marker — NOT immediately removed/hidden.
+    expect(transport.deletedCards).toHaveLength(0);
+    const card = queueCardFor(cardId, transport) as CardJson;
+    expect(JSON.stringify(card.elements)).toContain('💬 Steering…');
+    expect(hasActionRow(card)).toBe(false);
+    expect(hasEditForm(card)).toBe(false);
   });
 
-  it('edit re-posts the item with new text and a fresh card', async () => {
-    const { bridge, inbox, transport } = makeHarness();
+  it('when the agent consumes the steer (a later user/message), the card flips to Steered', async () => {
+    const { bridge, transport, inbox } = makeHarness();
     await bridge.handleMessage(inboundMessage('first'));
     await bridge.handleMessage(inboundMessage('second'));
     const id = queuedId(inbox);
-    await bridge.handleCardAction(queueAction('queue-edit', id, { text: 'rewritten' }));
+    const cardId = queueCardIdForIndex(transport, 0);
+    await bridge.handleCardAction(queueAction('queue-steer', id));
+    // The agent consumes the steered message at its step boundary: its
+    // `user/message` event arrives -> the trace adds a steering row and the
+    // item card flips to Steered (no buttons).
+    await bridge.handleEvent('s1', userMessageEvent(id, 'second'));
+    const card = queueCardFor(cardId, transport) as CardJson;
+    expect(JSON.stringify(card.elements)).toContain('✅ Steered');
+    expect(hasActionRow(card)).toBe(false);
+    expect(hasEditForm(card)).toBe(false);
+  });
+
+  it('a steered user/message adds a steering row to the streaming trace', async () => {
+    const { transport, sessionMap, agentStore, agent } = makeHarness();
+    const cards = new StreamingCardManager(transport, { throttleMs: 0 });
+    const controller = new StreamingCardController({
+      transport,
+      cards,
+      logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+      sessionMap,
+      agentStore,
+      defaultCwd: '/work',
+      reactions: undefined,
+      resolveAgent: async () => agent as unknown as Agent,
+      textMentionFor: () => '',
+    });
+    await controller.beginTurn('oc_chat', 'msg-1', 'first turn');
+    controller.noteSteer('oc_chat', 'steer-m1');
+    await controller.handleEvent('s1', userMessageEvent('steer-m1', 'inserted into the turn'));
+    const rows = controller.state('oc_chat')?.rows ?? [];
+    expect(rows).toContainEqual({
+      kind: 'steering',
+      id: 'steer-m1',
+      text: 'inserted into the turn',
+    });
+  });
+
+  it('edit opens the inline form (editing); submit returns to queued with new text', async () => {
+    const { bridge, transport, inbox } = makeHarness();
+    await bridge.handleMessage(inboundMessage('first'));
+    await bridge.handleMessage(inboundMessage('second'));
+    const id = queuedId(inbox);
+    const cardId = queueCardIdForIndex(transport, 0);
+    // Edit opens the inline form on THIS card (in place, same message id).
+    await bridge.handleCardAction(queueAction('queue-edit', id));
+    const editingCard = queueCardFor(cardId, transport) as CardJson;
+    expect(hasEditForm(editingCard)).toBe(true);
+    // The editing card keeps a Cancel button row (outside the form).
+    expect(hasActionRow(editingCard)).toBe(true);
+    expect(queueButtonLabels(editingCard)).toContain('↩️ Cancel');
+    expect(inbox.nextTurn.map((m) => lastText(m))).toEqual(['second']);
+    // Submit returns to queued with the new text.
+    await bridge.handleCardAction(queueAction('queue-edit-submit', id, { text: 'rewritten' }));
     expect(inbox.nextTurn.map((m) => lastText(m))).toEqual(['rewritten']);
-    expect(queueCardsSent(transport)).toBe(2);
-    expect(lastQueueCard(transport)?.header?.title.content).toContain('rewritten');
+    const queuedCard = queueCardFor(cardId, transport) as CardJson;
+    expect(hasEditForm(queuedCard)).toBe(false);
+    expect(hasActionRow(queuedCard)).toBe(true);
+    expect(JSON.stringify(queuedCard.elements)).toContain('rewritten');
+  });
+
+  it('edit cancel returns to queued unchanged', async () => {
+    const { bridge, transport, inbox } = makeHarness();
+    await bridge.handleMessage(inboundMessage('first'));
+    await bridge.handleMessage(inboundMessage('second'));
+    const id = queuedId(inbox);
+    const cardId = queueCardIdForIndex(transport, 0);
+    await bridge.handleCardAction(queueAction('queue-edit', id));
+    await bridge.handleCardAction(queueAction('queue-edit-cancel', id));
+    expect(inbox.nextTurn.map((m) => lastText(m))).toEqual(['second']);
+    const card = queueCardFor(cardId, transport) as CardJson;
+    expect(hasEditForm(card)).toBe(false);
+    expect(hasActionRow(card)).toBe(true);
+    expect(JSON.stringify(card.elements)).toContain('second');
   });
 
   it('edit reads the replacement text from a form submission', async () => {
@@ -387,52 +481,63 @@ describe('message-queue', () => {
     await bridge.handleMessage(inboundMessage('first'));
     await bridge.handleMessage(inboundMessage('second'));
     const id = queuedId(inbox);
+    await bridge.handleCardAction(queueAction('queue-edit', id));
     await bridge.handleCardAction({
-      ...queueAction('queue-edit', id),
+      ...queueAction('queue-edit-submit', id),
       formValue: { text: 'from-form' },
     });
     expect(inbox.nextTurn.map((m) => lastText(m))).toEqual(['from-form']);
   });
 
-  it('remove re-posts the card and drops the item', async () => {
-    const { bridge, inbox, transport } = makeHarness();
+  it('remove marks the card removed (🗑️ Removed) and retains it — no recall', async () => {
+    const { bridge, transport, inbox } = makeHarness();
     await bridge.handleMessage(inboundMessage('first'));
     await bridge.handleMessage(inboundMessage('second'));
     await bridge.handleMessage(inboundMessage('third'));
     const id = queuedId(inbox);
+    const cardId = queueCardIdForIndex(transport, 0);
     await bridge.handleCardAction(queueAction('queue-remove', id));
     expect(inbox.nextTurn.map((m) => lastText(m))).toEqual(['third']);
-    // One item remains → the queue card re-posts (3 cards over time: 2 from
-    // the enqueues + 1 from the remove).
-    expect(queueCardsSent(transport)).toBe(3);
+    // The removed card is RETAINED showing its marker; nothing is recalled.
+    expect(transport.deletedCards).toHaveLength(0);
+    const card = queueCardFor(cardId, transport) as CardJson;
+    expect(JSON.stringify(card.elements)).toContain('🗑️ Removed');
+    expect(hasActionRow(card)).toBe(false);
+    expect(hasEditForm(card)).toBe(false);
   });
 
-  it('queue empty → recall the card only (no re-post)', async () => {
+  it('when the agent auto-consumes the queue (drain path), the card flips to Sent', async () => {
     const { bridge, transport, inbox } = makeHarness();
     await bridge.handleMessage(inboundMessage('first'));
     await bridge.handleMessage(inboundMessage('second'));
-    const cardId = lastQueueCardMessageId(transport);
-    const id = queuedId(inbox);
-    await bridge.handleCardAction(queueAction('queue-remove', id));
-    expect(transport.deletedCards).toContain(cardId);
-    // Only ONE queue card was ever posted, and it was recalled — no live card.
-    expect(queueCardsSent(transport)).toBe(1);
-    expect(
-      queueCardMessageIds(transport).every((mid) => transport.deletedCards.includes(mid)),
-    ).toBe(true);
+    await bridge.handleMessage(inboundMessage('third'));
+    const firstId = queuedId(inbox);
+    const firstCardId = queueCardIdForIndex(transport, 0);
+    // Simulate the agent's turn boundary claiming the first queued item: it
+    // leaves the inbox (the drain path -> non-steer auto-dispatch).
+    inbox.remove(firstId);
+    await bridge.handleEvent('s1', turnStartEvent());
+    const card = queueCardFor(firstCardId, transport) as CardJson;
+    expect(JSON.stringify(card.elements)).toContain('📤 Sent');
+    expect(hasActionRow(card)).toBe(false);
+    expect(hasEditForm(card)).toBe(false);
   });
 
-  it('an action on an already-consumed item posts a notice and re-posts the current queue', async () => {
+  it('an action on an already-consumed item posts a notice and marks the card Sent', async () => {
     const { bridge, transport, inbox } = makeHarness();
     await bridge.handleMessage(inboundMessage('first'));
     await bridge.handleMessage(inboundMessage('second'));
     await bridge.handleMessage(inboundMessage('third'));
     // Force the first item out of the queue (e.g. the turn boundary claimed it).
     const id = queuedId(inbox);
+    const cardId = queueCardIdForIndex(transport, 0);
     inbox.remove(id);
     await bridge.handleCardAction(queueAction('queue-remove', id));
     expect(transport.sentTexts.some((t) => t.text.includes('already consumed'))).toBe(true);
     expect(inbox.nextTurn.map((m) => lastText(m))).toEqual(['third']);
+    // The card is retained as Sent (the drain consumed it).
+    const card = queueCardFor(cardId, transport) as CardJson;
+    expect(JSON.stringify(card.elements)).toContain('📤 Sent');
   });
 
   it('degrades to a normal turn when the agent has no inbox', async () => {
@@ -442,7 +547,7 @@ describe('message-queue', () => {
     await bridge.handleMessage(inboundMessage('second'));
     // No queue card; both messages delivered as normal turns.
     expect(agent.followup).toHaveBeenCalledTimes(2);
-    expect(lastQueueCard(transport)).toBeUndefined();
+    expect(queueCardsSent(transport)).toBe(0);
   });
 });
 

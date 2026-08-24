@@ -157,11 +157,14 @@ function resultCardTexts(): string[] {
     );
 }
 
-/** Whether an outbox record is the dedicated queue card (message-queue):
- *  it carries a `queue-edit` form (the single-card surface marker). */
+/** Whether an outbox record is a per-item queue card (message-queue): it
+ *  carries a `queue-edit` form OR a header title starting with `⏳` (every
+ *  lifecycle state's card is `⏳`-titled — queued/editing/steering/steered/
+ *  sent/removed). */
 function isQueueCardRecord(record: MemoryOutboxRecord): boolean {
   const card = record.card;
   if (card === undefined) return false;
+  if (card.header?.title.content.startsWith('⏳')) return true;
   return card.elements.some((el) => el.tag === 'form' && el.name === 'queue-edit');
 }
 
@@ -333,7 +336,7 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
     }
   }, 150_000);
 
-  it('message-queue: a message while a turn runs posts a queue card, not an interrupting turn', async () => {
+  it('message-queue: a message while a turn runs posts its OWN item card, not an interrupting turn', async () => {
     const bin = dshBin;
     const server = mock;
     if (bin === undefined) throw new Error('dsh CLI unavailable');
@@ -375,11 +378,17 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
       );
       await server.waitForHold();
 
-      // Second message while running is queued, not delivered as a turn.
+      // Second message while running is queued onto its OWN per-item card
+      // (one card per queued message), never delivered as an interrupting turn.
       sendMessage(chatId, 'queued while running');
-      await waitFor('the queue card', () => readOutbox().some((r) => isQueueCardRecord(r)), 30_000);
+      await waitFor(
+        'the queue item card',
+        () => readOutbox().some((r) => isQueueCardRecord(r)),
+        30_000,
+      );
       const queueCard = readOutbox().find((r) => isQueueCardRecord(r))?.card;
       expect(JSON.stringify(queueCard?.elements ?? [])).toContain('queued while running');
+      // A per-item card carries the `⏳` queue header (its preview folded in).
       expect(queueCard?.header?.title.content).toContain('⏳');
 
       // Release the first turn; it must complete (not be interrupted).

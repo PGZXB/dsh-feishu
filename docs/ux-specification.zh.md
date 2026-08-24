@@ -753,71 +753,107 @@ turn 重置——整会话累计，镜像 web 的 whole-log `sessionStats`）：
   `LlmResolvedModelInfo.context.contextWindow`——宿主可见数据。
 ## Part: message-queue
 
-> turn 运行期间收到的消息不再打断它——它们进入一张被管理的队列卡；每次队列
-> 变更都先撤回旧卡再重发新卡，所以一个聊天始终只保留一张活队列卡。每条排队
-> 消息可被插话（steer）、编辑或删除，镜像 DSH web 的 `QueueDock`。
+> turn 运行期间收到的消息不再打断它——每条排队消息都有它**自己**的专属卡片，
+> 每张卡各自维护一个生命周期状态机（没有共享的『N queued』卡，也没有撤回/重发的
+> 单卡不变量）。每条排队消息可被插话（steer）、编辑或删除；终态卡片**保留**并
+> 显示其状态标记。镜像 DSH web 的 `QueueDock`。
 
 ### 意图行为
 
-**为什么是一张独立队列卡，而不是流式卡上的行** —— DSH web 把排队输入放在
+**为什么一条排队消息一张卡，而不是流式卡上的行** —— DSH web 把排队输入放在
 `QueueDock`（一个固定 dock）里，生产问题（用户反馈）：turn 运行期间发送的消息
 必须*被看见接受*，否则流式卡会显得"死掉"（用户消息下没有新气泡）。发一张
-确认"已排队"的独立队列卡让接受无歧义。每个聊天任何时候只能有一张队列卡，所以
-每次队列变更都撤回旧卡并重发新卡（绝不叠一堆过期队列卡）。
+确认"已排队"的专属卡片让接受无歧义。每条排队消息**一张卡**，各自拥有自己的
+生命周期状态，用户可以一步步跟随单项从 `queued` → `editing` →
+`steering` → `steered`/`sent`/`removed`，无需撤回并重发共享卡。共享单卡本身很
+脆弱（用逐项 `form` + `input.default_value` 构建 —— 曾产生 Feishu 400 —— 且难
+维护）。
 
 **触发** —— 一条用户消息在聊天 turn 运行期间到达（
 `streaming.isWorking(chatId)`）。这条消息不立即作为新 turn 投递；而是追加到聊天
-的 inbox 队列（`inbox.append`），并重发队列卡。
+的 inbox 队列（`inbox.append`），并发布它**自己**的 `buildQueueItemCard`（状态
+`queued`）。
 
 **队列数据 / 状态** —— 队列就是 agent inbox 的 `nextTurn` 列表，通过宿主的
 `agent.inbox` 读取。它是会话所有的（不是卡片所有的），所以卡片重渲染不会丢。
-每项为 `{ id, text, preview, placement: 'queued' }`。
+与之并行，bridge 维护逐项卡片注册表
+`Map<chatId, Map<itemId, { cardMessageId, status, text }>>`，使每项的专属卡在状态
+变化时**原地**更新（`updateCard`）——即使该项已离开 inbox（保留的标记卡仍需要
+自己的预览文本）。
 
-**卡片/面板形状** —— 一张独立队列卡（markdown + 每项动作按钮）：
-- 头部：`⏳ N queued`（单条时展示该条预览）。
-- 每项一行：预览 + 动作：
-  - `➡️ Steer`（插话进正在跑的 turn）— 仅在 turn 运行中可用；空闲时禁用（带提示）。
-  - `✏️ Edit` — 用新文本重发该项（`inbox.replace`）。
-  - `🗑️ Remove` — 丢弃该项（`inbox.remove`）。
+**条目生命周期状态（每张卡一个状态机）**：
+`queued | editing | steering | steered | sent | removed`
+- **queued** —— 在队列中等待。头部 `⏳ <preview>` + 消息预览 + 动作：`➡️ Steer`
+  （仅在 turn 运行时；空闲时省略 Steer 并显示禁用提示）、`✏️ Edit`（打开内联编辑
+  表单）、`🗑️ Remove`（删除）。
+- **editing** —— 内联编辑表单在本卡上打开：一个 `form`，含一个 `input` +
+  一个 `form_submit` 的 Submit 和一个 Cancel 按钮。提交回到 `queued` 并带新文本；
+  Cancel 不变地回到 `queued`。**不使用** `input.default_value`（已验证的
+  `buildInputCard` 形状 —— input 上的 `default_value` 曾产生 Feishu 400）。
+- **steering** —— 已点击 Steer；等待 agent 在它的 step 边界消费。显示
+  "💬 Steering…"，无按钮。
+- **steered** —— agent 已消费该插话。显示 "✅ Steered"，无按钮。
+- **sent** —— 排队消息在 turn 结束后被自动派发（非插话路径）。显示 "📤 Sent"，
+  无按钮。
+- **removed** —— 用户已删除。显示 "🗑️ Removed"，无按钮。
 
-**单卡不变量** —— 对新的队列状态 `sendCard`，队列清空时 `deleteMessage`。每次队列
-*变更*（append/edit/remove/steer）都先撤回上一张队列卡（`deleteMessage`）再发新卡
-（`sendCard`），保证最多一张活队列卡。队列清空时只撤回不重发。
+在终态（`steered` / `sent` / `removed`）之后该卡**保留**并显示其状态标记——绝不
+自动撤回。没有共享单卡。
 
-**动作**（都映射到 agent inbox，镜像 web `updateQueue`）：
-- `queue-card`（重发）：队列内容变化时撤回 + 重发。
-- 每条 `steer`：仅在 turn 运行时；`inbox.remove` 该项然后 `agent.steer(message)` —
-  driver 在下一个 STEP 边界消费它（运行中的 driver 不会打断 step 中途；空闲 driver
-  开启一个新 turn）。镜像 web 的 `steer-unavailable` 守卫（`target === 'next-turn'`
-  且 `agent.status === 'running'`）。
-- 每条 `edit`：`inbox.replace(itemId, newContent)` — 重发卡片。
-- 每条 `remove`：`inbox.remove(itemId)` — 重发卡片。
+**卡片/面板形状** —— 每条排队消息一个 `buildQueueItemCard(item, running)`：
+- 头部：`⏳ <preview>`（queued）或 `⏳ <状态标签>`（editing/steering/steered/
+  sent/removed）。
+- 正文：消息预览，然后是状态标记（steering/steered/sent/removed）或动作
+  （queued）或编辑表单（editing）。
+- 每项动作（都映射到 agent inbox，镜像 web `updateQueue`）：
+  - `queue-steer`：仅在 turn 运行时；`inbox.remove` 该项然后
+    `agent.steer(message)`（driver 在下一个 STEP 边界消费）。镜像 web 的
+    `steer-unavailable` 守卫。把卡片置为 `steering`；该消息的下一次 `user/message`
+    事件把它翻转为 `steered`。
+  - `queue-edit`：打开内联编辑表单（`editing`）。
+  - `queue-edit-submit`：`inbox.replace(itemId, newContent)` → `queued`。
+  - `queue-edit-cancel`：→ 不变地回到 `queued`。
+  - `queue-remove`：`inbox.remove(itemId)` → `removed`。
 
 **队列消费** —— agent loop 在自己的 turn 边界消费 inbox `nextTurn` 列表（
 `claim('next-turn')`），所以排队消息按到达顺序被处理，无需 surface 手动 drain。
-队列清空时 surface 撤回队列卡。
+当排队项被自动消费（drain 路径）时，surface 把它标记为 `sent` 并更新其保留卡。
+插话消息经 `agent.steer` 进入正在跑的 turn，**不会**转移到新卡；流式卡 trace 在
+它被注入的位置添加一个 `steering` 行（修复 1），让用户看到自己插话的正是那条
+消息。
+
+**流式 trace（steering 行）** —— 当流式卡收到被插话消息的 `user/message` 事件
+（source kind `user`，由 `agent.steer` 在 turn 中途注入）时，控制器在 trace 中
+追加一个 `{ kind: 'steering', id, text }` 行。折叠时只显示 `steer`；展开时显示
+完整被插话的消息文本——用户总能看见自己插话的那条消息被插在哪里。
 
 **失败模式**：
 - 无 inbox（agent 缺失 / `agent.inbox` 不可用）：消息按普通 turn 投递（降级为今天
   的行为），记日志——绝不出现坏队列。
-- 空闲时 steer（`agent.status !== 'running'`）：按钮禁用（提示"steer unavailable —
-  no turn running"）；不触发任何卡片动作。
-- 队列项已被消费（turn 边界与点击竞态）：动作报告"no longer pending"，按当前队列
-  重发卡片。
-- 重发时发卡失败：记日志；队列状态不变（inbox 仍持有这些项）——下一次变更重发。
+- 空闲时 steer（`streaming.isWorking(chatId)` 为 false）：按钮被省略并显示禁用提示
+  （"steer unavailable — no turn running"）；不触发任何卡片动作。
+- 队列项已被消费（turn 边界与点击竞态）：动作报告"no longer pending"（一条文本
+  通知）；若仍为 `queued`/`editing`，则标记该项为 `sent`。
+- 卡片更新/发送失败：记日志；注册表状态不变——下一次变更会重渲染。
 - 无固定 cwd 的聊天：工作目录 gate 仍拒绝**第一个** turn；排队消息进入 turn 时按
   今天的方式取 cwd。
 
 **验收清单**：
 - [ ] turn 运行期间发送的消息被排队（inbox `nextTurn`），不是作为打断 turn 投递；
-      恰好一张队列卡（单测 + 集成）。
-- [ ] 第二条排队消息重发单张队列卡（撤回 + 重发），绝无两张卡（单测 + 集成）。
-- [ ] 每项行提供 Steer / Edit / Remove；无 turn 运行时 Steer 禁用；Edit/Remove 重发
-      卡片（单测）。
-- [ ] 运行中 steer 移除该项并调用 `agent.steer`（下一个 STEP 边界消费）（单测）。
-- [ ] 队列清空 → 队列卡被撤回（单测 + 集成）。
+      它发布**自己**的条目卡（单测 + 集成）。
+- [ ] 每条排队消息各有一张卡；变更时**原地**更新（`updateCard`），绝不删除+重发；
+      没有任何卡被撤回（单测 + 集成）。
+- [ ] 每个生命周期状态渲染正确的按钮/标记：queued（Steer/Edit/Remove，Steer 仅在
+      turn 运行时）、editing（编辑表单）、steering（"💬 Steering…"）、steered
+      （"✅ Steered"）、sent（"📤 Sent"）、removed（"🗑️ Removed"）——终态卡无按钮
+      （单测）。
+- [ ] 运行中 steer 把卡片置为 `steering`；随后的 `user/message` 把它翻转为
+      `steered`，流式 trace 显示 `steer` 行（展开 = 完整被插话文本）（单测）。
+- [ ] Edit 打开表单；submit 替换文本并回到 `queued`；cancel 不变；无
+      `input.default_value`（单测）。
+- [ ] Remove 把卡片置为 `removed` 并保留它（单测）。
 - [ ] agent inbox 缺失 → 降级为普通 turn，大声记日志（单测）。
-- [ ] 队列卡不干扰流式卡 / 产出 chips / 统计行（集成）。
+- [ ] 队列条目卡不干扰流式卡 / 产出 chips / 统计行（集成）。
 
 ### Reference
 

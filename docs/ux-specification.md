@@ -1411,90 +1411,129 @@ tool ran (`M steps · T tools`). No timing group is ever shown.
   `LlmResolvedModelInfo.context.contextWindow` — the host-visible data.
 ## Part: message-queue
 
-> Messages received while a turn runs no longer interrupt it — they queue in
-> a single managed card that is recalled and re-posted on every queue change,
-> so the chat always holds exactly one live queue card. Each queued item can
-> be steered (interrupted), edited, or removed, mirroring the DSH web
-> `QueueDock`.
+> Messages received while a turn runs no longer interrupt it — they queue
+> on their OWN dedicated card, one card per queued message with one lifecycle
+> state machine per card (no shared "N queued" card and no recall/re-post
+> single-card invariant). Each queued item is steered (injected into the
+> running turn), edited, or removed; terminal-item cards are RETAINED showing
+> their status marker. Mirrors the DSH web `QueueDock`.
 
 ### Intended behavior
 
-**Why a single managed queue card, not rows on the streaming card** — the
-DSH web surfaces queued input in a `QueueDock` that is a dock (a fixed
-element), and the production concern (user report): a message sent while a
-turn runs must be *visibly accepted*, otherwise the streaming card looks
-"dead" (no new bubble under the user's message). Posting a dedicated queue
-card that confirms "queued" makes acceptance unambiguous. Only ONE queue card
-may exist per chat at a time, so every queue change recalls the prior card
-and re-posts a fresh one (never a stack of stale queue cards).
+**Why one card per queued message, not rows on the streaming card** — the
+DSH web surfaces queued input in a `QueueDock` (a fixed element), and the
+production concern (user report): a message sent while a turn runs must be
+*visibly accepted*, otherwise the streaming card looks "dead" (no bubble under
+the user's message). Posting a dedicated card that confirms "queued" makes
+acceptance unambiguous. Each queued message is ONE card with its OWN lifecycle
+state, so the user can follow a single item from `queued` → `editing` →
+`steering` → `steered`/`sent`/`removed` without recalling and re-posting a
+shared card. A single shared card was fragile (built with a per-item `form`
++ `input.default_value` — a Feishu 400 — and hard to maintain).
 
 **Trigger** — a user message arriving while the chat's turn is running
 (`streaming.isWorking(chatId)`). Such a message is NOT delivered as a new
-turn immediately; it is appended to the chat's inbox queue (`inbox.append`),
-and the queue card is re-posted.
+turn immediately; it is appended to the chat's inbox queue (`inbox.append`)
+and posted as its OWN `buildQueueItemCard` (status `queued`).
 
 **Queue data / state** — the queue is the agent inbox's `nextTurn` list, read
 through the host's `agent.inbox`. It is session-owned (not card-owned), so a
-card re-render never loses it. Each item is `{ id, text, preview,
-placement: 'queued' }`.
+card re-render never loses it. Alongside it, the bridge keeps a per-item card
+registry `Map<chatId, Map<itemId, { cardMessageId, status, text }>>` so each
+item's dedicated card is updated IN PLACE (`updateCard`) as its lifecycle
+state changes — even after the item leaves the inbox (a retained marker card
+still needs its preview text).
 
-**Card/panel shape** — one dedicated queue card (markdown + per-item action
-buttons):
-- Header: `⏳ N queued` (or the single item's preview when N === 1).
-- One row per item: preview + actions per item:
-  - `➡️ Steer` (interrupt into the running turn) — enabled only while a turn
-    runs; disabled (with a hint) when idle.
-  - `✏️ Edit` — re-post the item with new text (`inbox.replace`).
-  - `🗑️ Remove` — drop the item (`inbox.remove`).
+**Item lifecycle states (one state machine per card)**:
+`queued | editing | steering | steered | sent | removed`
+- **queued** — waiting in the queue. Header `⏳ <preview>` + the message
+  preview + actions: `➡️ Steer` (ONLY while a turn runs; when idle omit Steer
+  and show a disabled hint), `✏️ Edit` (opens the inline edit form), `🗑️
+  Remove` (delete).
+- **editing** — the inline edit form is open on THIS card: a single `form`
+  with one `input` + a `form_submit` Submit and a Cancel button. Submitting
+  returns to `queued` with the new text; Cancel returns to `queued` unchanged.
+  NO `input.default_value` (the verified `buildInputCard` shape — a
+  `default_value` on the input produced the Feishu 400).
+- **steering** — Steer was clicked; waiting for the agent to consume it at its
+  step boundary. Shows "💬 Steering…", no buttons.
+- **steered** — the agent consumed the steering. Shows "✅ Steered", no
+  buttons.
+- **sent** — the queued message was auto-dispatched after the turn (non-steer
+  path). Shows "📤 Sent", no buttons.
+- **removed** — the user removed it. Shows "🗑️ Removed", no buttons.
 
-**Single-card invariant** — `sendCard` for a NEW queue state, `deleteMessage`
-for a CLEARED queue. On every queue *mutation* (append/edit/remove/steer) the
-previous queue card is recalled (`deleteMessage`) and a fresh one posted
-(`sendCard`), guaranteeing at most one live queue card. On queue empty the
-card is recalled only.
+After a terminal state (`steered` / `sent` / `removed`) the card is RETAINED
+showing its status marker — never auto-recalled. There is no single shared
+card.
 
-**Actions** (all map to the agent inbox, mirroring the web `updateQueue`):
-- `queue-card` (re-post): recalled + re-posted when queue content changes.
-- Per-item `steer`: only when a turn is running; `inbox.remove` the item then
-  `agent.steer(message)` — the driver consumes it at its NEXT STEP boundary
-  (a running driver does not interrupt mid-step; an idle driver starts a
-  turn). Mirrors the web `steer-unavailable` guard (`target === 'next-turn'`
-  AND `agent.status === 'running'`).
-- Per-item `edit`: `inbox.replace(itemId, newContent)` — re-post the card.
-- Per-item `remove`: `inbox.remove(itemId)` — re-post the card.
+**Card/panel shape** — one `buildQueueItemCard(item, running)` per queued
+message:
+- Header: `⏳ <preview>` (queued) or `⏳ <state label>` (editing/steering/
+  steered/sent/removed).
+- Body: the message preview, then the status marker (steering/steered/sent/
+  removed) or the actions (queued) or the edit form (editing).
+- The per-item actions (all mapped to the agent inbox, mirroring the web
+  `updateQueue`):
+  - `queue-steer`: only when a turn runs; `inbox.remove` the item then
+    `agent.steer(message)` (the driver consumes it at its NEXT STEP boundary).
+    Mirrors the web `steer-unavailable` guard. Sets the card `steering`; the
+    next `user/message` event for that message flips it to `steered`.
+  - `queue-edit`: opens the inline edit form (`editing`).
+  - `queue-edit-submit`: `inbox.replace(itemId, newContent)` → `queued`.
+  - `queue-edit-cancel`: → `queued` unchanged.
+  - `queue-remove`: `inbox.remove(itemId)` → `removed`.
 
 **Queue consumption** — the agent loop consumes the inbox `nextTurn` list at
 its own turn boundary (`claim('next-turn')`), so queued messages are processed
-in arrival order without the surface draining them manually. When the queue
-empties the surface recalls the queue card.
+in arrival order without the surface draining them manually. When a queued item
+is auto-consumed (drain path), the surface marks it `sent` and updates its
+retained card. A steered message flows into the running turn via `agent.steer`
+and is NOT transferred to a new card; the streaming trace adds a `steering`
+row where it was injected (Fix 1), so the user sees exactly the message they
+steered.
+
+**Streaming trace (steering row)** — when the streaming card receives the
+steered message's `user/message` event (source kind `user`, injected mid-turn
+by `agent.steer`), the controller adds a `{ kind: 'steering', id, text }` row
+to the trace. Collapsed shows just `steer`; expanded shows the full steered
+message text — the user always sees where their steered message was inserted.
 
 **Failure modes**:
 - No inbox (agent absent / `agent.inbox` unavailable): the message is
   delivered as a normal turn (degrade to today's behavior), logged — never a
   broken queue.
-- Steer while idle (`agent.status !== 'running'`): the button is disabled
-  (hint "steer unavailable — no turn running"); no card action fires.
+- Steer while idle (`streaming.isWorking(chatId)` false): the button is
+  omitted and a disabled hint ("steer unavailable — no turn running") is
+  shown; no card action fires.
 - Queue item already consumed (turn boundary raced the click): the action
-  reports "no longer pending", re-posts the card to the now-current queue.
-- Card post failure while re-posting: logged; the queue state is unchanged
-  (the inbox still holds the items) — the next mutation re-posts.
+  reports "no longer pending" (a text notice) and, if still `queued`/`editing`,
+  marks the item `sent`.
+- Card update/post failure: logged; the registry state is unchanged — the next
+  mutation re-renders.
 - A chat with no pinned cwd: the working-directory gate still refuses the
   FIRST turn; a queued message that reaches a turn picks up the cwd as today.
 
 **Acceptance checklist**:
 - [ ] A message sent while a turn runs is queued (inbox `nextTurn`), not
-      delivered as an interrupting turn; exactly one queue card posts (unit +
+      delivered as an interrupting turn; it posts its OWN item card (unit +
       integration).
-- [ ] A second queued message re-posts a single queue card (recall + re-post),
-      never two cards (unit + integration).
-- [ ] Each item row offers Steer / Edit / Remove; Steer is disabled when no
-      turn runs; Edit/Remove re-post the card (unit).
-- [ ] Steer while running removes the item and calls `agent.steer` (consumed
-      at next step boundary) (unit).
-- [ ] Queue empty → the queue card is recalled (unit + integration).
+- [ ] Each queued message gets its own card (one per item); mutations update it
+      in place (`updateCard`), never delete+send; no card is ever recalled
+      (unit + integration).
+- [ ] Every lifecycle state renders the right buttons/marker: queued
+      (Steer/Edit/Remove, Steer only while a turn runs), editing (edit form),
+      steering ("💬 Steering…"), steered ("✅ Steered"), sent ("📤 Sent"),
+      removed ("🗑️ Removed") — the terminal cards have no buttons (unit).
+- [ ] Steer while running sets the card `steering`; a later `user/message`
+      flips it to `steered`, and the streaming trace shows a `steer` row
+      (expanded = the full steered text) (unit).
+- [ ] Edit opens the form; submit replaces the text and returns to `queued`;
+      cancel returns unchanged; no `input.default_value` (unit).
+- [ ] Remove marks the card `removed` and retains it (unit).
 - [ ] Agent inbox absent → degrade to a normal turn, logged loudly (unit).
-- [ ] The queue card does not interfere with the streaming card / produced
-      chips / stats line (integration).
+- [ ] The queue item card does not interfere with the streaming card /
+      produced chips / stats line (integration).
 
 ### Reference
 

@@ -21,13 +21,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on the terminal card.
 - **Message queue: turn messages no longer interrupt a running turn.** When a
   user message arrives while a turn is running, it is appended to the agent
-  inbox's next-turn queue (never `deliverTurn`) and surfaced on a single
-  dedicated `⏳ N queued` card (one per chat). Every queue mutation — append,
-  edit, remove, steer — recalls the prior card and re-posts a fresh one, so a
-  chat never holds two live queue cards; when the queue empties the card is
-  recalled only. Each queued item row carries Steer (only while a turn runs),
-  a text-input Edit, and Remove, all mapped to the agent inbox
-  (`inbox.replace`/`remove` + `agent.steer`). When the agent has no inbox the
+  inbox's next-turn queue (never `deliverTurn`) and surfaced on its OWN
+  dedicated card — one card per queued message, one lifecycle state machine
+  per card (`queued / editing / steering / steered / sent / removed`). The
+  shared "N queued" card and its recall/re-post single-card invariant are gone:
+  each card is updated in place (`updateCard`) as its state changes, terminal
+  cards (steered/sent/removed) are retained showing their status marker, and
+  nothing is ever recalled. A steered message marks its card "💬 Steering…",
+  then the next `user/message` event flips it to "✅ Steered"; the streaming
+  trace adds a `steer` row (collapsed = "steer", expanded = the full steered
+  text) so the user sees where their steered message was injected. The edit
+  form uses the verified no-`default_value` input shape (the prior per-item
+  `default_value` form produced a Feishu 400). When the agent has no inbox the
   message degrades to a normal turn. See `docs/ux-specification.md` →
   "Part: message-queue".
 
