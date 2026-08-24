@@ -194,6 +194,13 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     category: 'chat',
     buttonLabel: '👥 New group',
     handler: async (invocation) => {
+      // A bare /group opens the same text-input card as the panel's "New
+      // group" button (the user types the group name); /group <name> creates
+      // it directly.
+      if (invocation.rawInput.trim() === '') {
+        await options.pushPanel(invocation.chatId, { kind: 'input', command: 'group' });
+        return { kind: 'success', text: '' };
+      }
       const name = invocation.rawInput.trim() || 'dsh-feishu';
       try {
         const { chatId } = await options.transport.createGroup(name, [invocation.senderOpenId]);
@@ -535,6 +542,18 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
       category: 'system',
       buttonLabel: spec.buttonLabel,
       handler: async (invocation) => {
+        // A bare /goal /feedback opens the panel text-input card (matching
+        // the panel palette button). /compact stays direct: it is a harness
+        // command, and the panel's confirm button also invokes this handler
+        // with an empty arg — routing a bare /compact to the confirm view
+        // would re-open the confirm view instead of running the compaction.
+        if (
+          invocation.rawInput.trim() === '' &&
+          (spec.name === 'goal' || spec.name === 'feedback')
+        ) {
+          await options.pushPanel(invocation.chatId, { kind: 'input', command: spec.name });
+          return { kind: 'success', text: '' };
+        }
         if (options.isWorking(invocation.chatId)) {
           return { kind: 'error', text: 'a turn is running — stop it first.' };
         }

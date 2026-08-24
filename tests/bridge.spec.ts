@@ -2549,6 +2549,20 @@ describe('panel command palette', () => {
     );
   });
 
+  it('bare /group /goal /feedback open the same text-input card as their panel button (consistency)', async () => {
+    const h = makeHarness();
+    const cases: Array<[string, string]> = [
+      ['/group', '👥 New group'],
+      ['/goal', '🎯 Goal'],
+      ['/feedback', '💬 Feedback'],
+    ];
+    for (const [cmd, title] of cases) {
+      await h.bridge.handleMessage(message({ text: cmd, messageId: `om-${cmd}` }));
+      const card = h.transport.updatedCards.at(-1) ?? h.transport.sentCards.at(-1);
+      expect(card?.header?.title.content).toBe(title);
+    }
+  });
+
   it('typing /cd posts the input card directly — no transient menu flash (regression)', async () => {
     const h = makeHarness();
     const before = h.transport.sentCards.length;
@@ -3212,7 +3226,9 @@ describe('dsh web command wrappers', () => {
 
   it('wrapper reports unavailable when the dsh registry is not mounted', async () => {
     const h = makeHarness();
-    await h.bridge.handleMessage(message({ text: '/goal' }));
+    // Some value: a bare /goal now opens the panel text-input card, so use
+    // an argument to reach the harness wrapper's missing-registry path.
+    await h.bridge.handleMessage(message({ text: '/goal run tests' }));
     expect(h.transport.sentTexts.some((t) => t.text.includes('not mounted'))).toBe(true);
   });
 
