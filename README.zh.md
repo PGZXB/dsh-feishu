@@ -151,6 +151,12 @@ rm -rf ~/.dsh/profiles/feishu ~/.dsh/feishu
 
 见 [CONTRIBUTING.md](CONTRIBUTING.md) 与 [SECURITY.md](SECURITY.md)。开发、测试与发布：[docs/development.md](docs/development.md)。
 
+## 交流群
+
+扫码加入 dsh-feishu 飞书交流群：
+
+![dsh-feishu 交流群二维码](docs/assets/feishu-group-qr-code.png)
+
 ## 致谢
 
 - **[botmux](https://github.com/deepcoldy/botmux)** —— 群聊交互模式的参考：流式卡片、审批，以及扫码驱动的开放平台快速接入流程。dsh-feishu 借鉴的是 botmux 的*交互与接入模式*，而非其架构——botmux 桥接外部 CLI，本插件则是 dsh 原生、进程内的。

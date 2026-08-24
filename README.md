@@ -173,6 +173,12 @@ feels faster; `/help` lists them all.
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 Development, tests, and release: [docs/development.md](docs/development.md).
 
+## Community
+
+Join the dsh-feishu community group on Feishu:
+
+![dsh-feishu community group QR code](docs/assets/feishu-group-qr-code.png)
+
 ## Credits
 
 - **[botmux](https://github.com/deepcoldy/botmux)** — the reference for the
