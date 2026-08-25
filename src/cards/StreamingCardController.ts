@@ -133,6 +133,49 @@ export interface ChatCardState {
    *  turn via write/edit mutations (from `tool/result` `meta.diffs`).
    *  Reset on turn start; the final card chips render from it. */
   producedPaths: string[];
+  /** A friendly, actionable explanation of the last turn failure, or
+   *  `undefined` when the last turn didn't fail. Reset on turn start. */
+  errorText: string | undefined;
+}
+
+/**
+ * Map a turn-failure error to a friendly, actionable message the USER can
+ * act on (or relay to the bot admin). The generic "see the card for details"
+ * card told no one what broke; a MISSING_CREDENTIAL tells the admin exactly
+ * what to fix, and an unknown error stays the raw message so a reporter can
+ * share it verbatim.
+ *
+ * Guarantee: this NEVER returns an empty string — a turn failure must always
+ * surface SOMETHING concrete. A blank `message` falls back to the error code,
+ * and a blank code to an explicit "check the bot log" instruction (still more
+ * useful than a dead end).
+ * @param error - the turn-failure error (`reason.error` on a `turn/end`
+ *   event): `code` is the stable category, `message` the provider text.
+ * @returns a non-empty user-facing explanation.
+ */
+export function friendlyTurnError(error: { code?: string; message: string }): string {
+  const code = error.code ?? '';
+  const message = error.message.trim();
+  if (code === 'MISSING_CREDENTIAL' || /no API key/i.test(message)) {
+    return (
+      "The model has no API key — the bot can't reach the LLM. " +
+      'Ask the bot admin to configure one (e.g. DEEPSEEK_API_KEY).'
+    );
+  }
+  if (code === 'NO_ADAPTER' || /no adapter/i.test(message)) {
+    return (
+      "The selected model/provider isn't available. " +
+      'Ask the bot admin to check the model configuration.'
+    );
+  }
+  if (code === 'AgentPresetConflict') {
+    return "The chosen preset was changed mid-session and can't be applied. Start a fresh session and pick the preset again.";
+  }
+  if (message !== '') return message;
+  if (code !== '') {
+    return `The turn failed (error ${code}). Ask the bot admin to check the bot log.`;
+  }
+  return 'The turn failed for an unspecified reason. Ask the bot admin to check the bot log.';
 }
 
 /** Session-scoped cumulative usage folded from the event stream (exact
@@ -361,6 +404,7 @@ export class StreamingCardController {
       collapsed: true,
       stopRequested: false,
       producedPaths: [],
+      errorText: undefined,
     });
     try {
       await this.host.cards.open(chatId, title);
@@ -423,6 +467,7 @@ export class StreamingCardController {
       producedPaths: state.producedPaths,
       sessionStats: this.sessionStatsFor(chatId),
       status: state.status,
+      ...(state.errorText !== undefined ? { errorText: state.errorText } : {}),
     };
   }
 
@@ -512,6 +557,7 @@ export class StreamingCardController {
           collapsed: true,
           stopRequested: false,
           producedPaths: [],
+          errorText: undefined,
         });
         try {
           await this.host.cards.open(chatId, title);
@@ -701,6 +747,7 @@ export class StreamingCardController {
         if (event.data.reason.kind === 'error') {
           const error = event.data.reason.error;
           this.host.logger.error(`turn failed: ${error.code}: ${error.message}`);
+          state.errorText = friendlyTurnError(error);
           // A corrupt persisted log breaks every turn that resumes it; rebind
           // the chat to a fresh session so the next message starts clean.
           if (error.message.includes('corrupt session log')) {
@@ -735,10 +782,13 @@ export class StreamingCardController {
         // stop action; the card's '⏹ Stopped' is the terminal state.
         if (status === 'error') {
           // Proactive @ of the requester in groups: a broken turn must not
-          // go unnoticed, and the group must know WHOSE turn failed.
+          // go unnoticed, and the group must know WHOSE turn failed. The
+          // notice always carries the concrete reason (never a dead "see the
+          // card"): `state.errorText` is guaranteed non-empty by
+          // `friendlyTurnError`.
           await this.host.transport.sendText(
             chatId,
-            `${this.host.textMentionFor(chatId)}⚠️ Turn failed — see the card for details`,
+            `${this.host.textMentionFor(chatId)}⚠️ Turn failed: ${state.errorText ?? 'unknown error'}`,
           );
         }
         break;
@@ -773,6 +823,7 @@ export class StreamingCardController {
             collapsed: true,
             stopRequested: false,
             producedPaths: [],
+            errorText: undefined,
           };
           this.cardStates.set(chatId, state);
           try {
@@ -920,6 +971,7 @@ export class StreamingCardController {
           collapsed: true,
           stopRequested: false,
           producedPaths: [],
+          errorText: undefined,
         });
         try {
           await this.host.cards.open(action.chatId, turnTitle(prompt));

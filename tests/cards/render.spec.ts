@@ -210,6 +210,22 @@ describe('buildCard', () => {
     );
   });
 
+  it('renders the friendly error reason on the error card (never a dead end)', () => {
+    const card = buildCard({
+      title: 'T',
+      content: '',
+      rows: [],
+      status: 'error',
+      errorText: "The model has no API key — the bot can't reach the LLM.",
+    });
+    const notes = card.elements
+      .flatMap((el) => (el.tag === 'note' ? [el] : el.tag === 'markdown' ? [el] : []))
+      .flatMap((el) => (el.tag === 'note' ? el.elements : el.content));
+    expect(JSON.stringify(notes)).toContain('no API key');
+    // The error card must never fall back to a meaningless placeholder.
+    expect(JSON.stringify(notes)).not.toContain('see the card for details');
+  });
+
   it('renders think/tool rows in chronological order with expand buttons', () => {
     const card = buildCard({
       title: 'T',

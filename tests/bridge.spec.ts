@@ -908,9 +908,7 @@ describe('Bridge', () => {
     );
     const last = h.transport.updatedCards.at(-1);
     expect(last?.header?.template).toBe('red');
-    expect(h.transport.sentTexts).toEqual([
-      { chatId: 'oc_chat', text: '⚠️ Turn failed — see the card for details' },
-    ]);
+    expect(h.transport.sentTexts).toEqual([{ chatId: 'oc_chat', text: '⚠️ Turn failed: boom' }]);
   });
 
   it('rebinds a fresh session when a turn fails with a corrupt session log', async () => {
@@ -4431,7 +4429,7 @@ describe('proactive @ mentions in groups', () => {
       'feishu-session-1',
       turnEndEvent({ kind: 'error', error: { code: 'X', message: 'boom' } }) as SessionEvent,
     );
-    expect(h.transport.sentTexts.at(-1)?.text).toBe('⚠️ Turn failed — see the card for details');
+    expect(h.transport.sentTexts.at(-1)?.text).toBe('⚠️ Turn failed: boom');
   });
 
   it('approval card @s the requester in a group', async () => {
