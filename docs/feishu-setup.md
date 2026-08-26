@@ -40,15 +40,6 @@ The wizard then, with no further web-console work:
    (default `y`). The defaults are the profile's existing values when it
    was already configured. Non-interactive runs (CI, scripts) skip the
    prompts and use the defaults silently.
- 8. **Offers an optional model API key prompt** (`DEEPSEEK_API_KEY`; empty
-   input skips). The agent needs this key to run turns — DSH web saves it
-   through its Models page, and a Feishu-only user never opens that page.
-   The answer goes into `<dsh-home>/.env`, which dsh loads into the
-   environment at every boot; the plugin then promotes it into the dsh
-   credentials seam — the same place the Models page writes. An exported
-   key or one saved by DSH web always wins over this file, so the step
-   also skips when the environment already carries the key or an earlier
-   setup run saved it.
 
 Reconfigure an existing app instead of creating one:
 
