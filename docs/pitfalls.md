@@ -325,3 +325,17 @@ The harness sandbox (and this checkout's environment) has specific rules:
 - Rule: before every commit, run `pnpm run lint`, `pnpm run typecheck`,
   `pnpm run test`, `pnpm run build` and confirm each exits 0 — never trust
   an output tail or a `--write` run as the lint verdict.
+
+## Card actions must address the clicked card's message id
+
+- Every `card.action.trigger` callback carries `context.open_message_id` —
+  the message id of the CARD THE BUTTON LIVES ON. A chat accumulates many
+  finished streaming cards; any handler that keys state by chat id alone
+  cross-wires clicks on historical cards to whichever card is currently the
+  latest (real report: expand/collapse on an old card re-rendered the newest
+  one).
+- Rule: when a card action mutates card state, resolve the target by
+  `action.messageId` first (the live card when the ids match, otherwise a
+  frozen final render retained per message id). If the id is unretained
+  (e.g. after a restart), log and ignore — silently re-rendering the current
+  card is exactly the bug. See `StreamingCardController.toggle-rows`.

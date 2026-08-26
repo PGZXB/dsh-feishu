@@ -288,3 +288,14 @@ harness 沙箱（以及本 checkout 的环境）有一些特定规则：
 - 规则：每次提交前，运行 `pnpm run lint`、`pnpm run typecheck`、
   `pnpm run test`、`pnpm run build`，并确认每个都以 0 退出 —— 永远不要
   相信输出尾部或 `--write` 运行可以作为 lint 的裁决。
+
+## 卡片动作必须寻址被点卡片自身的 message id
+
+- 每个 `card.action.trigger` 回调都携带 `context.open_message_id` ——
+  即按钮所在那张卡的消息 id。一个 chat 里会累积多张已完成的流式卡；任何
+  只按 chat id 键控状态的处理器，都会把历史卡上的点击串到当前最新的那张卡
+  （真实报告：在旧卡上点展开/折叠，被重渲染的却是最新一张）。
+- 规则：当卡片动作会变更卡片状态时，先按 `action.messageId` 解析目标
+  （id 与当前卡一致即为活卡，否则查按消息 id 保留的冻结终态渲染）。若该 id
+  未保留（例如重启后），记日志并忽略 —— 静默重渲染当前卡正是这个 bug 本身。
+  见 `StreamingCardController.toggle-rows`。

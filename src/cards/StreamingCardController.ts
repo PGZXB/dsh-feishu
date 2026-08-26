@@ -310,6 +310,16 @@ export class StreamingCardController {
    *  boundary it emits a `user/message`; the id here lets the trace add a
    *  steering row exactly where it was injected. */
   private readonly pendingSteers = new Map<string, Set<string>>();
+  /** Frozen final renders of FINISHED streaming cards, keyed by their OWN
+   *  message id, newest-last per chat: expand/collapse on a historical card
+   *  must retarget THAT card — a real report had it cross-wired to whichever
+   *  card was latest. The card callback always carries the clicked message
+   *  id (`context.open_message_id`), so the lookup is exact. Bounded per
+   *  chat; a restart drops the renders and such clicks are logged and
+   *  ignored (fails loud in FEISHU_DEBUG). */
+  private readonly finishedRenders = new Map<string, Map<string, CardSnapshot>>();
+  /** Insertion order per chat for bounding {@link finishedRenders}. */
+  private readonly finishedOrder = new Map<string, string[]>();
 
   constructor(private readonly host: StreamingCardHost) {}
 
@@ -448,12 +458,64 @@ export class StreamingCardController {
     }
     const messageId = this.host.cards.lastMessageId(chatId);
     if (messageId === undefined) return;
-    const card = buildCard(this.snapshot(chatId, state));
+    const snapshot = this.snapshot(chatId, state);
+    // Freeze the terminal render under its own message id so a click on
+    // THIS card later toggles THIS card (historical expand/collapse).
+    this.rememberFinishedRender(chatId, messageId, snapshot);
+    const card = buildCard(snapshot);
     setTimeout(() => {
       void this.host.transport.updateCard(messageId, card).catch((error: unknown) => {
         this.host.logger.warn(`streaming card sync failed: ${String(error)}`);
       });
     }, 0);
+  }
+
+  /** How many finished renders to keep per chat (bounding memory; only the
+   *  recent history is realistically clicked). */
+  private static readonly FINISHED_RENDER_LIMIT = 20;
+
+  /** Record/refresh the frozen render for one finished card, bounded. */
+  private rememberFinishedRender(chatId: string, messageId: string, snapshot: CardSnapshot): void {
+    let perChat = this.finishedRenders.get(chatId);
+    let order = this.finishedOrder.get(chatId);
+    if (perChat === undefined || order === undefined) {
+      perChat = new Map();
+      order = [];
+      this.finishedRenders.set(chatId, perChat);
+      this.finishedOrder.set(chatId, order);
+    }
+    if (!order.includes(messageId)) {
+      order.push(messageId);
+      while (order.length > StreamingCardController.FINISHED_RENDER_LIMIT) {
+        const evicted = order.shift();
+        if (evicted !== undefined) perChat.delete(evicted);
+      }
+    }
+    perChat.set(messageId, { ...snapshot });
+  }
+
+  /**
+   * Flip the collapsed bit on the frozen render of one historical finished
+   * card and re-render exactly that message id.
+   * @returns whether the card was found.
+   */
+  private toggleHistoricalCard(chatId: string, messageId: string): boolean {
+    const frozen = this.finishedRenders.get(chatId)?.get(messageId);
+    if (frozen === undefined) return false;
+    const flipped: CardSnapshot = { ...frozen, collapsed: !frozen.collapsed };
+    this.finishedRenders.get(chatId)?.set(messageId, flipped);
+    this.host.logger.debug(
+      `streaming toggle-rows ${chatId}: historical card ${messageId} -> ${
+        flipped.collapsed ? 'collapsed' : 'expanded'
+      }`,
+    );
+    const card = buildCard(flipped);
+    setTimeout(() => {
+      void this.host.transport.updateCard(messageId, card).catch((error: unknown) => {
+        this.host.logger.warn(`historical card sync failed: ${String(error)}`);
+      });
+    }, 0);
+    return true;
   }
 
   /** Build the render snapshot from the authoritative state. */
@@ -996,6 +1058,19 @@ export class StreamingCardController {
         return;
       }
       case 'toggle-rows': {
+        // The callback's message id names the card that was clicked. The
+        // LIVE card (the chat's current authoritative state) toggles through
+        // the single render path; a HISTORICAL card flips its own frozen
+        // final render — NEVER the latest card by accident (cross-wiring
+        // bug), so an unretained id is logged and ignored.
+        const liveMessageId = this.host.cards.lastMessageId(action.chatId);
+        if (liveMessageId !== action.messageId) {
+          if (this.toggleHistoricalCard(action.chatId, action.messageId)) return;
+          this.host.logger.warn(
+            `toggle-rows ${action.chatId}: unretained card ${action.messageId} (not the live ${liveMessageId ?? 'none'}) — ignored`,
+          );
+          return;
+        }
         // Flip the collapsed bit on the authoritative state, then re-render
         // through the single path. Whether the turn is live or finished is
         // syncCard's concern — no per-case patching.
@@ -1003,6 +1078,10 @@ export class StreamingCardController {
         if (state !== undefined) {
           state.collapsed = !state.collapsed;
           this.syncCard(action.chatId);
+        } else {
+          this.host.logger.warn(
+            `toggle-rows ${action.chatId}: no state for live card ${action.messageId}`,
+          );
         }
         return;
       }

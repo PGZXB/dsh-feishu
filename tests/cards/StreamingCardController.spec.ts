@@ -28,6 +28,8 @@ import { SessionMap } from '../../src/session-map.js';
 class RecordingTransport implements FeishuTransport {
   sentCards: CardJson[] = [];
   updatedCards: CardJson[] = [];
+  /** Every in-place patch with its TARGET message id (updateCard calls). */
+  updatedTargets: Array<{ messageId: string; card: CardJson }> = [];
   sentTexts: Array<{ chatId: string; text: string }> = [];
   reactions: Array<{
     messageId: string;
@@ -68,8 +70,9 @@ class RecordingTransport implements FeishuTransport {
     this.sentCards.push(card);
     return { messageId: `msg-${this.sentCards.length}` };
   }
-  async updateCard(_messageId: string, card: CardJson): Promise<void> {
+  async updateCard(messageId: string, card: CardJson): Promise<void> {
     this.updatedCards.push(card);
+    this.updatedTargets.push({ messageId, card });
   }
   async deleteMessage(_messageId: string): Promise<void> {}
   async downloadImage(
@@ -179,6 +182,14 @@ function turnEndEvent(reason: { kind: 'completed' | 'error' | 'aborted' }): Sess
   } as unknown as SessionEvent;
 }
 
+/** A reasoning delta (opens/folds into a think row — makes hasRows true). */
+function reasoningEvent(text: string): SessionEvent {
+  return {
+    type: 'assistant/chunk',
+    data: { chunk: { type: 'reasoning-delta', text } },
+  } as unknown as SessionEvent;
+}
+
 /** The last card rendered by the streaming manager (a CardJson render). */
 function lastCard(h: {
   transport: RecordingTransport;
@@ -277,9 +288,68 @@ describe('StreamingCardController', () => {
   it('toggle-rows flips the collapsed bit and re-renders', async () => {
     const h = makeController();
     await h.controller.beginTurn('oc_chat', 'om-1', 'T');
+    await h.controller.handleEvent('feishu-session-1', reasoningEvent('thinking…'));
     expect(h.controller.state('oc_chat')?.collapsed).toBe(true);
-    await h.controller.handleStreamingAction(action('toggle-rows'));
+    // A real callback carries the message id of the card that was clicked
+    // (here: the live card just posted by beginTurn — RecordingTransport
+    // assigns 'msg-1' to the first sent card).
+    await h.controller.handleStreamingAction({ ...action('toggle-rows'), messageId: 'msg-1' });
     expect(h.controller.state('oc_chat')?.collapsed).toBe(false);
+  });
+
+  it('toggle-rows on a HISTORICAL card retargets that card, not the latest (regression)', async () => {
+    // User report: expand/collapse on an old card cross-wired to the newest
+    // one — the handler keyed everything by chatId. The callback's own
+    // message id must address the clicked card.
+    const h = makeController();
+    // Turn 1: post a card WITH tool rows (the only cards that carry the
+    // expand/collapse button), finish it, expand it so the frozen render
+    // ends expanded.
+    await h.controller.beginTurn('oc_chat', 'om-1', 'first turn');
+    await h.controller.handleEvent('feishu-session-1', reasoningEvent('analyzing…'));
+    await h.controller.handleEvent('feishu-session-1', turnEndEvent({ kind: 'completed' }));
+    await new Promise((resolve) => setTimeout(resolve, 0)); // deferred final render
+    const firstCardId = 'msg-1';
+    await h.controller.handleStreamingAction({ ...action('toggle-rows'), messageId: firstCardId });
+    expect(h.controller.state('oc_chat')?.collapsed).toBe(false); // still the live card
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Turn 2: a NEW card becomes the latest.
+    await h.controller.beginTurn('oc_chat', 'om-2', 'second turn');
+    expect(h.transport.sentCards).toHaveLength(2);
+    await h.controller.handleEvent('feishu-session-1', turnEndEvent({ kind: 'completed' }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const updatesBefore = h.transport.updatedTargets.length;
+    // Click Expand on the OLD card.
+    await h.controller.handleStreamingAction({
+      ...action('toggle-rows'),
+      messageId: firstCardId,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const updates = h.transport.updatedTargets.slice(updatesBefore);
+    // The re-render targeted the OLD message id…
+    expect(updates.map((u) => u.messageId)).toEqual([firstCardId]);
+    // …and toggled IT (frozen render was expanded -> now shows Expand, i.e.
+    // clicking collapsed that historical card alone).
+    expect(JSON.stringify(updates[0]?.card.elements)).toContain('▸ Expand');
+    // …leaving the LATEST card's authoritative state untouched.
+    expect(h.controller.state('oc_chat')?.collapsed).toBe(true);
+  });
+
+  it('toggle-rows on an unretained historical card is ignored (no cross-wiring)', async () => {
+    const h = makeController();
+    await h.controller.beginTurn('oc_chat', 'om-1', 'T');
+    await h.controller.handleEvent('feishu-session-1', reasoningEvent('thinking…'));
+    await h.controller.handleEvent('feishu-session-1', turnEndEvent({ kind: 'completed' }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const updatesBefore = h.transport.updatedTargets.length;
+    await h.controller.handleStreamingAction({
+      ...action('toggle-rows'),
+      messageId: 'msg-from-before-the-restart',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // An id we never rendered must NOT touch the current card either —
+    // silently re-rendering the latest card is exactly the reported bug.
+    expect(h.transport.updatedTargets.slice(updatesBefore)).toHaveLength(0);
   });
 
   it('a compaction transaction opens and finalizes its own card', async () => {
