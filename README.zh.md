@@ -133,6 +133,7 @@ rm -rf ~/.dsh/profiles/feishu ~/.dsh/feishu
 | `/schedule` | 列出活跃的提醒 |
 | `/model <provider/model>` | 切换本会话的模型（无参打开选择器） |
 | `/export` | 把会话日志作为文件发出来 |
+| `/log` | 把 dsh-feishu 的日志文件发到本聊天（便于排查问题；提 issue 时建议附上关键日志） |
 | `/sessions` | 列出已保存会话（卡片上可恢复） |
 | `/resume <id>` | 在本聊天恢复一个已保存会话（无参打开会话列表） |
 | `/clear` `/new` | 开新对话（旧会话仍保留） |
