@@ -260,6 +260,8 @@ export const enMessages = {
   'command.cmd.clear.label': '✨ Fresh start',
   'command.cmd.new.label': '➕ New chat',
   'command.cmd.permission.label': '🔐 Permission',
+  'command.cmd.goal.label': '🎯 Goal',
+  'command.cmd.feedback.label': '💬 Feedback',
 
   // ── Command / panel-action feedback ─────────────────────────────────────
   'command.result.stopped': 'Stopped.',

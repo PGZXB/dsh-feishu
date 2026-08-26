@@ -80,7 +80,13 @@ export interface PendingInboundFile {
 
 import type { PanelView } from './panel/types.js';
 
-export { isPanelInputCommand, PANEL_CONFIRM_SPEC, PANEL_INPUT_SPEC } from './panel/types.js';
+export {
+  isPanelInputCommand,
+  panelConfirmCopy,
+  panelInputCopy,
+  PANEL_CONFIRM_SPEC,
+  PANEL_INPUT_SPEC,
+} from './panel/types.js';
 
 import { turnTitle } from './cards/StreamingCardController.js';
 import { t } from './i18n/index.js';

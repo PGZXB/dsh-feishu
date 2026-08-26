@@ -13,8 +13,8 @@ import type { CardAction } from '../../feishu/types.js';
 import { t } from '../../i18n/index.js';
 import {
   isPanelInputCommand,
-  PANEL_CONFIRM_SPEC,
-  PANEL_INPUT_SPEC,
+  panelConfirmCopy,
+  panelInputCopy,
   type PanelInputCommand,
 } from '../types.js';
 import { PanelAction } from './ActionRegistry.js';
@@ -132,7 +132,7 @@ export class PanelInputSubmitAction extends PanelAction {
   }
   protected override busyTitle(_ctx: PanelActionContext, action: CardAction): string {
     const name = action.value.command;
-    if (isPanelInputCommand(name)) return PANEL_INPUT_SPEC[name].title;
+    if (isPanelInputCommand(name)) return panelInputCopy(name).title;
     return t('panel.title');
   }
   protected override work(
@@ -200,7 +200,7 @@ export class PanelInputSubmitAction extends PanelAction {
   private inputValue(action: CardAction): string {
     const commandName = action.value.command;
     if (!isPanelInputCommand(commandName)) return '';
-    const fieldName = PANEL_INPUT_SPEC[commandName].fieldName;
+    const fieldName = panelInputCopy(commandName).fieldName;
     return action.formValue?.[fieldName] ?? '';
   }
 }
@@ -211,7 +211,7 @@ export class PanelConfirmAction extends PanelAction {
   readonly allowedWhileWorking = false;
   protected override busyTitle(_ctx: PanelActionContext, action: CardAction): string {
     const name = action.value.command;
-    if (name === 'clear' || name === 'compact') return PANEL_CONFIRM_SPEC[name].title;
+    if (name === 'clear' || name === 'compact') return panelConfirmCopy(name).title;
     return t('panel.title');
   }
   protected override work(

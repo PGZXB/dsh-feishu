@@ -32,7 +32,7 @@ import { actionValue, buildPanelBusyCard, buildPanelNoticeCard } from '../cards/
 import type { CommandResult } from '../commands.js';
 import type { CardJson, FeishuTransport } from '../feishu/types.js';
 import { t } from '../i18n/index.js';
-import type { PanelView } from './types.js';
+import { isPanelInputCommand, panelConfirmCopy, panelInputCopy, type PanelView } from './types.js';
 
 /** Logger surface the panel needs. */
 export interface PanelLogger {
@@ -74,9 +74,9 @@ function panelViewTitle(view: PanelView): string {
     case 'menu':
       return t('panel.title');
     case 'input':
-      return PANEL_TITLE_BY_INPUT[view.command] ?? t('panel.title');
+      return panelInputTitle(view.command);
     case 'confirm':
-      return view.command === 'clear' ? '✨ New chat' : '🧹 Compact';
+      return panelConfirmCopy(view.command).title;
     case 'sessions':
       return t('sessions.list.title');
     case 'session-detail':
@@ -90,16 +90,11 @@ function panelViewTitle(view: PanelView): string {
   }
 }
 
-/** Input-view titles (mirrors PANEL_INPUT_SPEC in types.ts; kept local so
- *  this module stays free of the spec table's field/placeholder copy). */
-const PANEL_TITLE_BY_INPUT: Record<string, string> = {
-  cd: '📁 Change working directory',
-  group: t('command.cmd.group.label'),
-  goal: '🎯 Goal',
-  feedback: '💬 Feedback',
-  'rename-session': '✏️ Rename session',
-  'find-session': t('sessions.list.find'),
-};
+/** Input-view titles — resolved from the catalog at call time. */
+function panelInputTitle(command: string): string {
+  if (isPanelInputCommand(command)) return panelInputCopy(command).title;
+  return command;
+}
 
 /**
  * The panel state machine controller. One instance per bridge; state is

@@ -11,6 +11,9 @@
  * @module @dsh-feishu/dsh-feishu/panel/types
  */
 
+import { t } from '../i18n/index.js';
+import type { MessageKey } from '../i18n/index.js';
+
 /**
  * The panel card state machine view (single authoritative panel state, one
  * render path — the same rule as `ChatCardState`). `menu` is the root; a
@@ -53,76 +56,118 @@ export function isPanelInputCommand(value: string | undefined): value is PanelIn
   );
 }
 
-/** Text-input sub-view copy per command. */
-export const PANEL_INPUT_SPEC: Record<
-  PanelInputCommand,
-  {
-    readonly title: string;
-    readonly hint: string;
-    readonly fieldName: string;
-    readonly placeholder: string;
-    readonly submitLabel: string;
-  }
-> = {
+/** Static, locale-independent half of the input sub-view spec. */
+interface PanelInputSpecEntry {
+  /** The form field name echoed back to the handler. */
+  readonly fieldName: string;
+  /** Catalog key of the view title. */
+  readonly titleKey: MessageKey;
+  /** Catalog key of the helper line under the title. */
+  readonly hintKey: MessageKey;
+  /** Catalog key of the empty-form placeholder. */
+  readonly placeholderKey: MessageKey;
+  /** Catalog key of the submit button label. */
+  readonly submitKey: MessageKey;
+}
+
+/** Which catalog keys each input command draws its copy from. */
+export const PANEL_INPUT_SPEC: Record<PanelInputCommand, PanelInputSpecEntry> = {
   cd: {
-    title: '📁 Change working directory',
-    hint: 'Send the absolute (or `~`) path to the project directory.',
     fieldName: 'path',
-    placeholder: 'e.g. /home/user/projects/demo',
-    submitLabel: 'Set directory',
+    titleKey: 'command.input.cd.title',
+    hintKey: 'command.input.cd.hint',
+    placeholderKey: 'command.input.cd.placeholder',
+    submitKey: 'command.input.cd.submit',
   },
   group: {
-    title: '👥 New group',
-    hint: 'Send the group name to create and join.',
     fieldName: 'name',
-    placeholder: 'e.g. my team',
-    submitLabel: 'Create group',
+    titleKey: 'command.input.group.title',
+    hintKey: 'command.input.group.hint',
+    placeholderKey: 'command.input.group.placeholder',
+    submitKey: 'command.input.group.submit',
   },
   goal: {
-    title: '🎯 Goal',
-    hint: 'Send the goal text for the ongoing task.',
     fieldName: 'goal',
-    placeholder: 'e.g. fix the build',
-    submitLabel: 'Set goal',
+    titleKey: 'command.input.goal.title',
+    hintKey: 'command.input.goal.hint',
+    placeholderKey: 'command.input.goal.placeholder',
+    submitKey: 'command.input.goal.submit',
   },
   feedback: {
-    title: '💬 Feedback',
-    hint: 'Send your feedback text.',
     fieldName: 'feedback',
-    placeholder: 'Type feedback…',
-    submitLabel: 'Send feedback',
+    titleKey: 'command.input.feedback.title',
+    hintKey: 'command.input.feedback.hint',
+    placeholderKey: 'command.input.feedback.placeholder',
+    submitKey: 'command.input.feedback.submit',
   },
   'rename-session': {
-    title: '✏️ Rename session',
-    hint: 'Send the new title for this session.',
     fieldName: 'title',
-    placeholder: 'New title',
-    submitLabel: 'Rename',
+    titleKey: 'command.input.rename-session.title',
+    hintKey: 'command.input.rename-session.hint',
+    placeholderKey: 'command.input.rename-session.placeholder',
+    submitKey: 'command.input.rename-session.submit',
   },
   'find-session': {
-    title: '🔎 Find session',
-    hint: 'Send a session id or part of its title to filter the list.',
     fieldName: 'query',
-    placeholder: 'e.g. feishu-session-1 or "old project"',
-    submitLabel: 'Find',
+    titleKey: 'command.input.find-session.title',
+    hintKey: 'command.input.find-session.hint',
+    placeholderKey: 'command.input.find-session.placeholder',
+    submitKey: 'command.input.find-session.submit',
   },
 };
 
-/** Confirm sub-view copy per command. */
-export const PANEL_CONFIRM_SPEC: Record<
-  'clear' | 'compact',
-  { readonly title: string; readonly message: string; readonly confirmLabel: string }
-> = {
+/** Resolved copy for an input sub-view (translated at call time). */
+export function panelInputCopy(command: PanelInputCommand): {
+  readonly title: string;
+  readonly hint: string;
+  readonly fieldName: string;
+  readonly placeholder: string;
+  readonly submitLabel: string;
+} {
+  const spec = PANEL_INPUT_SPEC[command];
+  return {
+    fieldName: spec.fieldName,
+    title: t(spec.titleKey),
+    hint: t(spec.hintKey),
+    placeholder: t(spec.placeholderKey),
+    submitLabel: t(spec.submitKey),
+  };
+}
+
+/** Static, locale-independent half of the confirm sub-view spec. */
+interface PanelConfirmSpecEntry {
+  /** Catalog key of the view title. */
+  readonly titleKey: MessageKey;
+  /** Catalog key of the question body. */
+  readonly messageKey: MessageKey;
+  /** Catalog key of the confirm button label. */
+  readonly confirmKey: MessageKey;
+}
+
+/** Which catalog keys each confirm command draws its copy from. */
+export const PANEL_CONFIRM_SPEC: Record<'clear' | 'compact', PanelConfirmSpecEntry> = {
   clear: {
-    title: '✨ New chat',
-    message:
-      'Start a NEW conversation? The previous session stays saved (resumable via /sessions).',
-    confirmLabel: 'Start new chat',
+    titleKey: 'command.confirm.clear.title',
+    messageKey: 'command.confirm.clear.message',
+    confirmKey: 'command.confirm.clear.submit',
   },
   compact: {
-    title: '🧹 Compact',
-    message:
-      'Compact older conversation history into a summary? The chat is unavailable while it runs.',
-    confirmLabel: 'Compact now',
+    titleKey: 'command.confirm.compact.title',
+    messageKey: 'command.confirm.compact.message',
+    confirmKey: 'command.confirm.compact.submit',
   },
 };
+
+/** Resolved copy for a confirm sub-view (translated at call time). */
+export function panelConfirmCopy(command: 'clear' | 'compact'): {
+  readonly title: string;
+  readonly message: string;
+  readonly confirmLabel: string;
+} {
+  const spec = PANEL_CONFIRM_SPEC[command];
+  return {
+    title: t(spec.titleKey),
+    message: t(spec.messageKey),
+    confirmLabel: t(spec.confirmKey),
+  };
+}

@@ -22,7 +22,7 @@ import {
 import { buildSessionDetailCard, buildSessionsCard } from '../../cards/session-list.js';
 import type { CardJson } from '../../feishu/types.js';
 import { t } from '../../i18n/index.js';
-import { PANEL_CONFIRM_SPEC, PANEL_INPUT_SPEC, type PanelView } from '../types.js';
+import { panelConfirmCopy, panelInputCopy, type PanelView } from '../types.js';
 import type { PanelViewContext } from './PanelViewContext.js';
 import type { PanelViewState } from './PanelViewState.js';
 
@@ -42,7 +42,7 @@ export class InputViewState implements PanelViewState {
   readonly asyncData = false;
   render(_ctx: PanelViewContext, _chatId: string, view: PanelView): Promise<CardJson> {
     if (view.kind !== 'input') return Promise.resolve(this.fallback());
-    const spec = PANEL_INPUT_SPEC[view.command];
+    const spec = panelInputCopy(view.command);
     return Promise.resolve(
       buildInputCard({
         title: spec.title,
@@ -76,7 +76,7 @@ export class ConfirmViewState implements PanelViewState {
   readonly asyncData = false;
   render(_ctx: PanelViewContext, _chatId: string, view: PanelView): Promise<CardJson> {
     if (view.kind !== 'confirm') return Promise.resolve(this.fallback());
-    const spec = PANEL_CONFIRM_SPEC[view.command];
+    const spec = panelConfirmCopy(view.command);
     return Promise.resolve(
       buildConfirmCard({
         title: spec.title,

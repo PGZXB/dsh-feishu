@@ -56,18 +56,18 @@ const HARNESS_COMMANDS: ReadonlyArray<{
     name: 'goal',
     description: 'Set or view the goal for a long-running task',
     usage: '<text>',
-    buttonLabel: '🎯 Goal',
+    buttonLabel: t('command.cmd.goal.label'),
   },
   {
     name: 'compact',
     description: 'Compact older conversation history',
-    buttonLabel: '🧹 Compact',
+    buttonLabel: t('command.confirm.compact.title'),
   },
   {
     name: 'feedback',
     description: 'Send feedback',
     usage: '<text>',
-    buttonLabel: '💬 Feedback',
+    buttonLabel: t('command.cmd.feedback.label'),
   },
 ];
 
