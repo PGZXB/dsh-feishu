@@ -216,7 +216,7 @@ describe('buildCard', () => {
       content: '',
       rows: [],
       status: 'error',
-      errorText: "The model has no API key — the bot can't reach the LLM.",
+      errorText: 'MISSING_CREDENTIAL: llm-deepseek: no API key',
     });
     const cardJson = JSON.stringify(card.elements);
     expect(cardJson).toContain('no API key');

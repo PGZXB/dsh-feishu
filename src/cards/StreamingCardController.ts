@@ -139,43 +139,29 @@ export interface ChatCardState {
 }
 
 /**
- * Map a turn-failure error to a friendly, actionable message the USER can
- * act on (or relay to the bot admin). The generic "see the card for details"
- * card told no one what broke; a MISSING_CREDENTIAL tells the admin exactly
- * what to fix, and an unknown error stays the raw message so a reporter can
- * share it verbatim.
+ * Build the turn-failure reason shown on the error card.
  *
- * Guarantee: this NEVER returns an empty string — a turn failure must always
- * surface SOMETHING concrete. A blank `message` falls back to the error code,
- * and a blank code to an explicit "check the bot log" instruction (still more
- * useful than a dead end).
+ * This is a UX/UI hook, NOT a curated friendly copy: for now it returns the
+ * provider's raw `code: message` so the card is honest and diagnosable. A
+ * future UX pass decides how error codes map to friendly copy and how the
+ * text is written — here we only guarantee a non-empty result (a turn failure
+ * must always surface something concrete).
  * @param error - the turn-failure error (`reason.error` on a `turn/end`
  *   event): `code` is the stable category, `message` the provider text.
- * @returns a non-empty user-facing explanation.
+ * @returns a non-empty `code: message` explanation.
  */
 export function friendlyTurnError(error: { code?: string; message: string }): string {
   const code = error.code ?? '';
   const message = error.message.trim();
-  if (code === 'MISSING_CREDENTIAL' || /no API key/i.test(message)) {
-    return (
-      "The model has no API key — the bot can't reach the LLM. " +
-      'Ask the bot admin to configure one (e.g. DEEPSEEK_API_KEY).'
-    );
-  }
-  if (code === 'NO_ADAPTER' || /no adapter/i.test(message)) {
-    return (
-      "The selected model/provider isn't available. " +
-      'Ask the bot admin to check the model configuration.'
-    );
-  }
-  if (code === 'AgentPresetConflict') {
-    return "The chosen preset was changed mid-session and can't be applied. Start a fresh session and pick the preset again.";
-  }
+  // This is a UX/UI hook — NOT a curated friendly copy. For now it returns the
+  // provider's raw `code: message` so the card is honest and diagnosable; a
+  // future UX pass decides how errors map to friendly copy and how the text is
+  // written. Here we only guarantee it never surfaces a meaningless empty
+  // string (a turn failure must always show something concrete).
+  if (code !== '' && message !== '') return `${code}: ${message}`;
+  if (code !== '') return code;
   if (message !== '') return message;
-  if (code !== '') {
-    return `The turn failed (error ${code}). Ask the bot admin to check the bot log.`;
-  }
-  return 'The turn failed for an unspecified reason. Ask the bot admin to check the bot log.';
+  return 'The turn failed with an unspecified error.';
 }
 
 /** Session-scoped cumulative usage folded from the event stream (exact

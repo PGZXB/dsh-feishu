@@ -322,36 +322,28 @@ describe('StreamingCardController', () => {
 });
 
 describe('friendlyTurnError', () => {
-  it('names a missing credential as the actionable cause', () => {
+  it('returns the raw code and message (UX hook, no curated copy yet)', () => {
     expect(
       friendlyTurnError({ code: 'MISSING_CREDENTIAL', message: 'llm-deepseek: no API key' }),
-    ).toContain('no API key');
-    expect(
-      friendlyTurnError({ code: 'MISSING_CREDENTIAL', message: 'llm-deepseek: no API key' }),
-    ).toContain('DEEPSEEK_API_KEY');
-  });
-
-  it('names a missing adapter as the model-config cause', () => {
-    expect(friendlyTurnError({ code: 'NO_ADAPTER', message: 'no adapter' })).toContain(
-      'model/provider',
+    ).toBe('MISSING_CREDENTIAL: llm-deepseek: no API key');
+    expect(friendlyTurnError({ code: 'NO_ADAPTER', message: 'no adapter' })).toBe(
+      'NO_ADAPTER: no adapter',
     );
   });
 
-  it('returns the raw message verbatim for an unknown error', () => {
-    expect(friendlyTurnError({ code: 'SOMETHING_ELSE', message: 'the sandbox exploded' })).toBe(
+  it('falls back to the message when the code is blank', () => {
+    expect(friendlyTurnError({ code: '', message: 'the sandbox exploded' })).toBe(
       'the sandbox exploded',
     );
   });
 
   it('falls back to the code when the message is blank', () => {
-    expect(friendlyTurnError({ code: 'E_BOOM', message: '  ' })).toContain('E_BOOM');
-    expect(friendlyTurnError({ code: 'E_BOOM', message: '  ' })).toContain('bot log');
+    expect(friendlyTurnError({ code: 'E_BOOM', message: '  ' })).toBe('E_BOOM');
   });
 
   it('never returns an empty string, even with no code and no message', () => {
     const text = friendlyTurnError({ code: '', message: '' });
     expect(text.trim()).not.toBe('');
-    expect(text).toContain('bot log');
   });
 });
 
