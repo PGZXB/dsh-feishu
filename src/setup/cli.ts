@@ -30,7 +30,6 @@ import {
   FEISHU_MANIFEST,
   SCOPES,
 } from './manifest.js';
-import { findModelKey, MODEL_KEY_ENV, upsertModelKey } from './model-key.js';
 import { fetchOpenPlatformAppSecret, listOpenPlatformApps } from './payloads.js';
 import {
   dshHome,
@@ -141,11 +140,6 @@ creates/reconfigures the app, subscribes im.message.receive_v1 and
 card.action.trigger over the long connection, grants the scopes
 (${SCOPES.join(', ')}), publishes a version, and writes appId/appSecret into
 the profile's cordis.patch.yml (backed up first).
-
-Interactive runs also offer an optional model API key step: DEEPSEEK_API_KEY
-is stored into <dsh-home>/.env and picked up at the next boot; the step is
-skipped when a key is already configured — an exported key or one saved by
-the DSH web Models page always wins.
 `;
 
 function log(message: string): void {
@@ -294,33 +288,6 @@ async function deliverCredentials(
   }
 }
 
-/**
- * Offer the optional model API key step and store the answer into the dsh
- * home's user env layer (`<dsh-home>/.env`) — which dsh loads into the
- * ambient environment at boot, from where the plugin's boot promotion stores
- * it into the credentials seam through the seam interface (resolve first, so
- * an explicitly exported or web-configured key always wins). Skips when the
- * key is already detected (ambient environment or a previous run), in
- * `--print-env` mode (which writes nothing by contract), and on non-TTY runs.
- * @param options - parsed CLI options.
- */
-async function maybeStoreModelKey(options: CliOptions): Promise<void> {
-  if (options.printEnv || !process.stdin.isTTY) return;
-  const existing = findModelKey(options.dshHomeDir);
-  if (existing !== undefined) {
-    log(`model API key already configured (${existing}) — skipping`);
-    return;
-  }
-  const key = await prompt(`Model API key (${MODEL_KEY_ENV}, press Enter to skip): `);
-  if (key === '') return;
-  const result = upsertModelKey(options.dshHomeDir, key);
-  if (result.changed) {
-    log(`stored ${MODEL_KEY_ENV} into ${result.path} — picked up at the next boot`);
-  } else {
-    log(`${MODEL_KEY_ENV} already present in ${result.path}`);
-  }
-}
-
 /** Print the manual web-console checklist (used by the fallback path). */
 function printManualChecklist(appId: string): void {
   process.stderr.write(`\nRemaining steps in the Feishu Open Platform console for ${appId}:\n`);
@@ -355,7 +322,6 @@ async function runManualSetup(options: CliOptions): Promise<void> {
     throw new Error(`credentials look invalid: ${validation.message ?? 'unknown error'}`);
   }
   await deliverCredentials(options, { appId, appSecret });
-  await maybeStoreModelKey(options);
   printManualChecklist(appId);
 
   const manifestPath = join(process.cwd(), 'feishu-manifest.json');
@@ -467,7 +433,6 @@ async function runAutoSetup(options: CliOptions): Promise<void> {
   }
 
   await deliverCredentials(options, { appId, appSecret });
-  await maybeStoreModelKey(options);
 
   if (options.verifyBoot) {
     log('verifying the boot…');

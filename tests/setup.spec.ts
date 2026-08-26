@@ -6,7 +6,7 @@
  * console is never exercised here.
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,12 +36,6 @@ import {
   LONG_CONNECTION_EVENT_MODE,
   SCOPES,
 } from '../src/setup/manifest.js';
-import {
-  findModelKey,
-  MODEL_KEY_ENV,
-  modelKeyEnvPath,
-  upsertModelKey,
-} from '../src/setup/model-key.js';
 import {
   buildAppVersionCreatePayload,
   buildCallbackSubscriptionPayload,
@@ -778,60 +772,6 @@ describe('avatar resolution', () => {
     };
     expect(manifest.files).toContain('docs/assets/default-avatar.png');
     expect(existsSync(DEFAULT_AVATAR_PATH)).toBe(true);
-  });
-});
-
-describe('model api key (probe + .env upsert)', () => {
-  it('finds an explicitly exported key first', () => {
-    const home = tempDir();
-    expect(findModelKey(home, { [MODEL_KEY_ENV]: 'sk-env' })).toBe('environment');
-  });
-
-  it('finds a key from a previous setup run in the user env layer', () => {
-    const home = tempDir();
-    expect(findModelKey(home, {})).toBeUndefined();
-    upsertModelKey(home, 'sk-prev');
-    expect(findModelKey(home, {})).toBe('previous-run');
-  });
-
-  it('creates .env with owner-only permissions when missing', () => {
-    const home = tempDir();
-    expect(upsertModelKey(home, 'sk-test-1').changed).toBe(true);
-    const path = modelKeyEnvPath(home);
-    expect(readFileSync(path, 'utf8')).toBe(`${MODEL_KEY_ENV}=sk-test-1\n`);
-    expect(statSync(path).mode & 0o777).toBe(0o600);
-  });
-
-  it('appends to an existing .env preserving every other line', () => {
-    const home = tempDir();
-    const path = modelKeyEnvPath(home);
-    writeFileSync(path, 'FOO=bar\nBAZ=qux', 'utf8'); // no trailing newline on purpose
-    expect(upsertModelKey(home, 'sk-test-2').changed).toBe(true);
-    const content = readFileSync(path, 'utf8');
-    expect(content).toContain('FOO=bar\n');
-    expect(content).toContain('BAZ=qux');
-    expect(content).toContain(`${MODEL_KEY_ENV}=sk-test-2`);
-  });
-
-  it('replaces a different existing value without duplicating the line', () => {
-    const home = tempDir();
-    const path = modelKeyEnvPath(home);
-    writeFileSync(path, `${MODEL_KEY_ENV}=sk-old\nKEEP=1\n`, 'utf8');
-    expect(upsertModelKey(home, 'sk-new').changed).toBe(true);
-    const lines = readFileSync(path, 'utf8').split('\n');
-    expect(lines.filter((l) => l.startsWith(`${MODEL_KEY_ENV}=`))).toEqual([
-      `${MODEL_KEY_ENV}=sk-new`,
-    ]);
-    expect(lines).toContain('KEEP=1');
-  });
-
-  it('reports unchanged when the same value is already present', () => {
-    const home = tempDir();
-    upsertModelKey(home, 'sk-same');
-    const path = modelKeyEnvPath(home);
-    const before = readFileSync(path, 'utf8');
-    expect(upsertModelKey(home, 'sk-same').changed).toBe(false);
-    expect(readFileSync(path, 'utf8')).toBe(before);
   });
 });
 
