@@ -143,6 +143,22 @@ The harness sandbox (and this checkout's environment) has specific rules:
 - **`pnpm run <script> -- <args>` forwards the `--` verbatim on pnpm ≥ 11.**
   The script receives `-- --new …` and rejects `--` as an unknown option.
   CLI arg parsers must skip a leading `--` run-argument separator.
+- **Harness `@deepseek-ai/*` packages must be `peerDependencies`, never
+  `dependencies`.** Listing a harness core package (e.g. `dsh-tools`,
+  `dsh-llm`, `dsh-storage` ×3, `dsh-workspace`) in `dependencies` makes pnpm
+  place a REAL physical copy in the profile's `node_modules`, shadowing the
+  dsh host's flat symlink fallback — the same package loads twice in one
+  process. Module-identity state keyed by a module-local Symbol (the
+  `dsh-tools` tool-runtime scheduler) mismatches between the two copies, so a
+  tool call crashes with
+  `Cannot read properties of undefined (reading 'prepare')`, and the
+  interrupted turn leaves a dangling `tool_calls` that the provider rejects as
+  `INVALID_REQUEST` on the next request. Text-only replies work; any reply
+  that calls a tool fails. Fix: move the harness package to
+  `peerDependencies` so the host supplies one instance (the dsh-TUI surface
+  keeps every `@deepseek-ai/*` package out of `dependencies`, including
+  `@deepseek-ai/schemastery`). Guarded by the `check-conventions.mjs`
+  "@deepseek-ai packages are peerDependencies" check.
 
 ## Mention gate
 

@@ -128,6 +128,19 @@ harness 沙箱（以及本 checkout 的环境）有一些特定规则：
 - **pnpm ≥ 11 会把 `pnpm run <script> -- <args>` 中的 `--` 原样转发。**
   脚本收到 `-- --new …`，把 `--` 当作未知选项拒绝。CLI 参数解析必须跳过
   开头的 `--` 运行参数分隔符。
+- **harness 的 `@deepseek-ai/*` 包必须放 `peerDependencies`，绝不能放
+  `dependencies`。** 把 harness 核心包（如 `dsh-tools`、`dsh-llm`、
+  `dsh-storage`×3、`dsh-workspace`）写进 `dependencies`，会让 pnpm 在
+  profile 的 `node_modules` 里装一份**真实物理副本**，遮蔽 dsh 宿主的扁平
+  symlink 回退目录 —— 同一包在单进程里被加载两次。靠模块内局部 Symbol 键
+  存的"模块身份"状态（`dsh-tools` 的工具调度器）在两份拷贝之间不一致，于是
+  调用工具时报 `Cannot read properties of undefined (reading 'prepare')`，
+  中断的回合又在会话尾部留下一条没有工具回复的 `tool_calls`，下次请求被
+  provider 以 `INVALID_REQUEST` 拒绝。纯文本回复正常，任何调用工具的回复都失败。
+  修法：把该 harness 包移到 `peerDependencies`，让宿主提供单实例（dsh-TUI
+  把每个 `@deepseek-ai/*` 包（含 `@deepseek-ai/schemastery`）都移出
+  `dependencies`）。由 `check-conventions.mjs` 的 "@deepseek-ai packages are
+  peerDependencies" 检查把关。
 
 ## 提及门禁（mention gate）
 

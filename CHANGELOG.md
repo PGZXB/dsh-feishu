@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Tool calls crashed ("Cannot read properties of undefined (reading
+  'prepare')") when installed from npm.** dsh-feishu listed harness core
+  packages (`@deepseek-ai/dsh-llm`, `dsh-storage` ×3, `dsh-tools`,
+  `dsh-workspace`) under `dependencies` instead of `peerDependencies`. pnpm
+  then placed a real physical copy of each in the profile's `node_modules`,
+  shadowing the dsh host's flat symlink fallback — the same package loaded
+  twice in one process, and module-identity state keyed by a module-local
+  Symbol (the `dsh-tools` scheduler) mismatched between the copies, so tool
+  calls threw `undefined (reading 'prepare')` and the ensuing dangling
+  `tool_calls` produced `INVALID_REQUEST`. These packages are now
+  `peerDependencies` (the host supplies one instance); following the dsh-TUI
+  surface, every `@deepseek-ai/*` package stays out of `dependencies`, and a
+  convention check fails if one ever returns.
 - **Message-queue: queued non-steer messages open their streaming card.** A
   message arriving while a turn runs was appended to the agent inbox's
   `nextTurn` list, which the agent loop auto-claims at its own step boundary —
