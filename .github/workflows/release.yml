@@ -91,5 +91,4 @@ jobs:
           tag="${{ github.ref_name }}"
           gh release create "$tag" \
             --title "dsh-feishu $tag" \
-            --notes "See [CHANGELOG.md](CHANGELOG.md) for what changed in this release." \
             --generate-notes
