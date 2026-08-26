@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Quick setup from npm produced a bot without the default avatar.** The
+  bundled avatar lives at `docs/assets/default-avatar.png`, but the package
+  `files` whitelist only published `lib/` + manifests — so in an npm install
+  the avatar path did not exist and `resolveAvatarBuffer` silently fell back
+  to the solid-color placeholder (a source checkout worked, masking it). The
+  avatar file is now listed individually in `files` (not the whole `docs/`
+  directory), with a pack-shape regression test guarding the whitelist.
 - **Tool calls crashed ("Cannot read properties of undefined (reading
   'prepare')") when installed from npm.** dsh-feishu listed harness core
   packages (`@deepseek-ai/dsh-llm`, `dsh-storage` ×3, `dsh-tools`,

@@ -94,8 +94,11 @@ export function makePlaceholderIconPng(
 /**
  * The bundled default avatar (serif "dsh" wordmark on the Feishu blue
  * gradient card). Resolved relative to the built lib/ so it works both from
- * a checkout and from an installed npm package (the `docs` directory ships
- * in the package `files`).
+ * a checkout and from an installed npm package — the file is listed
+ * individually in the package `files` (NOT the whole `docs/` directory).
+ * If it is ever dropped from `files`, `resolveAvatarBuffer` silently falls
+ * back to the solid-color placeholder — the pack test in tests/setup.spec.ts
+ * guards this.
  */
 export const DEFAULT_AVATAR_PATH = fileURLToPath(
   new URL('../../docs/assets/default-avatar.png', import.meta.url),
