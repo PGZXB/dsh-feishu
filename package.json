@@ -1,6 +1,6 @@
 {
   "name": "@dsh-feishu/dsh-feishu",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "The Feishu UI for DeepSeek Harness (dsh) — a dsh-native plugin: live streaming cards, in-card questions & approvals, one-QR setup.",
   "type": "module",
   "main": "lib/index.js",
