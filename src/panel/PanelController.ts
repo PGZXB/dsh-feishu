@@ -32,7 +32,7 @@ import { actionValue, buildPanelBusyCard, buildPanelNoticeCard } from '../cards/
 import type { CommandResult } from '../commands.js';
 import type { CardJson, FeishuTransport } from '../feishu/types.js';
 import { t } from '../i18n/index.js';
-import { isPanelInputCommand, panelConfirmCopy, panelInputCopy, type PanelView } from './types.js';
+import { isPanelInputCommand, type PanelView, panelConfirmCopy, panelInputCopy } from './types.js';
 
 /** Logger surface the panel needs. */
 export interface PanelLogger {

@@ -22,7 +22,7 @@ import {
 import { buildSessionDetailCard, buildSessionsCard } from '../../cards/session-list.js';
 import type { CardJson } from '../../feishu/types.js';
 import { t } from '../../i18n/index.js';
-import { panelConfirmCopy, panelInputCopy, type PanelView } from '../types.js';
+import { type PanelView, panelConfirmCopy, panelInputCopy } from '../types.js';
 import type { PanelViewContext } from './PanelViewContext.js';
 import type { PanelViewState } from './PanelViewState.js';
 

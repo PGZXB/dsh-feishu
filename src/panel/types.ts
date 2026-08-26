@@ -11,8 +11,8 @@
  * @module @dsh-feishu/dsh-feishu/panel/types
  */
 
-import { t } from '../i18n/index.js';
 import type { MessageKey } from '../i18n/index.js';
+import { t } from '../i18n/index.js';
 
 /**
  * The panel card state machine view (single authoritative panel state, one

@@ -13,9 +13,9 @@ import type { CardAction } from '../../feishu/types.js';
 import { t } from '../../i18n/index.js';
 import {
   isPanelInputCommand,
+  type PanelInputCommand,
   panelConfirmCopy,
   panelInputCopy,
-  type PanelInputCommand,
 } from '../types.js';
 import { PanelAction } from './ActionRegistry.js';
 import type { PanelActionContext } from './PanelAction.js';
