@@ -82,10 +82,10 @@ import type { PanelView } from './panel/types.js';
 
 export {
   isPanelInputCommand,
-  panelConfirmCopy,
-  panelInputCopy,
   PANEL_CONFIRM_SPEC,
   PANEL_INPUT_SPEC,
+  panelConfirmCopy,
+  panelInputCopy,
 } from './panel/types.js';
 
 import { turnTitle } from './cards/StreamingCardController.js';
@@ -850,10 +850,7 @@ export class Bridge {
       return;
     }
     this.options.logger.debug(`unknown command ${line}: replying with help hint`);
-    await this.options.transport.sendText(
-      message.chatId,
-      t('command.unknown', { line }),
-    );
+    await this.options.transport.sendText(message.chatId, t('command.unknown', { line }));
   }
 
   /** Send a command result as a text message (empty text posts no message). */
@@ -984,10 +981,7 @@ export class Bridge {
     // previous binding — if any — is detached).
     this.options.sessionMap.set(chatId, sessionId);
     this.resetChatState(chatId);
-    const hint =
-      this.options.sessionMap.cwdFor(chatId) === undefined
-        ? t('resume.noCwdHint')
-        : '';
+    const hint = this.options.sessionMap.cwdFor(chatId) === undefined ? t('resume.noCwdHint') : '';
     return {
       kind: 'success',
       text: t('resume.success', { sessionId }) + hint,
@@ -1116,15 +1110,13 @@ export class Bridge {
       const fileName = `session-${sessionId}.md`;
       await this.options.transport.sendFile(chatId, fileName, new TextEncoder().encode(transcript));
       return {
-      kind: 'success',
-      text: t('command.info.exportedEvents', { count: log.events.length, file: fileName }),
-    };
+        kind: 'success',
+        text: t('command.info.exportedEvents', { count: log.events.length, file: fileName }),
+      };
     } catch (error: unknown) {
       this.options.logger.warn(`session export failed: ${String(error)}`);
       const detail = String(error);
-      const scopeHint = detail.includes('im:resource')
-        ? t('inbound.unavailableUploadScope')
-        : '';
+      const scopeHint = detail.includes('im:resource') ? t('inbound.unavailableUploadScope') : '';
       return { kind: 'error', text: t('command.error.exportFailed', { detail }) + scopeHint };
     }
   }
@@ -1404,10 +1396,7 @@ export class Bridge {
       this.options.logger.debug(
         `message ${message.messageId}: refused by working-directory gate (no cwd)`,
       );
-      await this.options.transport.sendText(
-        message.chatId,
-        t('gate.workingDirRequired'),
-      );
+      await this.options.transport.sendText(message.chatId, t('gate.workingDirRequired'));
       return;
     }
     // The message-queue gate: a message that arrives while a turn is running
