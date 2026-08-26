@@ -17,6 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `transport.sendFile` — English label, since the surface is not i18n yet.
   The raw log (not a compressed archive) is sent so Feishu renders it
   readably, letting a user forward it to the bot admin for diagnosis.
+- **Quick setup offers the model API key.** `dsh-feishu-setup` now asks for
+  `DEEPSEEK_API_KEY` (optional; Enter skips) after writing the app
+  credentials — DSH web saves that key through its Models page, which a
+  Feishu-only user never opens, so until now a headless setup produced a bot
+  whose every turn failed with the raw LLM auth error. The answer lands in
+  `<dsh-home>/.env`, which dsh loads into the environment at every boot; the
+  plugin's existing boot promotion then stores it into the dsh credentials
+  seam — the same place the Models page writes — through the seam interface
+  (no storage-format coupling). An explicitly exported key or one already
+  saved by DSH web always wins, and the step is skipped entirely when a key
+  is detected in the environment or saved by an earlier setup run.
 
 ### Fixed
 
