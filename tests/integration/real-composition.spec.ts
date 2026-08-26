@@ -112,6 +112,17 @@ function writeAction(action: unknown): void {
   );
 }
 
+/** The message id of the chat's streaming card — the message a toggle
+ *  click must carry (`context.open_message_id`). The streaming card is the
+ *  one patched in place (`updateCard` → 'patch' records carry its id);
+ *  other cards (details, panel) are sent once and never patched, so the
+ *  last 'patch' record's message id names the streaming card. A mismatched
+ *  id now fails loud instead of cross-wiring the latest card. */
+function streamingCardMessageId(): string | undefined {
+  const patches = readOutbox().filter((r) => r.kind === 'patch');
+  return patches.at(-1)?.messageId;
+}
+
 /** Pin the chat's working directory via /cd (the gate refuses turns until
  *  an explicit directory is chosen). */
 async function pinWorkingDir(chatId: string): Promise<void> {
@@ -500,10 +511,14 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         ),
       ).toBe(true);
 
-      // Expand → full rows visible (column_set row elements).
+      // Expand → full rows visible (column_set row elements). The callback
+      // carries the LIVE card's own message id (read from the rendered
+      // card); a mismatched id now fails loud instead of cross-wiring.
       const patchCountBeforeExpand = readOutbox().filter((r) => r.kind === 'patch').length;
+      const liveCardId = streamingCardMessageId();
+      expect(liveCardId).toBeDefined();
       writeAction({
-        messageId: 'mem-1',
+        messageId: liveCardId,
         chatId,
         operatorOpenId: 'ou_mock',
         value: { kind: 'toggle-rows' },
@@ -568,9 +583,9 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         false,
       );
 
-      // Collapse again → back to the sequence line.
+      // Collapse again → back to the sequence line (same live card id).
       writeAction({
-        messageId: 'mem-1',
+        messageId: streamingCardMessageId(),
         chatId,
         operatorOpenId: 'ou_mock',
         value: { kind: 'toggle-rows' },
