@@ -31,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Context-occupancy group shown 100% after a few messages.** The occupancy
+  percentage used the CUMULATIVE session token sum (input + output billed
+  across every step) as "used context"; each step re-sends the growing
+  context, so the sum over-counts and hits 100% after only a few messages.
+  It now uses the CURRENT context size (the latest request's input +
+  cache-read tokens), tracked per step, so the `context N%` group reflects the
+  real fill of the model's window.
 - **Quick setup from npm produced a bot without the default avatar.** The
   bundled avatar lives at `docs/assets/default-avatar.png`, but the package
   `files` whitelist only published `lib/` + manifests — so in an npm install

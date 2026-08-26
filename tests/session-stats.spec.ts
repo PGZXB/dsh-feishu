@@ -91,6 +91,7 @@ function makeController(cwd: string): {
       cacheWriteTokens: number;
     };
     contextWindow: number | undefined;
+    currentContextTokens: number | undefined;
   };
 } {
   const transport = new RecordingTransport();
@@ -129,6 +130,7 @@ function makeController(cwd: string): {
             cacheWriteTokens: number;
           };
           contextWindow: number | undefined;
+          currentContextTokens: number | undefined;
         };
       }
     ).sessionStatsFor(chatId);
@@ -179,6 +181,7 @@ describe('statsGrouperText', () => {
         cacheWriteTokens: 0,
       },
       contextWindow: 128_000,
+      currentContextTokens: 800,
     });
     expect(text).toContain('2 turns · 3 steps · 1 tools');
     expect(text).toContain('cache 38%');
@@ -194,6 +197,7 @@ describe('statsGrouperText', () => {
         toolCount: 0,
         tokenUsage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
         contextWindow: 128_000,
+        currentContextTokens: undefined,
       }),
     ).toBe('');
   });
@@ -205,6 +209,7 @@ describe('statsGrouperText', () => {
       toolCount: 0,
       tokenUsage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
       contextWindow: undefined,
+      currentContextTokens: 100,
     });
     expect(text).not.toContain('context');
     expect(text).toContain('1 turns · 1 steps');
@@ -217,6 +222,7 @@ describe('statsGrouperText', () => {
       toolCount: 0,
       tokenUsage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
       contextWindow: 128_000,
+      currentContextTokens: undefined,
     });
     expect(text).toBe('1 turns · 1 steps');
   });
@@ -233,6 +239,7 @@ describe('statsGrouperText', () => {
         cacheWriteTokens: 0,
       },
       contextWindow: undefined,
+      currentContextTokens: undefined,
     });
     expect(text).toContain('input 12.2K · output 1.2M');
   });
@@ -265,6 +272,9 @@ describe('StreamingCardController session stats accumulation', () => {
     expect(stats.tokenUsage.inputTokens).toBe(300);
     expect(stats.tokenUsage.outputTokens).toBe(80);
     expect(stats.tokenUsage.cacheReadTokens).toBe(40);
+    // The CURRENT context size is the LAST request's input+cacheRead (240),
+    // not the cumulative sum (would over-count and hit 100% early).
+    expect(stats.currentContextTokens).toBe(240);
   });
 
   it('a step with no usage contributes no tokens', async () => {
