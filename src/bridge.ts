@@ -756,10 +756,8 @@ export class Bridge {
       );
       await this.options.transport.sendText(
         message.chatId,
-        `⚠️ I can't process messages of type \`${message.unsupportedType}\` yet.` +
-          (message.unsupportedType === 'folder'
-            ? ' Folder contents cannot be downloaded via the API — please send the files individually or as a zip archive instead.'
-            : ''),
+        t('inbound.unsupportedType', { type: message.unsupportedType }) +
+          (message.unsupportedType === 'folder' ? t('inbound.folderNote') : ''),
       );
       return;
     }
@@ -854,7 +852,7 @@ export class Bridge {
     this.options.logger.debug(`unknown command ${line}: replying with help hint`);
     await this.options.transport.sendText(
       message.chatId,
-      `Unknown command ${line} — send /help to list commands.`,
+      t('command.unknown', { line }),
     );
   }
 
@@ -951,13 +949,13 @@ export class Bridge {
       return { kind: 'error', text: 'a turn is running — stop it first.' };
     }
     if (this.options.sessionMap.get(chatId) === sessionId) {
-      return { kind: 'error', text: `session ${sessionId} is already active in this chat.` };
+      return { kind: 'error', text: t('resume.error.sessionBusy', { sessionId }) };
     }
     const agent = this.options.agentStore.get(sessionId);
     if (agent !== undefined && agent.status === 'running') {
       return {
         kind: 'error',
-        text: `session ${sessionId} has an active turn — stop it in its chat first.`,
+        text: t('resume.error.sessionTurnRunning', { sessionId }),
       };
     }
     if (agent === undefined) {
@@ -988,11 +986,11 @@ export class Bridge {
     this.resetChatState(chatId);
     const hint =
       this.options.sessionMap.cwdFor(chatId) === undefined
-        ? ' This chat has no working directory — pick one with /repo or /cd before sending a message.'
+        ? t('resume.noCwdHint')
         : '';
     return {
       kind: 'success',
-      text: `Resumed session ${sessionId} — send a message to continue it.${hint}`,
+      text: t('resume.success', { sessionId }) + hint,
     };
   }
 
@@ -1117,14 +1115,17 @@ export class Bridge {
       const transcript = buildSessionExport(log.events);
       const fileName = `session-${sessionId}.md`;
       await this.options.transport.sendFile(chatId, fileName, new TextEncoder().encode(transcript));
-      return { kind: 'success', text: `Exported ${log.events.length} events to ${fileName}.` };
+      return {
+      kind: 'success',
+      text: t('command.info.exportedEvents', { count: log.events.length, file: fileName }),
+    };
     } catch (error: unknown) {
       this.options.logger.warn(`session export failed: ${String(error)}`);
       const detail = String(error);
       const scopeHint = detail.includes('im:resource')
-        ? ' — the Feishu app needs the im:resource:upload permission scope (developer console → Permissions).'
+        ? t('inbound.unavailableUploadScope')
         : '';
-      return { kind: 'error', text: `session export failed: ${detail}${scopeHint}` };
+      return { kind: 'error', text: t('command.error.exportFailed', { detail }) + scopeHint };
     }
   }
 
@@ -1405,8 +1406,7 @@ export class Bridge {
       );
       await this.options.transport.sendText(
         message.chatId,
-        '⚠️ No working directory chosen yet — DSH won’t start work here until you pick one. ' +
-          'Send /repo to choose a project, or /cd <path> to set a directory.',
+        t('gate.workingDirRequired'),
       );
       return;
     }
@@ -1706,7 +1706,7 @@ export class Bridge {
     if (entry.status === 'queued' || entry.status === 'editing') {
       entry.status = 'sent';
     }
-    await this.options.transport.sendText(chatId, '⚠️ That queued message was already consumed.');
+    await this.options.transport.sendText(chatId, t('queue.alreadyConsumed'));
     await this.renderQueueItem(chatId, itemId, entry);
   }
 
