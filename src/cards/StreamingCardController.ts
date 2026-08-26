@@ -133,6 +133,35 @@ export interface ChatCardState {
    *  turn via write/edit mutations (from `tool/result` `meta.diffs`).
    *  Reset on turn start; the final card chips render from it. */
   producedPaths: string[];
+  /** A friendly, actionable explanation of the last turn failure, or
+   *  `undefined` when the last turn didn't fail. Reset on turn start. */
+  errorText: string | undefined;
+}
+
+/**
+ * Build the turn-failure reason shown on the error card.
+ *
+ * This is a UX/UI hook, NOT a curated friendly copy: for now it returns the
+ * provider's raw `code: message` so the card is honest and diagnosable. A
+ * future UX pass decides how error codes map to friendly copy and how the
+ * text is written — here we only guarantee a non-empty result (a turn failure
+ * must always surface something concrete).
+ * @param error - the turn-failure error (`reason.error` on a `turn/end`
+ *   event): `code` is the stable category, `message` the provider text.
+ * @returns a non-empty `code: message` explanation.
+ */
+export function friendlyTurnError(error: { code?: string; message: string }): string {
+  const code = error.code ?? '';
+  const message = error.message.trim();
+  // This is a UX/UI hook — NOT a curated friendly copy. For now it returns the
+  // provider's raw `code: message` so the card is honest and diagnosable; a
+  // future UX pass decides how errors map to friendly copy and how the text is
+  // written. Here we only guarantee it never surfaces a meaningless empty
+  // string (a turn failure must always show something concrete).
+  if (code !== '' && message !== '') return `${code}: ${message}`;
+  if (code !== '') return code;
+  if (message !== '') return message;
+  return 'The turn failed with an unspecified error.';
 }
 
 /** Session-scoped cumulative usage folded from the event stream (exact
@@ -240,6 +269,8 @@ export interface StreamingCardHost {
   ): Promise<number | undefined>;
   /** Proactive @-mention prefix for a chat in groups (failure notices). */
   textMentionFor(chatId: string): string;
+  /** Read the dsh-feishu log and ship it to the chat (error-card "Export log"). */
+  sendLogFile(chatId: string): Promise<void>;
 }
 
 /**
@@ -361,6 +392,7 @@ export class StreamingCardController {
       collapsed: true,
       stopRequested: false,
       producedPaths: [],
+      errorText: undefined,
     });
     try {
       await this.host.cards.open(chatId, title);
@@ -423,6 +455,7 @@ export class StreamingCardController {
       producedPaths: state.producedPaths,
       sessionStats: this.sessionStatsFor(chatId),
       status: state.status,
+      ...(state.errorText !== undefined ? { errorText: state.errorText } : {}),
     };
   }
 
@@ -512,6 +545,7 @@ export class StreamingCardController {
           collapsed: true,
           stopRequested: false,
           producedPaths: [],
+          errorText: undefined,
         });
         try {
           await this.host.cards.open(chatId, title);
@@ -701,6 +735,7 @@ export class StreamingCardController {
         if (event.data.reason.kind === 'error') {
           const error = event.data.reason.error;
           this.host.logger.error(`turn failed: ${error.code}: ${error.message}`);
+          state.errorText = friendlyTurnError(error);
           // A corrupt persisted log breaks every turn that resumes it; rebind
           // the chat to a fresh session so the next message starts clean.
           if (error.message.includes('corrupt session log')) {
@@ -735,10 +770,13 @@ export class StreamingCardController {
         // stop action; the card's '⏹ Stopped' is the terminal state.
         if (status === 'error') {
           // Proactive @ of the requester in groups: a broken turn must not
-          // go unnoticed, and the group must know WHOSE turn failed.
+          // go unnoticed, and the group must know WHOSE turn failed. The
+          // notice always carries the concrete reason (never a dead "see the
+          // card"): `state.errorText` is guaranteed non-empty by
+          // `friendlyTurnError`.
           await this.host.transport.sendText(
             chatId,
-            `${this.host.textMentionFor(chatId)}⚠️ Turn failed — see the card for details`,
+            `${this.host.textMentionFor(chatId)}⚠️ Turn failed: ${state.errorText ?? 'unknown error'}`,
           );
         }
         break;
@@ -773,6 +811,7 @@ export class StreamingCardController {
             collapsed: true,
             stopRequested: false,
             producedPaths: [],
+            errorText: undefined,
           };
           this.cardStates.set(chatId, state);
           try {
@@ -920,6 +959,7 @@ export class StreamingCardController {
           collapsed: true,
           stopRequested: false,
           producedPaths: [],
+          errorText: undefined,
         });
         try {
           await this.host.cards.open(action.chatId, turnTitle(prompt));
@@ -992,6 +1032,22 @@ export class StreamingCardController {
           await this.host.transport.sendText(
             action.chatId,
             `⚠️ Could not send the produced file \`${path}\` (${msg}).`,
+          );
+        }
+        return;
+      }
+      case 'send-log': {
+        // Error-card "Export log": ship the dsh-feishu log to the chat so the
+        // user can forward it to the admin. Does NOT mutate card state.
+        this.host.logger.debug(`send-log ${action.chatId}: exporting the dsh-feishu log`);
+        try {
+          await this.host.sendLogFile(action.chatId);
+        } catch (error: unknown) {
+          const msg = error instanceof Error ? error.message : String(error);
+          this.host.logger.warn(`send-log ${action.chatId}: failed (${msg})`);
+          await this.host.transport.sendText(
+            action.chatId,
+            `⚠️ Could not send the dsh-feishu log (${msg}).`,
           );
         }
         return;

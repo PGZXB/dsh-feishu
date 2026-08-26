@@ -52,6 +52,7 @@ import type {
   FeishuTransport,
   InboundAttachment,
 } from './feishu/types.js';
+import { readLogFile } from './log-file.js';
 import { MessageDeduplicator } from './message-dedup.js';
 import { parseModelArg } from './model-args.js';
 import { sessionSelection } from './model-switch.js';
@@ -281,6 +282,9 @@ export interface BridgeOptions {
   readonly cards: StreamingCardManager;
   readonly defaultCwd: string;
   readonly logger: BridgeLogger;
+  /** The surface data directory (default `$DSH_HOME/feishu`); the operator
+   *  log lives at `$dataDir/logs/dsh-feishu.log` (see `log-file.ts`). */
+  readonly dataDir: string;
   /**
    * The Feishu app id this surface runs as (shown by `/feishu-status`).
    */
@@ -623,6 +627,7 @@ export class Bridge {
       resolveContextWindow: (chatId, sessionId, cwd) =>
         this.resolveContextWindow(chatId, sessionId, cwd),
       textMentionFor: (chatId) => this.textMentionFor(chatId),
+      sendLogFile: (chatId) => this.sendLogFile(chatId).then(() => {}),
     };
   }
 
@@ -2170,7 +2175,8 @@ export class Bridge {
       case 'retry':
       case 'row-details':
       case 'toggle-rows':
-      case 'send-produced': {
+      case 'send-produced':
+      case 'send-log': {
         // Streaming-card actions are handled by the streaming state
         // machine controller (they mutate the card state).
         await this.streaming.handleStreamingAction(action);
@@ -2235,6 +2241,23 @@ export class Bridge {
    *  controller; the command module owns the command copy. Option-backed
    *  fields are GETTERS — the original handlers read `this.options.X` at
    *  call time, and tests mutate options after construction. */
+  /** Read the dsh-feishu log and ship it to the chat (`/log` + the error-card
+   *  "Export log" button). Returns a user-facing result. */
+  async sendLogFile(chatId: string): Promise<CommandResult> {
+    const file = readLogFile(this.options.dataDir);
+    if (!file.ok) return { kind: 'error', text: file.error };
+    try {
+      await this.options.transport.sendFile(chatId, file.name, file.content);
+      this.options.logger.info(
+        `log export ${file.name}: ${file.content.length} bytes -> chat ${chatId}`,
+      );
+      return { kind: 'success', text: `Sent the dsh-feishu log (${file.content.length} bytes).` };
+    } catch (error: unknown) {
+      this.options.logger.warn(`log export ${chatId} failed: ${String(error)}`);
+      return { kind: 'error', text: `could not send the dsh-feishu log: ${String(error)}` };
+    }
+  }
+
   private commandHost(): SurfaceCommandHost {
     const bridge = this;
     return {
@@ -2300,6 +2323,7 @@ export class Bridge {
       resetChat: (chatId) => bridge.resetChatState(chatId),
       lastOutput: (chatId) => bridge.streaming.lastOutput(chatId),
       liveAgent: (chatId) => bridge.liveAgent(chatId),
+      sendLog: (chatId) => bridge.sendLogFile(chatId),
     };
   }
 }

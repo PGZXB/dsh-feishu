@@ -9,6 +9,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
 import { describe, expect, it } from 'vitest';
 import {
+  friendlyTurnError,
   StreamingCardController,
   type StreamingCardHost,
 } from '../../src/cards/StreamingCardController.js';
@@ -149,6 +150,7 @@ function makeController(): {
     reactions: undefined,
     resolveAgent: async () => agent,
     textMentionFor: () => '',
+    sendLogFile: async () => {},
   };
   return {
     transport,
@@ -316,6 +318,32 @@ describe('StreamingCardController', () => {
     expect(lastCard(h)?.header?.title.content).toBe('T');
     // The terminal render carries the Done note (finalized in place).
     expect(JSON.stringify(lastCard(h)?.elements)).toContain('✅ Done');
+  });
+});
+
+describe('friendlyTurnError', () => {
+  it('returns the raw code and message (UX hook, no curated copy yet)', () => {
+    expect(
+      friendlyTurnError({ code: 'MISSING_CREDENTIAL', message: 'llm-deepseek: no API key' }),
+    ).toBe('MISSING_CREDENTIAL: llm-deepseek: no API key');
+    expect(friendlyTurnError({ code: 'NO_ADAPTER', message: 'no adapter' })).toBe(
+      'NO_ADAPTER: no adapter',
+    );
+  });
+
+  it('falls back to the message when the code is blank', () => {
+    expect(friendlyTurnError({ code: '', message: 'the sandbox exploded' })).toBe(
+      'the sandbox exploded',
+    );
+  });
+
+  it('falls back to the code when the message is blank', () => {
+    expect(friendlyTurnError({ code: 'E_BOOM', message: '  ' })).toBe('E_BOOM');
+  });
+
+  it('never returns an empty string, even with no code and no message', () => {
+    const text = friendlyTurnError({ code: '', message: '' });
+    expect(text.trim()).not.toBe('');
   });
 });
 

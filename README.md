@@ -154,6 +154,7 @@ feels faster; `/help` lists them all.
 | `/schedule` | list active reminders |
 | `/model <provider/model>` | switch this session's model (bare opens the picker) |
 | `/export` | send this chat's session log as a file |
+| `/log` | send the dsh-feishu log file to this chat (handy for debugging — please attach the key log lines when you file an issue) |
 | `/sessions` | list saved sessions (resume any of them from the card) |
 | `/resume <id>` | resume a saved session (bare opens the session list) |
 | `/clear` `/new` | start a fresh conversation (the old session stays saved) |

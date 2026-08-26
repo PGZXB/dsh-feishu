@@ -97,6 +97,9 @@ export interface CardSnapshot {
     readonly contextWindow: number | undefined;
   };
   readonly status: CardStatus;
+  /** Friendly, actionable explanation of a failed turn, shown on the error
+   *  card so the user (or the admin they relay to) knows what broke. */
+  readonly errorText?: string;
 }
 
 /** Header template color per status. `stopped` uses amber — the DSH web
@@ -555,11 +558,32 @@ export function buildCard(snapshot: CardSnapshot): CardJson {
     } else {
       const terminalNote =
         snapshot.status === 'error'
-          ? '⚠️ Turn ended with an error'
+          ? '⚠️ Turn failed'
           : snapshot.status === 'stopped'
             ? '⏹ Stopped'
             : '✅ Done';
       elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: terminalNote }] });
+      // The failure reason, surfaced as a readable line instead of the dead
+      // "see the card for details" — a MISSING_CREDENTIAL tells the admin
+      // exactly what to fix; an unknown error stays the raw message.
+      if (snapshot.status === 'error' && snapshot.errorText !== undefined) {
+        elements.push({ tag: 'markdown', content: snapshot.errorText });
+      }
+      // On a failed turn offer a one-tap "Export log" so the user can forward
+      // the dsh-feishu log to the admin (English label — no i18n yet).
+      if (snapshot.status === 'error') {
+        elements.push({
+          tag: 'action',
+          actions: [
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '📄 Export log' },
+              type: 'default',
+              value: { kind: 'send-log' },
+            },
+          ],
+        });
+      }
     }
   }
   // Turn-produced files: render a `📎 Produced` chip row on the TERMINAL card

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Operator log shipped to the chat (`/log` + an "Export log" button on the
+  failed-turn card).** The console exporter now appends every log record to
+  `$dataDir/logs/dsh-feishu.log` as well as the terminal, so the log survives
+  the console. `/log` (and the "Export log" button the error card shows on a
+  failed turn) reads that file and sends the raw log to the chat via
+  `transport.sendFile` — English label, since the surface is not i18n yet.
+  The raw log (not a compressed archive) is sent so Feishu renders it
+  readably, letting a user forward it to the bot admin for diagnosis.
+
 ### Fixed
 
 - **Quick setup from npm produced a bot without the default avatar.** The

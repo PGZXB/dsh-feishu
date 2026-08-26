@@ -210,6 +210,46 @@ describe('buildCard', () => {
     );
   });
 
+  it('renders the friendly error reason on the error card (never a dead end)', () => {
+    const card = buildCard({
+      title: 'T',
+      content: '',
+      rows: [],
+      status: 'error',
+      errorText: 'MISSING_CREDENTIAL: llm-deepseek: no API key',
+    });
+    const cardJson = JSON.stringify(card.elements);
+    expect(cardJson).toContain('no API key');
+    // The error card must never fall back to a meaningless placeholder.
+    expect(cardJson).not.toContain('see the card for details');
+  });
+
+  it('offers an Export log button on the error card only', () => {
+    const errorCard = buildCard({
+      title: 'T',
+      content: '',
+      rows: [],
+      status: 'error',
+      errorText: 'boom',
+    });
+    const buttons = errorCard.elements
+      .flatMap((el) => (el.tag === 'action' ? el.actions : []))
+      .flatMap((a) => (a.tag === 'button' ? [a] : []));
+    const exportLog = buttons.find(
+      (b) => JSON.stringify(b.value) === JSON.stringify({ kind: 'send-log' }),
+    );
+    expect(exportLog).toBeDefined();
+    expect(JSON.stringify(exportLog)).toContain('Export log');
+
+    const doneCard = buildCard({ title: 'T', content: '', rows: [], status: 'done' });
+    const doneButtons = doneCard.elements
+      .flatMap((el) => (el.tag === 'action' ? el.actions : []))
+      .flatMap((a) => (a.tag === 'button' ? [a] : []));
+    expect(
+      doneButtons.some((b) => JSON.stringify(b.value) === JSON.stringify({ kind: 'send-log' })),
+    ).toBe(false);
+  });
+
   it('renders think/tool rows in chronological order with expand buttons', () => {
     const card = buildCard({
       title: 'T',
