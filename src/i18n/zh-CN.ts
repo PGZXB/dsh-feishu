@@ -43,15 +43,38 @@ export const zhMessages: Record<MessageKey, string> = {
   'card.stats.cache': '缓存 {percent}% · {tokens}',
   'card.stats.context': '上下文 {percent}%',
 
-  // ── Row-details card ────────────────────────────────────────────────────
-  'card.details.produced': '**📎 产出**',
-  'card.details.empty': '_（无已记录的参数或结果）_',
-
   // ── Repo picker ─────────────────────────────────────────────────────────
   'card.repo.title': '📚 选择项目',
   'card.repo.pickedTitle': '📚 已选定项目',
   'card.repo.note': '再次运行 /repo 可更换项目。',
   'card.repo.placeholder': '请选择项目…',
+  'card.repo.pickerIntro':
+    '**选择项目目录** —— 从下拉列表中选择，或使用 `/cd <路径>` 指定自定义目录。',
+  'card.repo.pickedBody': '✅ 工作目录已设置为\n\n`{path}`',
+
+  // ── Status markers on the streaming card ────────────────────────────────
+  'card.status.line.working': '**… 处理中**',
+  'card.status.line.stopping': '**⏹ 正在停止…**',
+  'card.status.note.done': '✅ 完成',
+  'card.status.note.error': '⚠️ 回复失败',
+  'card.status.note.stopped': '⏹ 已停止',
+  'card.panel.stopTurn': '⏹ 停止当前回复',
+  'card.panel.retryLast': '🔁 重试上次',
+  'card.panel.copyLast': '📋 复制上次',
+
+  // ── Row-details card ────────────────────────────────────────────────────
+  'card.details.produced': '**📎 产出**',
+  'card.details.empty': '_（无已记录的参数或结果）_',
+  'card.details.title.steer': '💬 插话',
+  'card.details.title.think': '☁️ 思考',
+  'card.details.title.tool': '🔧 {name}',
+  'card.details.emptySteered': '_（空的插话内容）_',
+  'card.details.noReasoning': '_（无思考文本）_',
+
+  // ── Shared "currently selected" note + multi-select mark ────────────────
+  'card.currentNote': '★ 当前：{label}',
+  'card.question.selectedOption': '✅ {label}',
+  'card.question.answeredNote': '回答：{answer}',
 
   // ── Inbound file receipt card ───────────────────────────────────────────
   'card.file.receivedTitle': '📎 收到文件',
@@ -89,6 +112,7 @@ export const zhMessages: Record<MessageKey, string> = {
   'card.queue.cancel': '↩️ 取消',
   'card.queue.steerButton': '➡️ 插话',
   'card.queue.steerUnavailable': '➡️ 无法插话 —— 当前没有正在运行的回复。',
+  'card.queue.nQueued': '已排队 {count} 条',
   'card.queue.title.editing': '编辑中',
   'card.queue.title.steering': '插话中…',
   'card.queue.title.steered': '已插话',
@@ -109,6 +133,7 @@ export const zhMessages: Record<MessageKey, string> = {
   'sessions.list.placeholder': '请选择会话…',
   'sessions.list.empty': '还没有会话 —— 发送一条消息开始第一个会话。',
   'sessions.list.emptyArchived': '没有已归档的会话。',
+  'sessions.list.moreFiltered': '还有 {count} 个 —— 使用 🔎 查找会话 定位它们。',
   'sessions.age.justNow': '刚刚',
   'sessions.age.minutes': '{count} 分钟前',
   'sessions.age.hours': '{count} 小时前',
@@ -136,6 +161,8 @@ export const zhMessages: Record<MessageKey, string> = {
   'panel.operating': '⏳ 处理中…',
   'panel.cardMenu.idle': '**空闲** —— 发送一条消息开始对话。',
   'panel.cardMenu.ready': '**就绪** —— 最新回答在上方卡片中，可复制或重试。',
+  'panel.cardMenu.running': '**运行中** —— 有回复正在进行。',
+  'panel.cardMenu.stopped': '**已停止** —— 上一次回复被中断。',
   'panel.context.noCwd': '尚未选择工作目录 —— 请先通过 /repo 或 /cd 选择',
   'panel.context.noSession': '还没有会话 · `{cwd}`',
   'panel.context.session': '会话 `{session}` · `{cwd}`',
@@ -147,10 +174,19 @@ export const zhMessages: Record<MessageKey, string> = {
   'panel.permission.title': '🔐 权限预设',
   'panel.permission.placeholder': '请选择预设…',
   'panel.permission.noneConfigured': '当前部署未配置权限预设。',
+  'panel.permission.noneSelected': '尚未选择预设。',
+  'panel.permission.serviceUnavailable': '权限预设在此部署上不可用。',
+  'panel.permission.intro': '**选择权限预设** —— 决定该聊天会话的沙箱模式与审批策略。',
   'panel.model.title': '🤖 模型',
   'panel.model.placeholder': '请选择模型…',
   'panel.model.noneConfigured':
     '当前部署没有可用模型 —— 使用 /model <provider>/<model> 设置一个。',
+  'panel.model.noneSelected': '尚未选择模型。',
+  'panel.model.intro':
+    '**选择模型** —— 选择会立即切换当前会话的模型，并保存为新会话的默认值。',
+  'panel.category.session': '🧩 会话',
+  'panel.category.chat': '💬 聊天',
+  'panel.category.system': '⚙️ 系统',
   'panel.view.unknownSession': '（未知）',
   'panel.input.fallback.title': '✏️ 输入',
   'panel.input.fallback.hint': '请输入内容。',
@@ -234,6 +270,59 @@ export const zhMessages: Record<MessageKey, string> = {
   'panel.action.permissionPickUnavailable': '无法选择权限预设 —— 机器人可能已重启。请重新发送 /permission。',
   'panel.action.modelPickUnavailable': '无法选择模型 —— 未挂载 agentDefaultModel 服务。',
   'panel.action.archiveUnavailable': '当前部署不支持归档会话。',
+  'panel.action.sessionRenamed': '会话 {sessionId} 已重命名。',
+  'panel.action.sessionArchived': '会话 {sessionId} 已归档。',
+  'panel.action.renameFailed': '重命名失败：{message}',
+  'panel.action.archiveFailed': '归档失败：{message}',
+
+  // ── Streaming controller feedback (stop/retry/copy/compact/reminder) ────
+  'controller.info.nothingToRetry': '没有可重试的内容',
+  'controller.info.nothingToRetryHint': '没有可重试的回复 —— 请先发送一条消息。',
+  'controller.info.nothingToCopy': '没有可复制的回答 —— 回答尚未生成。',
+  'controller.error.noTurnToStop': '没有可停止的回复 —— 上一次回复已经结束。',
+  'controller.error.noSessionToStop':
+    '没有可停止的会话 —— 机器人可能已重启。请发送一条消息重新开始。',
+  'controller.error.turnRunning': '有回复正在运行 —— 请先停止它。',
+  'controller.info.compacting': '🧹 压缩中…',
+  'controller.error.compactionFailed': '⚠️ 压缩失败。',
+  'controller.error.compactionFailedDetails': '⚠️ 压缩失败 —— 详情见卡片',
+  'controller.reminder.title': '⏰ 提醒',
+  'controller.reminder.pluginNotification': '⏰ {plugin} 通知',
+  'controller.error.logSendFailed': '⚠️ 无法发送 dsh-feishu 日志（{message}）。',
+
+  // ── Approval card bodies + decision outcomes ────────────────────────────
+  'card.approval.wantRunPlain': '**{tool}** 想要执行。',
+  'card.approval.wantRunReason': '**{tool}** 想要执行：\n\n{reason}',
+  'card.approval.outcome.allowedOnce': '✅ 已允许一次',
+  'card.approval.outcome.rejected': '❌ 已拒绝',
+  'card.approval.outcome.unavailable': '⚠️ 不可用',
+  'card.approval.outcome.cancelled': '⏹ 已取消',
+
+  // ── Command / surface info feedback ─────────────────────────────────────
+  'command.info.exportedEvents': '已导出 {count} 条事件到 {file}。',
+  'command.info.logSent': '已发送 dsh-feishu 日志（{count} 字节）。',
+  'command.info.groupCreated': '群组已创建：{name}（{chatId}）',
+  'command.info.modelSet': '模型已设为 {selection}（当前会话 + 默认值）。',
+  'command.info.permissionSwitched': '权限预设已切换为 {preset}。',
+  'command.info.cwdSetRestart': '工作目录已设为 {path}（下一条消息将重启会话）。',
+  'command.info.planOn': '计划模式已开启。使用 /plan off 关闭。',
+  'command.info.planOff': '计划模式已关闭。',
+  'command.info.planEnterNextStep': '正在进入计划模式（下一步生效）。使用 /plan off 关闭。',
+  'command.info.planLeaveNextStep': '正在退出计划模式（下一步生效）。',
+  'command.info.planAlreadyActive': '计划模式已经开启。',
+  'command.info.planAlreadyInactive': '计划模式已经关闭。',
+  'command.info.planEntryCancelled': '已取消进入计划模式。',
+  'command.error.cmdUnavailableDeployment': '/{name} 在当前部署上不可用。',
+  'command.error.cmdUnavailableRegistry': '/{name} 不可用 —— 未挂载 dsh 命令注册表。',
+  'command.error.exportFailed': '会话导出失败：{detail}',
+  'resume.error.sessionBusy': '会话 {sessionId} 已在该聊天中激活。',
+  'resume.error.sessionTurnRunning': '会话 {sessionId} 有回复正在运行 —— 请先在其聊天中停止。',
+
+  // ── /status display placeholders ────────────────────────────────────────
+  'status.none': '（无）',
+  'status.notConfigured': '（未配置）',
+  'status.noPrompt': '（无目标）',
+  'status.effortSuffix': ' · 推理力度 {effort}',
 
   // ── Result card chrome ──────────────────────────────────────────────────
   'result.doneTitle': '✅ 完成',
