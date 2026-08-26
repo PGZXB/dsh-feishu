@@ -30,9 +30,10 @@ pnpm run setup:feishu -- --new       # 创建新应用并完成配置
    管理员。
 6. 将 `appId` / `appSecret` 写入 profile 的 `cordis.patch.yml`（会保留一份
    `.bak` 备份），或使用 `--print-env` 打印导出行。
-7. **引导 surface 配置**——三个提示（直接回车 = 使用显示的默认值）：
+7. **引导 surface 配置**——四个提示（直接回车 = 使用显示的默认值）：
    `repoRoots`（`/repo` 的扫描根目录，默认你的主目录）、
-   `groupMentionMode`（默认 `always`）、`requireWorkingDir`（默认 `y`）。
+   `groupMentionMode`（默认 `always`）、`requireWorkingDir`（默认 `y`）、
+   以及 `locale`（默认 `en-US`，见下文「Surface 语言」）。
    默认值优先取 profile 里已有的配置；非交互运行（CI、脚本）跳过提示，
    静默使用默认值。
 
@@ -140,6 +141,21 @@ dsh --profile feishu
 | `FEISHU_ALLOWED_CHATS` | comma-separated chat ids | chat allowlist |
 | `FEISHU_GROUP_MENTION_MODE` | `always` \| `never` \| `ambient` \| `topic` | group mention policy |
 | `FEISHU_UNKNOWN_COMMAND` | `error` \| `passthrough` | unknown slash-line policy |
+| `FEISHU_LOCALE` | `en-US` \| `zh-CN` | Surface 语言（见下文） |
+
+### Surface 语言
+
+Surface 提供两种语言——`en-US`（默认）与 `zh-CN`。所有卡片标题、按钮、
+提示与状态文案均已翻译；命令名、面向注册表的 `description`/`usage`
+字符串以及 agent 可见内容按约定保持英文。解析顺序：profile 的
+`locale` 选项 → `FEISHU_LOCALE` 环境变量 → `en-US`。
+
+```yaml
+config:
+  appId: cli_xxx
+  appSecret: yyy
+  locale: zh-CN
+```
 
 ## 验证
 

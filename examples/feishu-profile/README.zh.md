@@ -18,6 +18,7 @@ DSH_HOME="$HOME/.dsh" dsh --profile feishu
 - `allowedUsers` —— 可选用户白名单（`ou_` open id 是 app 级作用域；留空即不限制）。
 - `groupMentionMode` —— `always` | `never` | `ambient` | `topic`。
 - `requireWorkingDir` —— 门禁默认开启；只有想用 `defaultCwd` 兜底的部署才设 `false`。
+- `locale` —— Surface 语言，`en-US`（默认）或 `zh-CN`；环境变量 `FEISHU_LOCALE` 是更低优先级的兜底。
 - `reactions` —— 两阶段回执表情（received/done/error/stopped）。
 - bundle 还会自动挂载 `@deepseek-ai/dsh-schedule`（聊天内配置的提醒，以 `⏰ Reminder` 卡片渲染）与 `ask_user_question` 工具（提问卡片）。
 

@@ -23,6 +23,8 @@ reactions, reminders, `/feishu-status`) works out of the box.
 - `groupMentionMode` — `always` | `never` | `ambient` | `topic`.
 - `requireWorkingDir` — the gate is ON by default; set `false` only for
   deployments that want the `defaultCwd` fallback.
+- `locale` — surface language, `en-US` (default) or `zh-CN`; the
+  `FEISHU_LOCALE` env var is a lower-priority fallback.
 - `reactions` — the two-stage ack emojis (received/done/error/stopped).
 - The bundle also mounts `@deepseek-ai/dsh-schedule` (chat-configured
   reminders, rendered as `⏰ Reminder` cards) and the `ask_user_question`

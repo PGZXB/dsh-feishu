@@ -31,6 +31,11 @@ functionality with unit tests and docs, and lands on `main`.
   README, `docs/`, and `AGENTS.md` are written in English.
   Chinese documentation is provided later as separate files (e.g.
   `README.zh-CN.md`); never mix languages in one file.
+  EXCEPTION — the i18n catalogs: user-facing STRING VALUES under
+  `src/i18n/zh-CN.ts` are Chinese by design (that file IS the shipped
+  product surface). Code comments, keys, and every other module stay
+  English. A wizard prompt may show a bilingual label only where it names
+  this option itself (`Surface language / 界面语言`).
 - **No machine-specific details in tracked docs.** Everything git tracks
   becomes public once the repository is open-sourced. Never commit absolute
   developer-machine paths (`/home/<user>/…`), ambient environment values

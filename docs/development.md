@@ -282,6 +282,40 @@ A full turn reads top to bottom like: `inbound message m1 -> turn` →
 something misbehaves, grep for the message/card/session id and the
 discontinuity in the chain marks where the surface lost it.
 
+## Internationalization (i18n)
+
+User-visible strings live in locale catalogs under `src/i18n/`, not inline
+in card/button code:
+
+- `src/i18n/en-US.ts` — the BASE catalog and the type source of
+  `MessageKey` (`as const`). Add new user-facing copy HERE first.
+- `src/i18n/zh-CN.ts` — typed as `Record<MessageKey, string>`; key parity is
+  enforced at compile time (a missing or extra translation fails
+  `pnpm run typecheck`) plus by `tests/i18n.spec.ts`.
+- `src/i18n/index.ts` — the engine: flat dot-namespaced keys, `{name}`
+  interpolation tokens, loud failure on an unknown key, and the active-locale
+  singleton (`setActiveLocale` at `apply()` startup; modules import the pure
+  `t(key, params?)`).
+
+Conventions:
+
+1. Emojis live INSIDE catalog values so each locale owns its whole label.
+2. Every `{token}` in a value must be passed by the caller; placeholder NAMES
+   must match across locales (`tests/i18n.spec.ts` compares them per key).
+3. Always translate at CALL time. A module-level `t(...)` initializer freezes
+   the default locale before `apply()` configures it (caught by regression:
+   the status-card connection labels).
+4. Scope: cards, buttons, panel views/actions, command feedback, gates, and
+   notices are translated. Registry-facing command `description`/`usage`
+   (contract text surfaced to harness tooling), agent-prompt content,
+   and debug logs stay English by design.
+
+The active locale resolves from the profile's `locale` option → the
+`FEISHU_LOCALE` environment variable → `en-US` (see
+`docs/feishu-setup.md` → "Surface language"). `tests/i18n-rendering.spec.ts`
+flips the locale to zh-CN and asserts real rendered output for the main
+surfaces — extend it when a new user-facing view lands.
+
 ## Adding a feature module
 
 1. Create `src/<module>.ts` with JSDoc on the module and its exported
@@ -309,6 +343,7 @@ they land.
 | `docs/development.md` (+ `.zh.md`) | dev workflow, commands, gates, toolchain, PR/CI process |
 | `docs/e2e-testing.md` (+ `.zh.md`) | E2E UI suite: scenarios, runbook, constraints, captured web selectors |
 | `docs/features.md` (+ `.zh.md`) | feature list / TODO tracker — every shipped or planned feature updates its row |
+| `src/i18n/en-US.ts` + `src/i18n/zh-CN.ts` | any user-facing string change: add the key(s) to BOTH catalogs in the same PR |
 | `docs/pitfalls.md` (+ `.zh.md`) | field-proven failure modes; every entry ships with its regression test |
 | `AGENTS.md` | agent guidance, conventions, workflow (this file) |
 | `CONTRIBUTING.md` / `SECURITY.md` | contribution guidance / security posture (rare, deliberate) |

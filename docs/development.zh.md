@@ -175,6 +175,35 @@ source _dev/bot-env.sh        # 设置 DSH_HOME=_dev/dsh-home 并 source _dev/se
 
 一次完整回合自顶向下读像这样：`inbound message m1 -> turn` → `streaming beginTurn` → `streaming event assistant/chunk` → `streaming tool/call` → `transport updateCard <card-id>` → `streaming event turn/end` → `streaming finalize <status>`。行为异常时，grep 消息/卡片/session id，链条断裂处就是 surface 丢失它的位置。
 
+## 国际化（i18n）
+
+用户可见文案保存在 `src/i18n/` 下的语言目录中，不内联在卡片/按钮代码里：
+
+- `src/i18n/en-US.ts` —— 基础目录，也是 `MessageKey` 的类型来源
+  （`as const`)。新增用户可见文案先加在这里。
+- `src/i18n/zh-CN.ts` —— 类型为 `Record<MessageKey, string>`；键的一致性
+  在编译期强制（缺失或多余的翻译会让 `pnpm run typecheck` 失败），
+  另有 `tests/i18n.spec.ts` 兜底。
+- `src/i18n/index.ts` —— 引擎：扁平点分命名空间键、`{name}` 插值令牌、
+  未知键大声报错，以及活动语言单例（`apply()` 启动时调用
+  `setActiveLocale`；各模块导入纯函数 `t(key, params?)`）。
+
+约定：
+
+1. Emoji 放在目录值内部，每种语言拥有完整标签。
+2. 值中的每个 `{token}` 必须由调用方传入；占位符名称必须跨语言一致
+   （`tests/i18n.spec.ts` 逐键比较）。
+3. 永远在调用时翻译。模块级的 `t(...)` 初始化会把默认语言冻结在
+   `apply()` 配置之前（回归案例：状态卡连接标签）。
+4. 范围：卡片、按钮、面板视图/操作、命令反馈、门控与通知均翻译。
+   面向注册表的命令 `description`/`usage`（暴露给 harness 工具的契约文本）、
+   agent 提示内容与调试日志按设计保持英文。
+
+活动语言的解析顺序：profile 的 `locale` 选项 → `FEISHU_LOCALE`
+环境变量 → `en-US`（见 `docs/feishu-setup.zh.md` 的「Surface 语言」）。
+`tests/i18n-rendering.spec.ts` 会切换到 zh-CN 并断言主要界面的真实渲染
+输出——新增用户可见界面时请扩展它。
+
 ## 添加功能模块
 
 1. 创建 `src/<module>.ts`，在模块及其导出的函数上写 JSDoc。
@@ -195,6 +224,7 @@ source _dev/bot-env.sh        # 设置 DSH_HOME=_dev/dsh-home 并 source _dev/se
 | `docs/feishu-setup.md`（+ `.zh.md`） | 飞书配置、权限、事件、回调（与 `src/setup/feishu-manifest.json` 同步） |
 | `docs/development.md`（+ `.zh.md`） | 开发流程、命令、门槛、工具链、PR/CI 流程 |
 | `docs/features.md`（+ `.zh.md`） | 功能列表 / TODO 追踪——每个已实现或计划中的功能都更新其行 |
+| `src/i18n/en-US.ts` + `src/i18n/zh-CN.ts` | 任何用户可见文案变更：在同一个 PR 中同时向两个目录添加键 |
 | `docs/e2e-testing.md`（+ `.zh.md`） | E2E UI 套件：场景、运行手册、约束、捕获到的网页选择器 |
 | `docs/pitfalls.md`（+ `.zh.md`） | 实战踩坑；每条都伴随回归测试 |
 | `AGENTS.md` | agent 指南、约定、流程（本文件） |

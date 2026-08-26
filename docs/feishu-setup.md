@@ -34,10 +34,10 @@ The wizard then, with no further web-console work:
    auto-approved, no administrator wait.
 6. Writes `appId` / `appSecret` into the profile's `cordis.patch.yml`
    (a `.bak` backup is kept), or prints export lines with `--print-env`.
-7. **Guides the surface options** with three prompts (empty input = the
+7. **Guides the surface options** with four prompts (empty input = the
    shown default): `repoRoots` for `/repo` (default: your home directory),
-   `groupMentionMode` (default `always`), and `requireWorkingDir`
-   (default `y`). The defaults are the profile's existing values when it
+   `groupMentionMode` (default `always`), `requireWorkingDir`
+   (default `y`), and `locale` (default `en-US`) — see [Surface language](#surface-language). The defaults are the profile's existing values when it
    was already configured. Non-interactive runs (CI, scripts) skip the
    prompts and use the defaults silently.
 
@@ -159,6 +159,22 @@ back):
 | `FEISHU_ALLOWED_CHATS` | comma-separated chat ids | chat allowlist |
 | `FEISHU_GROUP_MENTION_MODE` | `always` \| `never` \| `ambient` \| `topic` | group mention policy |
 | `FEISHU_UNKNOWN_COMMAND` | `error` \| `passthrough` | unknown slash-line policy |
+| `FEISHU_LOCALE` | `en-US` \| `zh-CN` | surface language (see below) |
+
+### Surface language
+
+The surface ships two locales — `en-US` (default) and `zh-CN`. Every
+card title, button, hint, and status line is translated; command names,
+registry-facing `description`/`usage` strings, and agent-visible content
+stay English by contract. Resolution order: the profile's `locale`
+option → the `FEISHU_LOCALE` environment variable → `en-US`.
+
+```yaml
+config:
+  appId: cli_xxx
+  appSecret: yyy
+  locale: zh-CN
+```
 
 ## Verify
 
