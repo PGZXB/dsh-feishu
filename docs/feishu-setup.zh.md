@@ -35,6 +35,13 @@ pnpm run setup:feishu -- --new       # 创建新应用并完成配置
    `groupMentionMode`（默认 `always`）、`requireWorkingDir`（默认 `y`）。
    默认值优先取 profile 里已有的配置；非交互运行（CI、脚本）跳过提示，
    静默使用默认值。
+ 8. **可选的模型 API key 提示**（`DEEPSEEK_API_KEY`，直接回车跳过）。agent
+   运行 turn 需要这把 key——DSH web 通过 Models 页保存它，而纯飞书用户
+   永远不会打开那个页面。输入会写入 `<dsh-home>/.env`（dsh 每次启动都会
+   把它加载进环境），插件随后把它提升进 dsh credentials seam——正是
+   Models 页写入的同一个地方。显式 export 的 key 或 DSH web 已保存的 key
+   永远优先于该文件；因此当环境已带有 key、或之前的 setup 运行已写入时，
+   这一步会直接跳过。
 
 如需重新配置现有应用而非新建：
 
