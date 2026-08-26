@@ -200,7 +200,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     name: 'log',
     description: 'Send the dsh-feishu log file to this chat',
     category: 'system',
-    buttonLabel: '📄 Log',
+    buttonLabel: '📄 Export log',
     handler: (invocation) => options.sendLog(invocation.chatId),
   });
   commands.register({

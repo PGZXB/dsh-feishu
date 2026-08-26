@@ -2175,7 +2175,8 @@ export class Bridge {
       case 'retry':
       case 'row-details':
       case 'toggle-rows':
-      case 'send-produced': {
+      case 'send-produced':
+      case 'send-log': {
         // Streaming-card actions are handled by the streaming state
         // machine controller (they mutate the card state).
         await this.streaming.handleStreamingAction(action);
