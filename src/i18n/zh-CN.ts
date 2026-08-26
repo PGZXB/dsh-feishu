@@ -112,7 +112,6 @@ export const zhMessages: Record<MessageKey, string> = {
   'card.queue.cancel': '↩️ 取消',
   'card.queue.steerButton': '➡️ 插话',
   'card.queue.steerUnavailable': '➡️ 无法插话 —— 当前没有正在运行的回复。',
-  'card.queue.nQueued': '已排队 {count} 条',
   'card.queue.title.editing': '编辑中',
   'card.queue.title.steering': '插话中…',
   'card.queue.title.steered': '已插话',

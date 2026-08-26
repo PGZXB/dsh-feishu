@@ -118,7 +118,6 @@ export const enMessages = {
   'card.queue.cancel': '↩️ Cancel',
   'card.queue.steerButton': '➡️ Steer',
   'card.queue.steerUnavailable': '➡️ Steer unavailable — no turn is running.',
-  'card.queue.nQueued': '{count} queued',
   'card.queue.title.editing': 'Editing',
   'card.queue.title.steering': 'Steering…',
   'card.queue.title.steered': 'Steered',

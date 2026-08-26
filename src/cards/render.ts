@@ -15,6 +15,7 @@
 import { basename } from 'node:path';
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import type { ButtonAction, CardElement, CardJson } from '../feishu/types.js';
+import type { MessageKey } from '../i18n/index.js';
 import { t } from '../i18n/index.js';
 import type { ProjectInfo } from '../projects.js';
 import { markdownToElements } from './markdown.js';
@@ -1506,14 +1507,12 @@ export interface StatusView {
   readonly lastInboundAt: number | undefined;
 }
 
-/** The connection line label per state. */
-const CONNECTION_LABEL: Record<StatusView['connection'], string> = {
-  ready: t('card.status.conn.ready'),
-  reconnecting: t('card.status.conn.reconnecting'),
-  error: t('card.status.conn.error'),
-  memory: t('card.status.conn.memory'),
-  unknown: t('card.status.conn.unknown'),
-};
+/** The connection line label per state — resolved at CALL time so the
+ *  active locale's wording is used (a module-load lookup would freeze the
+ *  default locale before `apply()` configures it). */
+function connectionLabel(connection: StatusView['connection']): string {
+  return t(`card.status.conn.${connection}`);
+}
 
 /**
  * Build the `/feishu-status` diagnostic card: app id, live connection
@@ -1535,7 +1534,7 @@ export function buildStatusCard(view: StatusView): CardJson {
         tag: 'markdown',
         content: [
           t('card.status.app', { appId: view.appId }),
-          t('card.status.connection', { state: CONNECTION_LABEL[view.connection] }),
+          t('card.status.connection', { state: connectionLabel(view.connection) }),
           t('card.status.sessions', { count: view.sessionCount }),
           t('card.status.lastInbound', { time: last }),
         ].join('\n'),
@@ -1565,21 +1564,22 @@ export const QUEUE_PREVIEW_CHARS = 200;
 /** Longest preview folded into a queue-card header. */
 const QUEUE_HEADER_CHARS = 40;
 
-/** Header label per non-queued lifecycle state (message-queue). */
-const QUEUE_STATUS_TITLE: Record<Exclude<QueueItemStatus, 'queued'>, string> = {
-  editing: 'Editing',
-  steering: 'Steering…',
-  steered: 'Steered',
-  sent: 'Sent',
-  removed: 'Removed',
+/** Catalog key per non-queued lifecycle state (message-queue). */
+const QUEUE_STATUS_TITLE: Record<Exclude<QueueItemStatus, 'queued'>, MessageKey> = {
+  editing: 'card.queue.title.editing',
+  steering: 'card.queue.title.steering',
+  steered: 'card.queue.title.steered',
+  sent: 'card.queue.title.sent',
+  removed: 'card.queue.title.removed',
 };
 
-/** The status marker shown on a terminal/in-progress queue card. */
-const QUEUE_STATUS_MARKER: Partial<Record<QueueItemStatus, string>> = {
-  steering: '💬 Steering…',
-  steered: '✅ Steered',
-  sent: '📤 Sent',
-  removed: '🗑️ Removed',
+/** The catalog key of the status marker shown on a terminal/in-progress
+ *  queue card. */
+const QUEUE_STATUS_MARKER: Partial<Record<QueueItemStatus, MessageKey>> = {
+  steering: 'card.queue.marker.steering',
+  steered: 'card.queue.marker.steered',
+  sent: 'card.queue.marker.sent',
+  removed: 'card.queue.marker.removed',
 };
 
 /**
@@ -1599,10 +1599,10 @@ export function buildQueueItemCard(item: QueueItemView, running: boolean): CardJ
   const title =
     item.status === 'queued'
       ? `⏳ ${truncateTail(item.text, QUEUE_HEADER_CHARS)}`
-      : `⏳ ${QUEUE_STATUS_TITLE[item.status]}`;
+      : `⏳ ${t(QUEUE_STATUS_TITLE[item.status])}`;
   const elements: CardElement[] = [];
   const marker = QUEUE_STATUS_MARKER[item.status];
-  if (marker !== undefined) elements.push({ tag: 'markdown', content: marker });
+  if (marker !== undefined) elements.push({ tag: 'markdown', content: t(marker) });
   if (!running && item.status === 'queued') {
     elements.push({
       tag: 'markdown',
