@@ -82,6 +82,7 @@ function emptySessionStats(): SessionStatsView {
       cacheWriteTokens: 0,
     },
     contextWindow: undefined,
+    currentContextTokens: undefined,
   };
 }
 
@@ -102,6 +103,12 @@ function accumulateTokenUsage(stats: SessionStatsView, usage: unknown): void {
   stats.tokenUsage.outputTokens += num(u.outputTokens);
   stats.tokenUsage.cacheReadTokens += num(u.cacheReadTokens);
   stats.tokenUsage.cacheWriteTokens += num(u.cacheWriteTokens);
+  // Track the CURRENT context size (the latest request's full input) for the
+  // context-occupancy group. `inputTokens` + `cacheReadTokens` is the context
+  // THAT request carried (un-cached + cached prefix), unlike the cumulative
+  // sum above.
+  const context = num(u.inputTokens) + num(u.cacheReadTokens);
+  if (context > 0) stats.currentContextTokens = context;
 }
 
 /**
@@ -182,6 +189,11 @@ export interface SessionStatsView {
   };
   /** The chat's current model context window (tokens), or undefined. */
   contextWindow: number | undefined;
+  /** The CURRENT context size (the latest request's input + cache-read
+   *  tokens), tracked for the context-occupancy group. Using the cumulative
+   *  tokenUsage sum here would over-count (each request re-sends the growing
+   *  context) and drive the percentage to 100% after a few messages. */
+  currentContextTokens: number | undefined;
 }
 
 const MAX_TITLE_CHARS = 40;

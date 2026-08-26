@@ -95,6 +95,9 @@ export interface CardSnapshot {
       readonly cacheWriteTokens: number;
     };
     readonly contextWindow: number | undefined;
+    /** The current context size (latest request input + cache-read tokens);
+     *  feeds the context-occupancy group. */
+    readonly currentContextTokens: number | undefined;
   };
   readonly status: CardStatus;
   /** Friendly, actionable explanation of a failed turn, shown on the error
@@ -511,9 +514,15 @@ export function statsGrouperText(stats: CardSnapshot['sessionStats']): string {
     const tokenGroup = `input ${formatTokenCount(billedInput)} · output ${formatTokenCount(usage.outputTokens)}`;
     groups.push(cacheHit > 0 ? `cache ${cacheHit}% · ${tokenGroup}` : tokenGroup);
   }
-  if (stats.contextWindow !== undefined && billedInput + usage.outputTokens > 0) {
-    const usedTokens = billedInput + usage.outputTokens;
-    const percent = Math.min(100, Math.round((usedTokens / stats.contextWindow) * 100));
+  if (
+    stats.contextWindow !== undefined &&
+    stats.currentContextTokens !== undefined &&
+    stats.currentContextTokens > 0
+  ) {
+    const percent = Math.min(
+      100,
+      Math.round((stats.currentContextTokens / stats.contextWindow) * 100),
+    );
     groups.push(`context ${percent}%`);
   }
   return groups.join(' | ');
