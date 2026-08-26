@@ -28,19 +28,19 @@ functionality with unit tests and docs, and lands on `main`.
 ## Non-negotiable conventions
 
 - **English only in code and shipped docs.** All code comments, identifiers,
-  README, `docs/`, `AGENTS.md`, and the CHANGELOG are written in English.
+  README, `docs/`, and `AGENTS.md` are written in English.
   Chinese documentation is provided later as separate files (e.g.
   `README.zh-CN.md`); never mix languages in one file.
 - **No machine-specific details in tracked docs.** Everything git tracks
   becomes public once the repository is open-sourced. Never commit absolute
   developer-machine paths (`/home/<user>/…`), ambient environment values
   observed on one machine (e.g. a harness-exported `DSH_HOME`), or other
-  local-only state into README, `docs/`, `AGENTS.md`, or the CHANGELOG.
+  local-only state into README, `docs/`, or `AGENTS.md`.
   Path examples are `$(pwd)`-anchored (`_dev/…` is git-ignored local state)
   or generic placeholders; environment anecdotes are phrased so any
   contributor's machine applies.
 - **Git-tracked docs are public — no internal pointers.** Everything under
-  `README`, `docs/`, `AGENTS.md`, the CHANGELOG is visible to anyone once
+  `README`, `docs/`, and `AGENTS.md` are visible to anyone once
   pushed. Never reference internal-only artifacts (git-ignored `_dev/`
   files, local analyses, private reports, ambient environment values) or
   point readers at them ("see the internal report" is a dead link to
@@ -58,7 +58,7 @@ functionality with unit tests and docs, and lands on `main`.
   stays quiet), so the logger seam a module receives MUST expose `debug`.
   No feature lands without its debug lines.
 - **Write docs promptly after a feature.** Completing a feature updates the
-  relevant `docs/` page(s) and the CHANGELOG in the same change. No feature
+  relevant `docs/` page(s) in the same change. No feature
   lands without its documentation.
 - **Docs move with their feature — never in a later PR.** Every change that
   touches behavior, commands, UX, setup, or architecture updates the
@@ -168,7 +168,7 @@ scripts/              # repo tooling (release, verification)
   `@returns` where non-obvious.
 - Comments state contracts and context, not reasoning transcripts.
 - Conventional Commits: `feat:`, `fix:`, `docs:`, `test:`, `refactor:`,
-  `chore:`. The CHANGELOG (Keep a Changelog format) is updated per change.
+  `chore:`.
 - **PR titles follow Conventional Commits too** (`fix: …`, `chore(ci): …`;
   multi-type PRs pick the dominant type).
 - **Squash-merge every PR** into one `main` commit titled
@@ -202,7 +202,7 @@ scripts/              # repo tooling (release, verification)
 5. **Verify before asking the user to verify.** Run the full matrix yourself;
    hand the user a checklist of what to confirm, not a debugging session. The
    developer absorbs the iteration cost, not the user.
-6. Update the relevant `docs/` page and the CHANGELOG.
+6. Update the relevant `docs/` page.
 7. **Run all gates exactly as CI does and check every exit code.**
    `pnpm run lint` IS `biome check src tests` — the CI command — not
    `biome check --write`; `--write` only applies safe fixes and silently

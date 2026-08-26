@@ -180,7 +180,7 @@ source _dev/bot-env.sh        # 设置 DSH_HOME=_dev/dsh-home 并 source _dev/se
 1. 创建 `src/<module>.ts`，在模块及其导出的函数上写 JSDoc。
 2. 创建 `tests/<module>.spec.ts` 覆盖其行为（若它注册进某个 registry，还要覆盖 disposal）。
 3. 通过 `src/index.ts` 接入（用 `ctx.get` 对可选服务做 feature-detect）。
-4. 更新相关的 `docs/` 页面和 `CHANGELOG.md`。
+4. 更新相关的 `docs/` 页面。
 5. 运行全部质量门槛；用 Conventional Commit 消息提交。
 
 ## 文档映射
@@ -190,7 +190,6 @@ source _dev/bot-env.sh        # 设置 DSH_HOME=_dev/dsh-home 并 source _dev/se
 | 文档 | 何时更新 |
 | --- | --- |
 | `README.md` / `README.zh.md` `*` | 用户可见面：安装、快速开始、功能、兼容性、徽章——任何改动都需维护者审核后才能落地 |
-| `CHANGELOG.md` | 每个用户可见变更（Keep a Changelog） |
 | `docs/architecture.md`（+ `.zh.md`） | 结构、状态机、surface、数据流 |
 | `docs/ux-specification.md`（+ `.zh.md`） | 交互行为：卡片、面板、动作、审批、提问 |
 | `docs/feishu-setup.md`（+ `.zh.md`） | 飞书配置、权限、事件、回调（与 `src/setup/feishu-manifest.json` 同步） |
@@ -293,8 +292,6 @@ latest release → dsh `@latest`），两条轨道分别验证：
 
 ```sh
 git checkout -b release/vX.Y.Z <commit>   # 从要发布的那个 commit 切出
-# 更新 CHANGELOG.md：把 [Unreleased] 条目移入 [X.Y.Z]，带上日期 + 兼容性说明
-# （这个 release 追踪的 dsh 版本）
 node scripts/release.mjs <major|minor|patch>
 ```
 

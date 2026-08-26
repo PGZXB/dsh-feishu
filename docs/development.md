@@ -290,7 +290,7 @@ discontinuity in the chain marks where the surface lost it.
    it registers into a registry).
 3. Wire it through `src/index.ts` (feature-detect optional services with
    `ctx.get`).
-4. Update the relevant `docs/` page and `CHANGELOG.md`.
+4. Update the relevant `docs/` page.
 5. Run all gates; commit with a Conventional Commit message.
 
 ## Documentation map
@@ -303,7 +303,6 @@ they land.
 | Doc | Updated when |
 | --- | --- |
 | `README.md` / `README.zh.md` `*` | user-facing surface: install, quickstart, features, compatibility, badges — ANY edit requires maintainer review before it lands |
-| `CHANGELOG.md` | every user-visible change (Keep a Changelog) |
 | `docs/architecture.md` (+ `.zh.md`) | structure, state machines, surfaces, data flow |
 | `docs/ux-specification.md` (+ `.zh.md`) | interactive behavior: cards, panels, actions, approvals, questions |
 | `docs/feishu-setup.md` (+ `.zh.md`) | Feishu setup, permissions, events, callbacks (kept in sync with `src/setup/feishu-manifest.json`) |
@@ -439,8 +438,6 @@ publish stay human-gated).
 
 ```sh
 git checkout -b release/vX.Y.Z <commit>   # cut from the exact commit to ship
-# update CHANGELOG.md: move the [Unreleased] items into [X.Y.Z] with the
-# date + a compatibility note (which dsh version this release tracks)
 node scripts/release.mjs <major|minor|patch>
 ```
 
