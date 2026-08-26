@@ -376,7 +376,7 @@ describe.skipIf(!integrationReady)('integration > inbound-wait-instruction', () 
         'the unsupported-type notice',
         () =>
           readOutbox().some(
-            (r) => r.kind === 'text' && r.chatId === chatId && r.text?.includes("can't process"),
+            (r) => r.kind === 'text' && r.chatId === chatId && r.text?.includes('\u2019t process'),
           ),
         30_000,
       );
