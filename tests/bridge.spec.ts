@@ -278,6 +278,7 @@ function makeHarness(
     onSessionEvent,
     cards,
     defaultCwd: '/work',
+    dataDir: '/work',
     logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
     ...(options.groupMentionMode !== undefined
       ? { groupMentionMode: options.groupMentionMode }

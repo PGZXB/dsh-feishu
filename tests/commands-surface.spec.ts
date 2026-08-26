@@ -112,6 +112,7 @@ function makeCommands(overrides: Partial<SurfaceCommandHost> = {}): {
     resetChat: () => {},
     lastOutput: () => undefined,
     liveAgent: () => undefined,
+    sendLog: async () => ({ kind: 'success', text: 'sent' }),
     ...overrides,
   };
   const commands = new CommandRegistry();
@@ -163,6 +164,17 @@ describe('surface command set', () => {
     });
     expect(result?.kind).toBe('success');
     if (result?.kind === 'success') expect(result.text).toContain('dsh-feishu commands');
+  });
+
+  it('/log asks the host to send the dsh-feishu log', async () => {
+    const { commands } = makeCommands();
+    const result = await commands.find('log')?.handler({
+      chatId: 'oc_chat',
+      senderOpenId: 'ou_user',
+      rawInput: '',
+    });
+    expect(result?.kind).toBe('success');
+    if (result?.kind === 'success') expect(result.text).toContain('sent');
   });
 
   it('/group creates a group with the sender', async () => {

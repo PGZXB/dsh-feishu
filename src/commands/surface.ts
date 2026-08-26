@@ -135,6 +135,8 @@ export interface SurfaceCommandHost {
   lastOutput(chatId: string): string | undefined;
   /** The live agent for a chat, or `undefined`. */
   liveAgent(chatId: string): Agent | undefined;
+  /** Read the dsh-feishu log and ship it to the chat (`/log` + error-card button). */
+  sendLog(chatId: string): Promise<CommandResult>;
 }
 
 /**
@@ -193,6 +195,13 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
       await options.openPanel(invocation.chatId);
       return { kind: 'success', text: '' };
     },
+  });
+  commands.register({
+    name: 'log',
+    description: 'Send the dsh-feishu log file to this chat',
+    category: 'system',
+    buttonLabel: '📄 Log',
+    handler: (invocation) => options.sendLog(invocation.chatId),
   });
   commands.register({
     name: 'group',

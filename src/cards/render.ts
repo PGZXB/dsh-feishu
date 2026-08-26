@@ -569,6 +569,21 @@ export function buildCard(snapshot: CardSnapshot): CardJson {
       if (snapshot.status === 'error' && snapshot.errorText !== undefined) {
         elements.push({ tag: 'markdown', content: snapshot.errorText });
       }
+      // On a failed turn offer a one-tap "Export log" so the user can forward
+      // the dsh-feishu log to the admin (English label — no i18n yet).
+      if (snapshot.status === 'error') {
+        elements.push({
+          tag: 'action',
+          actions: [
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '📄 Export log' },
+              type: 'default',
+              value: { kind: 'send-log' },
+            },
+          ],
+        });
+      }
     }
   }
   // Turn-produced files: render a `📎 Produced` chip row on the TERMINAL card

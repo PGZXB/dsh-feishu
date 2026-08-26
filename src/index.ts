@@ -48,6 +48,7 @@ import { StreamingCardManager } from './cards/streaming.js';
 import type { CommandResult } from './commands.js';
 import { consoleExporter } from './console-exporter.js';
 import type { FeishuTransport } from './feishu/types.js';
+import { logFilePath } from './log-file.js';
 import { createMemoryTransport } from './memory-transport.js';
 import { registerSendFileTool } from './outbound.js';
 import type { SessionExportEvent } from './session-export.js';
@@ -408,8 +409,10 @@ export interface ApplyDeps {
 export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void {
   // dsh surfaces mount no console exporter by default; bridge operators need
   // visible logs, so route structured log records to the console (the logger
-  // service disposes the exporter with the current fiber).
-  ctx.logger.exporter(consoleExporter());
+  // service disposes the exporter with the current fiber). Also append to the
+  // dsh-feishu log file under `$dataDir/logs` so the `/log` command and the
+  // error-card "Export log" button can ship it to a chat.
+  ctx.logger.exporter(consoleExporter(logFilePath(config.dataDir ?? defaultDataDir())));
   const credentials = resolveCredentials(config);
   const logger = ctx.logger as unknown as BridgeLogger;
   if (credentials === undefined) {
@@ -497,6 +500,7 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
       }),
     cards,
     defaultCwd: config.defaultCwd ?? process.cwd(),
+    dataDir,
     logger,
     appId: credentials.appId,
     transportMode: process.env.FEISHU_TRANSPORT === 'memory' ? 'memory' : 'lark',

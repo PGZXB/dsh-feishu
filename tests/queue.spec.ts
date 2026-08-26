@@ -174,6 +174,7 @@ function makeHarness(options: { noInbox?: boolean } = {}): Harness {
     onSessionEvent: () => () => {},
     cards,
     defaultCwd: '/work',
+    dataDir: '/work',
     logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
     requireWorkingDir: false,
   });
@@ -476,6 +477,7 @@ describe('message-queue', () => {
       reactions: undefined,
       resolveAgent: async () => agent as unknown as Agent,
       textMentionFor: () => '',
+      sendLogFile: async () => {},
     });
     await controller.beginTurn('oc_chat', 'msg-1', 'first turn');
     controller.noteSteer('oc_chat', 'steer-m1');

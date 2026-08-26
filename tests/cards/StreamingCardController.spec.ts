@@ -150,6 +150,7 @@ function makeController(): {
     reactions: undefined,
     resolveAgent: async () => agent,
     textMentionFor: () => '',
+    sendLogFile: async () => {},
   };
   return {
     transport,

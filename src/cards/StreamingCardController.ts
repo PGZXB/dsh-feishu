@@ -283,6 +283,8 @@ export interface StreamingCardHost {
   ): Promise<number | undefined>;
   /** Proactive @-mention prefix for a chat in groups (failure notices). */
   textMentionFor(chatId: string): string;
+  /** Read the dsh-feishu log and ship it to the chat (error-card "Export log"). */
+  sendLogFile(chatId: string): Promise<void>;
 }
 
 /**
@@ -1044,6 +1046,22 @@ export class StreamingCardController {
           await this.host.transport.sendText(
             action.chatId,
             `⚠️ Could not send the produced file \`${path}\` (${msg}).`,
+          );
+        }
+        return;
+      }
+      case 'send-log': {
+        // Error-card "Export log": ship the dsh-feishu log to the chat so the
+        // user can forward it to the admin. Does NOT mutate card state.
+        this.host.logger.debug(`send-log ${action.chatId}: exporting the dsh-feishu log`);
+        try {
+          await this.host.sendLogFile(action.chatId);
+        } catch (error: unknown) {
+          const msg = error instanceof Error ? error.message : String(error);
+          this.host.logger.warn(`send-log ${action.chatId}: failed (${msg})`);
+          await this.host.transport.sendText(
+            action.chatId,
+            `⚠️ Could not send the dsh-feishu log (${msg}).`,
           );
         }
         return;
