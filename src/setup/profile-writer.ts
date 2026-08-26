@@ -38,6 +38,8 @@ export interface GuidedConfig {
   readonly groupMentionMode?: 'always' | 'never' | 'ambient' | 'topic';
   /** Refuse work until a working directory is chosen; defaults to true. */
   readonly requireWorkingDir?: boolean;
+  /** Surface language for card/button copy; defaults to `en-US`. */
+  readonly locale?: 'en-US' | 'zh-CN';
 }
 
 export interface WriteProfileResult {
@@ -78,10 +80,12 @@ export function readFeishuGuidedConfig(rows: PatchRow[]): GuidedConfig {
       : undefined;
   const requireWorkingDir =
     typeof config.requireWorkingDir === 'boolean' ? config.requireWorkingDir : undefined;
+  const locale = config.locale === 'zh-CN' || config.locale === 'en-US' ? config.locale : undefined;
   return {
     ...(roots !== undefined && roots.length > 0 ? { repoRoots: roots } : {}),
     ...(groupMentionMode !== undefined ? { groupMentionMode } : {}),
     ...(requireWorkingDir !== undefined ? { requireWorkingDir } : {}),
+    ...(locale !== undefined ? { locale } : {}),
   };
 }
 
