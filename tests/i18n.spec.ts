@@ -11,6 +11,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { enMessages } from '../src/i18n/en-US.js';
 import {
   createTranslator,
   isLocale,
@@ -18,7 +19,6 @@ import {
   placeholderNames,
   type Translator,
 } from '../src/i18n/index.js';
-import { enMessages } from '../src/i18n/en-US.js';
 import { zhMessages } from '../src/i18n/zh-CN.js';
 
 describe('catalog parity', () => {

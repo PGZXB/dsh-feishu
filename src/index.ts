@@ -48,12 +48,12 @@ import { StreamingCardManager } from './cards/streaming.js';
 import type { CommandResult } from './commands.js';
 import { consoleExporter } from './console-exporter.js';
 import type { FeishuTransport } from './feishu/types.js';
+import { isLocale, type Locale, setActiveLocale } from './i18n/index.js';
 import { logFilePath } from './log-file.js';
 import { createMemoryTransport } from './memory-transport.js';
 import { registerSendFileTool } from './outbound.js';
 import type { SessionExportEvent } from './session-export.js';
 import { SessionMap } from './session-map.js';
-import { isLocale, type Locale, setActiveLocale } from './i18n/index.js';
 import { createLarkTransport } from './transport.js';
 
 /** Stable cordis plugin name (also the bundle row id in cordis.patch.yml). */
@@ -155,9 +155,7 @@ export const Config: z<Config> = z.object({
   unknownCommand: z.union([z.const('error'), z.const('passthrough')]).required(false),
   repoRoots: z.array(z.string()).required(false),
   requireWorkingDir: z.boolean().required(false),
-  locale: z
-    .union([z.const('en-US'), z.const('zh-CN')])
-    .required(false),
+  locale: z.union([z.const('en-US'), z.const('zh-CN')]).required(false),
   reactions: z
     .object({
       received: z.string().required(false),

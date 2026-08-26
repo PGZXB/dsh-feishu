@@ -12,6 +12,7 @@
  */
 
 import type { CardElement, CardJson } from '../feishu/types.js';
+import { t } from '../i18n/index.js';
 import { actionValue, stripAngleBrackets } from './render.js';
 
 /** One `/sessions` row (the surface projection of a dsh session). */
@@ -44,22 +45,22 @@ export const SESSION_SELECT_MAX = 50;
 export function ageLabel(createdAt: number, now = Date.now()): string {
   if (createdAt <= 0) return '';
   const minutes = Math.floor(Math.max(0, now - createdAt) / 60_000);
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 1) return t('sessions.age.justNow');
+  if (minutes < 60) return t('sessions.age.minutes', { count: minutes });
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
+  if (hours < 24) return t('sessions.age.hours', { count: hours });
+  return t('sessions.age.days', { count: Math.floor(hours / 24) });
 }
 
 /** Line 1 of a session row: `**title** · age · badges` (badges include the
  *  ★ current marker, inline — not on its own line). */
 export function sessionTitleLine(row: SessionRowView): string {
   const title =
-    row.title === undefined || row.title.trim() === '' ? '(untitled)' : row.title.trim();
+    row.title === undefined || row.title.trim() === '' ? t('common.untitled') : row.title.trim();
   const badges = [
-    row.current ? '★ current' : undefined,
-    row.live ? '● live' : undefined,
-    row.persisted ? '💾 saved' : undefined,
+    row.current ? t('sessions.badge.current') : undefined,
+    row.live ? t('sessions.badge.live') : undefined,
+    row.persisted ? t('sessions.badge.saved') : undefined,
   ].filter((badge): badge is string => badge !== undefined);
   const parts = [`**${stripAngleBrackets(title)}**`];
   const age = ageLabel(row.createdAt);
@@ -101,9 +102,7 @@ export function buildSessionsCard(
   const elements: CardElement[] = [
     {
       tag: 'markdown',
-      content: archived
-        ? '**Archived sessions** — pick one to view and restore.'
-        : '**Saved sessions** — pick one to view details and act on it.',
+      content: archived ? t('sessions.list.archivedIntro') : t('sessions.list.intro'),
     },
     { tag: 'hr' },
     {
@@ -113,13 +112,13 @@ export function buildSessionsCard(
           tag: 'button',
           text: {
             tag: 'plain_text',
-            content: archived ? '◀️ Active sessions' : '🗄️ Archived',
+            content: archived ? t('sessions.list.toggleActive') : t('sessions.list.toggleArchived'),
           },
           value: actionValue({ kind: 'sessions-archived-toggle' }),
         },
         {
           tag: 'button',
-          text: { tag: 'plain_text', content: '🔎 Find session' },
+          text: { tag: 'plain_text', content: t('sessions.list.find') },
           value: actionValue({ kind: 'session-find' }),
         },
       ],
@@ -140,13 +139,16 @@ export function buildSessionsCard(
       content:
         query === undefined || query.trim() === ''
           ? archived
-            ? 'No archived sessions.'
-            : 'No sessions yet — send a message to start the first one.'
-          : `No session matches \`${query}\` — try the id or part of the title.`,
+            ? t('sessions.list.emptyArchived')
+            : t('sessions.list.empty')
+          : t('sessions.list.noMatch', { query }),
     });
     return {
       config: { wide_screen_mode: true },
-      header: { title: { tag: 'plain_text', content: '🗂️ Sessions' }, template: 'wathet' },
+      header: {
+        title: { tag: 'plain_text', content: t('sessions.list.title') },
+        template: 'wathet',
+      },
       elements,
     };
   }
@@ -158,11 +160,11 @@ export function buildSessionsCard(
     actions: [
       {
         tag: 'select_static',
-        placeholder: { tag: 'plain_text', content: 'Choose a session…' },
+        placeholder: { tag: 'plain_text', content: t('sessions.list.placeholder') },
         options: selectSessions.map((row) => ({
           text: {
             tag: 'plain_text',
-            content: `${stripAngleBrackets(row.title === undefined || row.title.trim() === '' ? '(untitled)' : row.title.trim())}${row.current ? ' ★' : ''}${row.live ? ' ●' : ''} · ${row.sessionId}`,
+            content: `${stripAngleBrackets(row.title === undefined || row.title.trim() === '' ? t('common.untitled') : row.title.trim())}${row.current ? ` ${t('sessions.badge.currentMark')}` : ''}${row.live ? ` ${t('sessions.badge.liveMark')}` : ''} · ${row.sessionId}`,
           },
           value: row.sessionId,
         })),
@@ -176,14 +178,14 @@ export function buildSessionsCard(
       elements: [
         {
           tag: 'plain_text',
-          content: `${filtered.length - SESSION_SELECT_MAX} more — use 🔎 Find session to reach any of them.`,
+          content: t('sessions.list.moreFiltered', { count: filtered.length - SESSION_SELECT_MAX }),
         },
       ],
     });
   }
   return {
     config: { wide_screen_mode: true },
-    header: { title: { tag: 'plain_text', content: '🗂️ Sessions' }, template: 'wathet' },
+    header: { title: { tag: 'plain_text', content: t('sessions.list.title') }, template: 'wathet' },
     elements,
   };
 }
@@ -210,10 +212,10 @@ export interface SessionDetailView {
  */
 export function buildSessionDetailCard(view: SessionDetailView, canMutate: boolean): CardJson {
   const rows = [
-    `**${stripAngleBrackets(view.title ?? '(untitled)')}**`,
+    `**${stripAngleBrackets(view.title ?? t('common.untitled'))}**`,
     `\`${view.sessionId}\``,
-    view.cwd !== undefined ? `cwd: \`${view.cwd}\`` : 'cwd: —',
-    view.createdAt > 0 ? `created: ${ageLabel(view.createdAt)}` : 'created: —',
+    view.cwd !== undefined ? `cwd: \`${view.cwd}\`` : t('sessions.detail.cwdNone'),
+    view.createdAt > 0 ? `created: ${ageLabel(view.createdAt)}` : t('sessions.detail.createdNone'),
     `messages: ${view.messageCount}`,
     ...(view.lastSummary !== undefined && view.lastSummary !== ''
       ? ['', `**Last answer**`, view.lastSummary.slice(0, 200)]
@@ -228,7 +230,7 @@ export function buildSessionDetailCard(view: SessionDetailView, canMutate: boole
   if (!view.current) {
     actions.push({
       tag: 'button',
-      text: { tag: 'plain_text', content: '▶️ Resume' },
+      text: { tag: 'plain_text', content: t('sessions.action.resume') },
       type: 'primary',
       value: actionValue({
         kind: 'resume-session',
@@ -240,26 +242,29 @@ export function buildSessionDetailCard(view: SessionDetailView, canMutate: boole
   if (canMutate) {
     actions.push({
       tag: 'button',
-      text: { tag: 'plain_text', content: '✏️ Rename' },
+      text: { tag: 'plain_text', content: t('sessions.action.rename') },
       value: actionValue({ kind: 'session-rename', sessionId: view.sessionId }),
     });
     actions.push({
       tag: 'button',
       text: {
         tag: 'plain_text',
-        content: view.archived ? '♻️ Restore' : '🗄️ Archive',
+        content: view.archived ? t('sessions.action.restore') : t('sessions.action.archive'),
       },
       value: actionValue({ kind: 'session-archive', sessionId: view.sessionId }),
     });
   }
   actions.push({
     tag: 'button',
-    text: { tag: 'plain_text', content: '📤 Export' },
+    text: { tag: 'plain_text', content: t('sessions.action.export') },
     value: actionValue({ kind: 'session-export', sessionId: view.sessionId }),
   });
   return {
     config: { wide_screen_mode: true },
-    header: { title: { tag: 'plain_text', content: '🗂️ Session' }, template: 'wathet' },
+    header: {
+      title: { tag: 'plain_text', content: t('sessions.detail.title') },
+      template: 'wathet',
+    },
     elements: [
       { tag: 'markdown', content: rows.join('\n') },
       { tag: 'hr' },

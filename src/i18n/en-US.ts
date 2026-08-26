@@ -140,11 +140,14 @@ export const enMessages = {
   'sessions.list.empty': 'No sessions yet — send a message to start the first one.',
   'sessions.list.emptyArchived': 'No archived sessions.',
   'sessions.list.moreFiltered': '{count} more — use 🔎 Find session to reach any of them.',
+  'sessions.list.noMatch': 'No session matches `{query}` — try the id or part of the title.',
   'sessions.age.justNow': 'just now',
   'sessions.age.minutes': '{count}m ago',
   'sessions.age.hours': '{count}h ago',
   'sessions.age.days': '{count}d ago',
   'sessions.badge.current': '★ current',
+  'sessions.badge.currentMark': '★',
+  'sessions.badge.liveMark': '●',
   'sessions.badge.live': '● live',
   'sessions.badge.saved': '💾 saved',
   'sessions.detail.title': '🗂️ Session',
@@ -273,7 +276,8 @@ export const enMessages = {
     'Working directory set to {path} (session restarts on your next message).',
   'command.info.planOn': 'Plan mode on. Use /plan off to leave.',
   'command.info.planOff': 'Plan mode off.',
-  'command.info.planEnterNextStep': 'Entering plan mode (applies from the next step). Use /plan off to leave.',
+  'command.info.planEnterNextStep':
+    'Entering plan mode (applies from the next step). Use /plan off to leave.',
   'command.info.planLeaveNextStep': 'Leaving plan mode (applies from the next step).',
   'command.info.planAlreadyActive': 'Plan mode is already active.',
   'command.info.planAlreadyInactive': 'Plan mode is already inactive.',
@@ -284,7 +288,8 @@ export const enMessages = {
   'command.error.turnRunningShort': '⚠️ a turn is running — stop it first.',
   'command.error.nothingToClear': 'nothing to clear — this chat has no session yet.',
   'command.error.cmdUnavailableDeployment': '/{name} is unavailable on this deployment.',
-  'command.error.cmdUnavailableRegistry': '/{name} is unavailable — the dsh command registry is not mounted.',
+  'command.error.cmdUnavailableRegistry':
+    '/{name} is unavailable — the dsh command registry is not mounted.',
   'command.error.scheduleUnavailable':
     'schedule listing unavailable — the session query service is not mounted.',
   'command.error.scheduleFallback':
@@ -340,6 +345,8 @@ export const enMessages = {
   'resume.noCwdHint':
     ' This chat has no working directory — pick one with /repo or /cd before sending a message.',
   'inbound.unsupportedType': '⚠️ I can’t process messages of type `{type}` yet.',
+  'inbound.unavailableUploadScope':
+    ' — the Feishu app needs the im:resource:upload permission scope (developer console → Permissions).',
   'inbound.folderNote':
     ' Folder contents cannot be downloaded via the API — please send the files individually or as a zip archive instead.',
   'command.unknown': 'Unknown command {line} — send /help to list commands.',

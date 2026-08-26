@@ -134,11 +134,14 @@ export const zhMessages: Record<MessageKey, string> = {
   'sessions.list.empty': '还没有会话 —— 发送一条消息开始第一个会话。',
   'sessions.list.emptyArchived': '没有已归档的会话。',
   'sessions.list.moreFiltered': '还有 {count} 个 —— 使用 🔎 查找会话 定位它们。',
+  'sessions.list.noMatch': '没有匹配 `{query}` 的会话 —— 请尝试会话 id 或标题的一部分。',
   'sessions.age.justNow': '刚刚',
   'sessions.age.minutes': '{count} 分钟前',
   'sessions.age.hours': '{count} 小时前',
   'sessions.age.days': '{count} 天前',
   'sessions.badge.current': '★ 当前',
+  'sessions.badge.currentMark': '★',
+  'sessions.badge.liveMark': '●',
   'sessions.badge.live': '● 存活',
   'sessions.badge.saved': '💾 已保存',
   'sessions.detail.title': '🗂️ 会话',
@@ -179,11 +182,9 @@ export const zhMessages: Record<MessageKey, string> = {
   'panel.permission.intro': '**选择权限预设** —— 决定该聊天会话的沙箱模式与审批策略。',
   'panel.model.title': '🤖 模型',
   'panel.model.placeholder': '请选择模型…',
-  'panel.model.noneConfigured':
-    '当前部署没有可用模型 —— 使用 /model <provider>/<model> 设置一个。',
+  'panel.model.noneConfigured': '当前部署没有可用模型 —— 使用 /model <provider>/<model> 设置一个。',
   'panel.model.noneSelected': '尚未选择模型。',
-  'panel.model.intro':
-    '**选择模型** —— 选择会立即切换当前会话的模型，并保存为新会话的默认值。',
+  'panel.model.intro': '**选择模型** —— 选择会立即切换当前会话的模型，并保存为新会话的默认值。',
   'panel.category.session': '🧩 会话',
   'panel.category.chat': '💬 聊天',
   'panel.category.system': '⚙️ 系统',
@@ -224,7 +225,8 @@ export const zhMessages: Record<MessageKey, string> = {
 
   // ── Panel confirm sub-view copy (per command) ───────────────────────────
   'command.confirm.clear.title': '✨ 新对话',
-  'command.confirm.clear.message': '开始一个新的对话？之前的会话仍会保留（可通过 /sessions 继续）。',
+  'command.confirm.clear.message':
+    '开始一个新的对话？之前的会话仍会保留（可通过 /sessions 继续）。',
   'command.confirm.clear.submit': '开始新对话',
   'command.confirm.compact.title': '🧹 压缩',
   'command.confirm.compact.message': '将较早的对话历史压缩成摘要？压缩期间该聊天不可用。',
@@ -267,7 +269,8 @@ export const zhMessages: Record<MessageKey, string> = {
   'panel.action.renameUnavailable': '当前部署不支持重命名会话。',
   'panel.action.sessionNotLoaded': '该会话无法加载 —— 请先继续它再重命名。',
   'panel.action.invalidProjectPick': '无效的项目选择。',
-  'panel.action.permissionPickUnavailable': '无法选择权限预设 —— 机器人可能已重启。请重新发送 /permission。',
+  'panel.action.permissionPickUnavailable':
+    '无法选择权限预设 —— 机器人可能已重启。请重新发送 /permission。',
   'panel.action.modelPickUnavailable': '无法选择模型 —— 未挂载 agentDefaultModel 服务。',
   'panel.action.archiveUnavailable': '当前部署不支持归档会话。',
   'panel.action.sessionRenamed': '会话 {sessionId} 已重命名。',
@@ -335,8 +338,9 @@ export const zhMessages: Record<MessageKey, string> = {
   'resume.success': '已继续会话 {sessionId} —— 发送一条消息即可继续。',
   'resume.noCwdHint': ' 该聊天还没有工作目录 —— 请在发送消息前用 /repo 或 /cd 选择。',
   'inbound.unsupportedType': '⚠️ 我还不能处理 `{type}` 类型的消息。',
-  'inbound.folderNote':
-    ' API 无法下载文件夹内容 —— 请改为逐个发送文件或打包成 zip 归档。',
+  'inbound.unavailableUploadScope':
+    ' —— 飞书应用需要 im:resource:upload 权限范围（开发者控制台 → 权限）。',
+  'inbound.folderNote': ' API 无法下载文件夹内容 —— 请改为逐个发送文件或打包成 zip 归档。',
   'command.unknown': '未知命令 {line} —— 发送 /help 查看命令列表。',
   'queue.alreadyConsumed': '⚠️ 那条排队的消息已被处理。',
 

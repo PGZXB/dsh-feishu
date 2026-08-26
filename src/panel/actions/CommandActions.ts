@@ -10,6 +10,7 @@
 
 import type { CommandResult, SurfaceCommand } from '../../commands.js';
 import type { CardAction } from '../../feishu/types.js';
+import { t } from '../../i18n/index.js';
 import {
   isPanelInputCommand,
   PANEL_CONFIRM_SPEC,
@@ -81,7 +82,7 @@ export class CommandAction extends PanelAction {
     }
   }
   protected override busyTitle(_ctx: PanelActionContext, action: CardAction): string {
-    return action.value.name ?? '⚙️ dsh-feishu panel';
+    return action.value.name ?? t('panel.title');
   }
   protected override work(
     ctx: PanelActionContext,
@@ -132,7 +133,7 @@ export class PanelInputSubmitAction extends PanelAction {
   protected override busyTitle(_ctx: PanelActionContext, action: CardAction): string {
     const name = action.value.command;
     if (isPanelInputCommand(name)) return PANEL_INPUT_SPEC[name].title;
-    return '⚙️ dsh-feishu panel';
+    return t('panel.title');
   }
   protected override work(
     ctx: PanelActionContext,
@@ -149,7 +150,7 @@ export class PanelInputSubmitAction extends PanelAction {
       if (sessionTitle === undefined) {
         return {
           kind: 'error',
-          text: 'Renaming sessions is unavailable on this deployment.',
+          text: t('panel.action.renameUnavailable'),
         };
       }
       return (async () => {
@@ -165,7 +166,7 @@ export class PanelInputSubmitAction extends PanelAction {
           if (session === undefined) {
             return {
               kind: 'error',
-              text: 'This session could not be loaded — resume it before renaming.',
+              text: t('panel.action.sessionNotLoaded'),
             };
           }
           sessionTitle.rename(session, rawInput);
@@ -211,7 +212,7 @@ export class PanelConfirmAction extends PanelAction {
   protected override busyTitle(_ctx: PanelActionContext, action: CardAction): string {
     const name = action.value.command;
     if (name === 'clear' || name === 'compact') return PANEL_CONFIRM_SPEC[name].title;
-    return '⚙️ dsh-feishu panel';
+    return t('panel.title');
   }
   protected override work(
     ctx: PanelActionContext,

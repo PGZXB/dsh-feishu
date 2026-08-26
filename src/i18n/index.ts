@@ -46,7 +46,10 @@ export type MessageKey = keyof typeof enMessages & string;
  * @returns the localized string with parameters substituted.
  * @throws when the key is absent from the translator's catalog.
  */
-export type Translator = (key: MessageKey, params?: Readonly<Record<string, string | number>>) => string;
+export type Translator = (
+  key: MessageKey,
+  params?: Readonly<Record<string, string | number>>,
+) => string;
 
 /**
  * Extract the `{name}` placeholder names from one message value.

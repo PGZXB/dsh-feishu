@@ -8,6 +8,7 @@
 
 import type { CommandResult } from '../../commands.js';
 import type { CardAction } from '../../feishu/types.js';
+import { t } from '../../i18n/index.js';
 import { applySessionModelSwitch } from '../../model-switch.js';
 import { PanelAction } from './ActionRegistry.js';
 import type { PanelActionContext } from './PanelAction.js';
@@ -17,12 +18,12 @@ export class RepoPickAction extends PanelAction {
   readonly kind = 'repo-pick';
   readonly allowedWhileWorking = false;
   protected override busyTitle(): string {
-    return '📚 Pick a project';
+    return t('card.repo.title');
   }
   protected override work(ctx: PanelActionContext, action: CardAction): CommandResult | undefined {
     const path = action.option ?? action.value.path;
     if (path === undefined || path === '') {
-      return { kind: 'error', text: 'Invalid project selection.' };
+      return { kind: 'error', text: t('panel.action.invalidProjectPick') };
     }
     const resolved = ctx.resolveDirectory(path);
     if (!resolved.ok) return { kind: 'error', text: resolved.error };
@@ -51,7 +52,7 @@ export class PermissionPickAction extends PanelAction {
   readonly kind = 'permission-pick';
   readonly allowedWhileWorking = false;
   protected override busyTitle(): string {
-    return '🔐 Permission';
+    return t('command.cmd.permission.label');
   }
   protected override work(ctx: PanelActionContext, action: CardAction): CommandResult | undefined {
     const preset = action.option ?? action.value.preset;
@@ -61,7 +62,7 @@ export class PermissionPickAction extends PanelAction {
     if (service === undefined || agent === undefined) {
       return {
         kind: 'error',
-        text: 'Permission pick unavailable — the bot may have restarted. Send /permission again.',
+        text: t('panel.action.permissionPickUnavailable'),
       };
     }
     try {
@@ -94,7 +95,7 @@ export class ModelPickAction extends PanelAction {
   readonly kind = 'model-pick';
   readonly allowedWhileWorking = false;
   protected override busyTitle(): string {
-    return '🤖 Model';
+    return t('panel.model.title');
   }
   protected override work(ctx: PanelActionContext, action: CardAction): CommandResult | undefined {
     const selection = action.option ?? action.value.selection;
@@ -103,7 +104,7 @@ export class ModelPickAction extends PanelAction {
     if (service === undefined) {
       return {
         kind: 'error',
-        text: 'Model pick unavailable — the agentDefaultModel service is not mounted.',
+        text: t('panel.action.modelPickUnavailable'),
       };
     }
     const parsed = ctx.parseModelArg(selection);

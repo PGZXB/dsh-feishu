@@ -83,6 +83,7 @@ import type { PanelView } from './panel/types.js';
 export { isPanelInputCommand, PANEL_CONFIRM_SPEC, PANEL_INPUT_SPEC } from './panel/types.js';
 
 import { turnTitle } from './cards/StreamingCardController.js';
+import { t } from './i18n/index.js';
 
 export { turnTitle } from './cards/StreamingCardController.js';
 
@@ -867,7 +868,7 @@ export class Bridge {
   private async replyResultCard(chatId: string, result: CommandResult): Promise<void> {
     const text = result.kind === 'error' ? `⚠️ ${result.text}` : result.text;
     if (text === '') return;
-    const title = result.kind === 'error' ? '⚠️ Action failed' : '✅ Done';
+    const title = result.kind === 'error' ? '⚠️ Action failed' : t('card.status.note.done');
     await this.options.transport
       .sendCard(chatId, buildResultCard(title, text, result.kind === 'error'))
       .catch(async (error: unknown) => {
@@ -1102,7 +1103,7 @@ export class Bridge {
     if (this.options.readSession === undefined) {
       return {
         kind: 'error',
-        text: 'session export unavailable — the session query service is not mounted.',
+        text: t('command.error.exportUnavailable'),
       };
     }
     try {
@@ -1194,12 +1195,12 @@ export class Bridge {
     const stopped = this.streaming.state(chatId)?.status === 'stopped';
     const output = this.streaming.lastOutput(chatId);
     const statusLine = running
-      ? '**Running** — a turn is in progress.'
+      ? t('panel.cardMenu.running')
       : stopped
-        ? '**Stopped** — the last turn was interrupted.'
+        ? t('panel.cardMenu.stopped')
         : output === undefined
-          ? '**Idle** — send a message to start a turn.'
-          : '**Ready** — the last answer is in the card above; copy or retry it.';
+          ? t('panel.cardMenu.idle')
+          : t('panel.cardMenu.ready');
     // The panel carries the chat's session context so a tap always shows
     // which session the buttons act on. An unpinned chat (no /repo or /cd)
     // surfaces the working-directory requirement instead of a fake cwd.
@@ -1208,7 +1209,7 @@ export class Bridge {
     const cwd = pinned ?? this.options.defaultCwd;
     const contextLine =
       pinned === undefined && this.options.requireWorkingDir !== false
-        ? 'No working directory — pick one with /repo or /cd first'
+        ? t('panel.context.noCwd')
         : sessionId === undefined
           ? `No session yet · \`${cwd}\``
           : `session \`${sessionId}\` · \`${cwd}\``;
@@ -1225,13 +1226,13 @@ export class Bridge {
   /** The plan-mode toggle button label for a chat's current state. */
   private planModeButtonLabel(chatId: string): string {
     const planMode = this.options.planMode;
-    if (planMode === undefined) return '🗺️ Plan mode';
+    if (planMode === undefined) return t('panel.planMode.plan');
     const sessionId = this.options.sessionMap.get(chatId);
     const agent = sessionId === undefined ? undefined : this.options.agentStore.get(sessionId);
-    if (agent === undefined) return '🗺️ Plan mode';
+    if (agent === undefined) return t('panel.planMode.plan');
     const current = planMode.get(agent);
     const active = current.pending ?? current.active;
-    return active ? '🗺️ Leave plan mode' : '🗺️ Plan mode';
+    return active ? t('panel.planMode.leave') : t('panel.planMode.plan');
   }
 
   /**

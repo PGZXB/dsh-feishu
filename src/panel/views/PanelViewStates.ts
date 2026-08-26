@@ -21,6 +21,7 @@ import {
 } from '../../cards/render.js';
 import { buildSessionDetailCard, buildSessionsCard } from '../../cards/session-list.js';
 import type { CardJson } from '../../feishu/types.js';
+import { t } from '../../i18n/index.js';
 import { PANEL_CONFIRM_SPEC, PANEL_INPUT_SPEC, type PanelView } from '../types.js';
 import type { PanelViewContext } from './PanelViewContext.js';
 import type { PanelViewState } from './PanelViewState.js';
@@ -59,8 +60,8 @@ export class InputViewState implements PanelViewState {
   /** Defensive fallback for a malformed view (unreachable in practice). */
   private fallback(): CardJson {
     return buildInputCard({
-      title: '✏️ Input',
-      hint: 'Enter a value.',
+      title: t('panel.input.fallback.title'),
+      hint: t('panel.input.fallback.hint'),
       fieldName: 'value',
       placeholder: 'Value',
       submitLabel: 'Submit',
@@ -88,8 +89,8 @@ export class ConfirmViewState implements PanelViewState {
   /** Defensive fallback for a malformed view (unreachable in practice). */
   private fallback(): CardJson {
     return buildConfirmCard({
-      title: '⚠️ Confirm',
-      message: 'Continue?',
+      title: t('panel.confirm.fallback.title'),
+      message: t('panel.confirm.fallback.message'),
       confirmLabel: 'Confirm',
       command: 'clear',
     });
@@ -113,7 +114,8 @@ export class SessionDetailViewState implements PanelViewState {
   readonly key = 'session-detail';
   readonly asyncData = true;
   async render(ctx: PanelViewContext, chatId: string, view: PanelView): Promise<CardJson> {
-    const sessionId = view.kind === 'session-detail' ? view.sessionId : '(unknown)';
+    const sessionId =
+      view.kind === 'session-detail' ? view.sessionId : t('panel.view.unknownSession');
     const detail = await ctx.sessionDetail(chatId, sessionId);
     if (detail === undefined) return this.unknown(sessionId, ctx);
     return buildSessionDetailCard(detail, ctx.canMutateSessions);
@@ -123,7 +125,7 @@ export class SessionDetailViewState implements PanelViewState {
     return buildSessionDetailCard(
       {
         sessionId,
-        title: '(unknown)',
+        title: t('panel.view.unknownSession'),
         cwd: undefined,
         createdAt: 0,
         messageCount: 0,
@@ -177,11 +179,14 @@ export class PermissionPickerViewState implements PanelViewState {
     if (service === undefined) {
       return {
         config: { wide_screen_mode: true },
-        header: { title: { tag: 'plain_text', content: '🔐 Permission' }, template: 'wathet' },
+        header: {
+          title: { tag: 'plain_text', content: t('command.cmd.permission.label') },
+          template: 'wathet',
+        },
         elements: [
           {
             tag: 'markdown',
-            content: 'Permission presets are unavailable on this deployment.',
+            content: t('panel.permission.serviceUnavailable'),
           },
         ],
       };
