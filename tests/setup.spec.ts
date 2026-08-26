@@ -6,9 +6,10 @@
  * console is never exercised here.
  */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mergeBotProfile, promptBotProfile } from '../src/setup/bot-profile.js';
 import { parseArgs, startHint } from '../src/setup/cli.js';
@@ -68,6 +69,9 @@ import {
   readStoredCookiesFromSessionFile,
   writeStoredCookiesToSessionFile,
 } from '../src/setup/session.js';
+
+/** Repo root, for reading tracked files (package.json) in pack-shape tests. */
+const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 const tmpDirs: string[] = [];
 afterEach(() => {
@@ -755,6 +759,19 @@ describe('avatar resolution', () => {
   it('falls back to the bundled avatar for a missing path', () => {
     const src = resolveAvatarBuffer('/nonexistent/avatar.png');
     expect(src.width).toBe(1024);
+  });
+
+  it('ships the default avatar in the published package (files whitelist)', () => {
+    // Regression (user report): an npm install produced a bot with the
+    // solid-color placeholder instead of the bundled default avatar —
+    // `docs/` was not in the package `files`, so DEFAULT_AVATAR_PATH did
+    // not exist there and resolveAvatarBuffer silently degraded. The
+    // whitelist must list the file individually, and the file must exist.
+    const manifest = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8')) as {
+      files?: string[];
+    };
+    expect(manifest.files).toContain('docs/assets/default-avatar.png');
+    expect(existsSync(DEFAULT_AVATAR_PATH)).toBe(true);
   });
 });
 
