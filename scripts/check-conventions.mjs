@@ -9,6 +9,9 @@
  *    mirror misses harness packages)
  *  - missing bilingual doc pairs (en + zh tracked docs must stay in sync)
  *  - non-conventional commit messages on the current branch head
+ *  - @deepseek-ai packages listed under "dependencies" (they must be
+ *    peerDependencies so the dsh host supplies one instance — a second
+ *    physical copy breaks symbol-keyed module state and crashes tool calls)
  *
  * Usage:
  *   node scripts/check-conventions.mjs          # check everything
@@ -202,12 +205,36 @@ const args = process.argv.slice(2);
 const commitFlag = args.find((a) => a.startsWith('--commits='));
 const commitCount = commitFlag ? Number(commitFlag.split('=')[1]) : 5;
 
+/**
+ * @deepseek-ai harness packages must be peerDependencies, never dependencies.
+ * The dsh host keeps a flat symlink fallback so every consumer loads ONE
+ * instance; pnpm installing a @deepseek-ai package as a real dependency places
+ * a SECOND copy in the profile's node_modules, which shadows the host symlink.
+ * Module-identity state keyed by a module-local Symbol (the dsh-tools
+ * scheduler) then mismatches between the two copies → tool calls crash with
+ * "Cannot read properties of undefined (reading 'prepare')". The dsh-TUI
+ * surface keeps every @deepseek-ai/* package out of dependencies, and so do we.
+ */
+function checkHarnessPackagesArePeerDeps() {
+  const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+  const deps = pkg.dependencies ?? {};
+  const offenders = Object.keys(deps).filter((name) => name.startsWith('@deepseek-ai/'));
+  if (offenders.length > 0) {
+    fail(
+      `@deepseek-ai packages are in "dependencies" (must be peerDependencies; a second copy breaks tool calls): ${offenders.join(', ')}`,
+    );
+  } else {
+    pass('@deepseek-ai packages are peerDependencies (no double-install, dsh-TUI-aligned)');
+  }
+}
+
 checkTrackedDocs();
 checkNoMirrorLeaks();
 checkDocPairs();
 checkCommits(commitCount);
 checkMinimumReleaseAge();
 checkVersionTrack();
+checkHarnessPackagesArePeerDeps();
 checkMainTreeClean();
 
 if (failures > 0) {
