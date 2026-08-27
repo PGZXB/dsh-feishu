@@ -13,6 +13,7 @@ import {
   LarkTransport,
   normalizeCardAction,
   normalizeMessageEvent,
+  parseBotOpenId,
 } from '../src/transport.js';
 
 /** A minimal raw event with the fields the normalizer reads. */
@@ -422,6 +423,61 @@ describe('LarkTransport message-resource downloads', () => {
     await expect(transport.downloadFile('om_msg1', 'empty')).rejects.toThrow(
       /response carried no resource bytes/,
     );
+  });
+});
+
+describe('parseBotOpenId', () => {
+  it('parses the current bot/v3/info shape (bot.open_id)', () => {
+    expect(parseBotOpenId({ code: 0, bot: { open_id: 'ou_bot' }, msg: 'ok' })).toBe('ou_bot');
+  });
+
+  it('falls back to the legacy shape (data.open_id)', () => {
+    expect(parseBotOpenId({ code: 0, data: { open_id: 'ou_bot' } })).toBe('ou_bot');
+  });
+
+  it('returns undefined when the body carries no open id', () => {
+    expect(parseBotOpenId({ code: 0, bot: { activate_status: 2 } })).toBeUndefined();
+    expect(parseBotOpenId({ code: 0 })).toBeUndefined();
+    expect(parseBotOpenId({ code: 0, bot: { open_id: '' } })).toBeUndefined();
+  });
+});
+
+describe('LarkTransport.resolveBotOpenId', () => {
+  it('caches the bot open id from the current bot.open_id shape', async () => {
+    const transport = new LarkTransport({
+      credentials: { appId: 'cli_test', appSecret: 'secret' },
+    });
+    const request = vi.fn().mockResolvedValue({
+      code: 0,
+      msg: 'ok',
+      bot: { activate_status: 2, open_id: 'ou_bot', app_name: 'dsh-feishu-test' },
+    });
+    (transport as unknown as { client: { request: unknown } }).client = { request } as never;
+
+    await (transport as unknown as { resolveBotOpenId(): Promise<void> }).resolveBotOpenId();
+
+    expect(request).toHaveBeenCalledWith({ method: 'GET', url: '/open-apis/bot/v3/info' });
+    expect(transport.getBotOpenId()).toBe('ou_bot');
+  });
+
+  it('warns loudly and stays unresolved when the response carries no open id', async () => {
+    const warns: string[] = [];
+    const transport = new LarkTransport({
+      credentials: { appId: 'cli_test', appSecret: 'secret' },
+      logger: {
+        info: () => {},
+        warn: (message: string) => warns.push(message),
+        error: () => {},
+        debug: () => {},
+      },
+    });
+    const request = vi.fn().mockResolvedValue({ code: 0, msg: 'ok' });
+    (transport as unknown as { client: { request: unknown } }).client = { request } as never;
+
+    await (transport as unknown as { resolveBotOpenId(): Promise<void> }).resolveBotOpenId();
+
+    expect(transport.getBotOpenId()).toBeUndefined();
+    expect(warns.join(' ')).toContain('group mention detection is disabled');
   });
 });
 

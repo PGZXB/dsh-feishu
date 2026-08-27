@@ -168,6 +168,17 @@ The harness sandbox (and this checkout's environment) has specific rules:
   (always/never/ambient/topic). In 1-person-1-bot solo groups the `@`
   requirement is relaxed (`isSoloGroup`).
 - `allowedChats` is an allowlist; chats outside it are ignored entirely.
+- **`bot/v3/info` nests the bot's own open id under `bot.open_id`, not
+  `data.open_id`.** The mention gate compares each inbound group message's
+  mention list against `transport.getBotOpenId()`; if that id is never
+  resolved, `mentioned` is always false and every group message (even a
+  real `@`) reads as "not mentioned" under `always`/`topic` — the bot
+  silently ignores all group traffic. Symptom: "ignoring group message: bot
+  not mentioned" while the user did `@` the bot, with no error anywhere.
+  Fix: parse both shapes (`parseBotOpenId`), and warn loudly at boot when
+  the response carries no open id instead of failing silently. Verify the
+  live shape with the real app — the SDK's `request` returns the raw body
+  with `bot` at the top level.
 
 ## Git discovery vs. scan roots
 
