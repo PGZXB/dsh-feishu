@@ -321,9 +321,15 @@ describe('surface command copy is locale-aware', () => {
     setActiveLocale('zh-CN');
     const { commands } = makeCommands();
     expect(commands.find('goal')?.buttonLabel).toBe(zh('command.cmd.goal.label'));
-    expect(commands.find('compact')?.buttonLabel).toBe(zh('command.confirm.compact.title'));
+    expect(commands.find('compact')?.buttonLabel).toBe(zh('command.cmd.compact.label'));
     expect(commands.find('feedback')?.buttonLabel).toBe(zh('command.cmd.feedback.label'));
-    // Sanity: the direct registrations resolve per-locale too.
+    // Sanity: every surface command button resolves through command.cmd.*.label.
+    expect(commands.find('log')?.buttonLabel).toBe(zh('command.cmd.log.label'));
+    expect(commands.find('cancel')?.buttonLabel).toBe(zh('command.cmd.cancel.label'));
+    expect(commands.find('model')?.buttonLabel).toBe(zh('command.cmd.model.label'));
+    expect(commands.find('export')?.buttonLabel).toBe(zh('command.cmd.export.label'));
+    expect(commands.find('sessions')?.buttonLabel).toBe(zh('command.cmd.sessions.label'));
+    expect(commands.find('plan')?.buttonLabel).toBe(zh('command.cmd.plan.label'));
     expect(commands.find('status')?.buttonLabel).toBe(zh('command.cmd.status.label'));
   });
 

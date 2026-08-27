@@ -249,6 +249,8 @@ export const zhMessages: Record<MessageKey, string> = {
   'command.cmd.clear.label': '✨ 新对话',
   'command.cmd.new.label': '➕ 新聊天',
   'command.cmd.permission.label': '🔐 权限',
+  'command.cmd.compact.label': '🧹 压缩',
+  'command.cmd.plan.label': '🗺️ 计划模式',
   'command.cmd.goal.label': '🎯 目标',
   'command.cmd.feedback.label': '💬 反馈',
 

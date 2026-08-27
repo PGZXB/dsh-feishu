@@ -259,6 +259,8 @@ export const enMessages = {
   'command.cmd.clear.label': '✨ Fresh start',
   'command.cmd.new.label': '➕ New chat',
   'command.cmd.permission.label': '🔐 Permission',
+  'command.cmd.compact.label': '🧹 Compact',
+  'command.cmd.plan.label': '🗺️ Plan mode',
   'command.cmd.goal.label': '🎯 Goal',
   'command.cmd.feedback.label': '💬 Feedback',
 

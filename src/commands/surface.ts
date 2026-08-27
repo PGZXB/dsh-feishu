@@ -63,7 +63,7 @@ const HARNESS_COMMANDS: ReadonlyArray<{
   {
     name: 'compact',
     description: 'Compact older conversation history',
-    buttonLabelKey: 'command.confirm.compact.title',
+    buttonLabelKey: 'command.cmd.compact.label',
   },
   {
     name: 'feedback',
@@ -249,7 +249,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     name: 'log',
     description: 'Send the dsh-feishu log file to this chat',
     category: 'system',
-    buttonLabel: t('card.button.exportLog'),
+    buttonLabel: t('command.cmd.log.label'),
     handler: (invocation) => options.sendLog(invocation.chatId),
   });
   commands.register({
@@ -282,7 +282,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     name: 'cancel',
     description: 'Stop the current turn',
     category: 'session',
-    buttonLabel: t('card.button.stopTurn'),
+    buttonLabel: t('command.cmd.cancel.label'),
     handler: (invocation) => {
       const sessionId = options.sessionMap.get(invocation.chatId);
       const agent = sessionId === undefined ? undefined : options.agentStore.get(sessionId);
@@ -455,7 +455,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
       'Switch this session\u2019s model (bare opens the picker); /model <provider>/<model> switches directly',
     usage: '<provider/model>',
     category: 'system',
-    buttonLabel: t('panel.model.title'),
+    buttonLabel: t('command.cmd.model.label'),
     handler: async (invocation) => {
       const raw = invocation.rawInput.trim();
       if (raw === '') {
@@ -529,7 +529,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     name: 'export',
     description: 'Export this chat’s session log as a file',
     category: 'system',
-    buttonLabel: t('sessions.action.export'),
+    buttonLabel: t('command.cmd.export.label'),
     handler: async (invocation) => {
       const sessionId = options.sessionMap.get(invocation.chatId);
       if (sessionId === undefined) {
@@ -566,7 +566,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     name: 'sessions',
     description: 'List saved sessions and act on one in this chat',
     category: 'session',
-    buttonLabel: t('sessions.list.title'),
+    buttonLabel: t('command.cmd.sessions.label'),
     handler: async (invocation) => {
       // The panel state machine owns the session list/detail flow.
       await options.pushPanel(invocation.chatId, { kind: 'sessions', archived: false });
@@ -704,7 +704,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     description: 'Enter or leave plan mode (bare toggles; /plan on|off sets it)',
     usage: '[on|off]',
     category: 'system',
-    buttonLabel: t('panel.planMode.plan'),
+    buttonLabel: t('command.cmd.plan.label'),
     handler: async (invocation) => {
       const raw = invocation.rawInput.trim();
       // A bare /plan toggles plan mode; /plan on|off sets it explicitly. The
