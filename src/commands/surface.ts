@@ -27,6 +27,7 @@ import { buildStatusCard } from '../cards/render.js';
 import type { CommandInvocation, CommandRegistry, CommandResult } from '../commands.js';
 import { resolveDirectory } from '../directory.js';
 import type { FeishuTransport } from '../feishu/types.js';
+import { type MessageKey, t } from '../i18n/index.js';
 import { parseModelArg } from '../model-args.js';
 import { applySessionModelSwitch, sessionSelection } from '../model-switch.js';
 import type { PanelView } from '../panel/types.js';
@@ -49,26 +50,58 @@ const HARNESS_COMMANDS: ReadonlyArray<{
   readonly name: string;
   readonly description: string;
   readonly usage?: string;
-  readonly buttonLabel: string;
+  /** A catalog key, resolved to a label AT REGISTRATION TIME (never at
+   *  module load — a module-level `t()` freezes the pre-`apply()` locale). */
+  readonly buttonLabelKey: MessageKey;
 }> = [
   {
     name: 'goal',
     description: 'Set or view the goal for a long-running task',
     usage: '<text>',
-    buttonLabel: '🎯 Goal',
+    buttonLabelKey: 'command.cmd.goal.label',
   },
   {
     name: 'compact',
     description: 'Compact older conversation history',
-    buttonLabel: '🧹 Compact',
+    buttonLabelKey: 'command.cmd.compact.label',
   },
   {
     name: 'feedback',
     description: 'Send feedback',
     usage: '<text>',
-    buttonLabel: '💬 Feedback',
+    buttonLabelKey: 'command.cmd.feedback.label',
   },
 ];
+
+/**
+ * Surface command name → its localized `/help` description key. The
+ * registry-facing `description` fields stay English (contract text); `/help`
+ * renders the localized copy instead. Unknown names (not ours) fall back to
+ * the English description.
+ */
+const COMMAND_HELP_KEYS: Readonly<Record<string, MessageKey>> = {
+  help: 'command.help.help',
+  panel: 'command.help.panel',
+  log: 'command.help.log',
+  group: 'command.help.group',
+  cancel: 'command.help.cancel',
+  cd: 'command.help.cd',
+  repo: 'command.help.repo',
+  status: 'command.help.status',
+  'feishu-status': 'command.help.feishuStatus',
+  schedule: 'command.help.schedule',
+  model: 'command.help.model',
+  export: 'command.help.export',
+  sessions: 'command.help.sessions',
+  resume: 'command.help.resume',
+  clear: 'command.help.clear',
+  new: 'command.help.new',
+  goal: 'command.help.goal',
+  compact: 'command.help.compact',
+  feedback: 'command.help.feedback',
+  permission: 'command.help.permission',
+  plan: 'command.help.plan',
+};
 
 /** Mirror the harness /plan command's outcome wording for a toggle. */
 export function planModeResultText(
@@ -77,15 +110,13 @@ export function planModeResultText(
 ): string {
   switch (outcome) {
     case 'committed':
-      return target ? 'Plan mode on. Use /plan off to leave.' : 'Plan mode off.';
+      return target ? t('command.info.planOn') : t('command.info.planOff');
     case 'queued':
-      return target
-        ? 'Entering plan mode (applies from the next step). Use /plan off to leave.'
-        : 'Leaving plan mode (applies from the next step).';
+      return target ? t('command.info.planEnterNextStep') : t('command.info.planLeaveNextStep');
     case 'cancelled':
-      return 'Plan mode entry cancelled.';
+      return t('command.info.planEntryCancelled');
     case 'noop':
-      return target ? 'Plan mode is already active.' : 'Plan mode is already inactive.';
+      return target ? t('command.info.planAlreadyActive') : t('command.info.planAlreadyInactive');
   }
 }
 
@@ -151,13 +182,29 @@ export async function runHarnessCommand(
   if (host.executeCommand === undefined) {
     return {
       kind: 'error',
-      text: `/${name} is unavailable — the dsh command registry is not mounted.`,
+      text: t('command.error.cmdUnavailableRegistry', { name }),
     };
   }
   const agent = await host.ensureAgent(invocation.chatId);
   const result = await host.executeCommand(agent, `/${name}${invocation.rawInput}`);
   if (result !== undefined) return result;
-  return { kind: 'error', text: `/${name} is unavailable on this deployment.` };
+  return { kind: 'error', text: t('command.error.cmdUnavailableDeployment', { name }) };
+}
+
+/** Localize a group-mention mode id for the /status report. */
+function mentionModeLabel(mode: 'always' | 'never' | 'ambient' | 'topic' | undefined): string {
+  switch (mode) {
+    case 'always':
+      return t('command.status.mention.always');
+    case 'never':
+      return t('command.status.mention.never');
+    case 'ambient':
+      return t('command.status.mention.ambient');
+    case 'topic':
+      return t('command.status.mention.topic');
+    default:
+      return t('command.status.mention.always');
+  }
 }
 
 /**
@@ -171,18 +218,20 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     name: 'help',
     description: 'List all surface commands',
     category: 'system',
-    buttonLabel: '❓ Help',
+    buttonLabel: t('command.cmd.help.label'),
     handler: () => {
       const lines = commands
         .list()
-        .map(
-          (command) =>
-            `/${command.name}${command.usage === undefined ? '' : ` ${command.usage}`} — ${command.description}`,
-        )
+        .map((command) => {
+          const helpKey = COMMAND_HELP_KEYS[command.name];
+          return `/${command.name}${command.usage === undefined ? '' : ` ${command.usage}`} — ${
+            helpKey === undefined ? command.description : t(helpKey)
+          }`;
+        })
         .join('\n');
       return {
         kind: 'success',
-        text: `dsh-feishu commands:\n${lines}\n\nA bare command with optional args opens a picker/input card (same as its panel button); other slash lines are forwarded to dsh when they exist in its registry.`,
+        text: `${t('command.help.title')}\n${lines}\n\n${t('command.help.hint')}`,
       };
     },
   });
@@ -200,7 +249,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     name: 'log',
     description: 'Send the dsh-feishu log file to this chat',
     category: 'system',
-    buttonLabel: '📄 Export log',
+    buttonLabel: t('command.cmd.log.label'),
     handler: (invocation) => options.sendLog(invocation.chatId),
   });
   commands.register({
@@ -208,7 +257,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     description: 'Create a group chat with you and the bot',
     usage: '<name>',
     category: 'chat',
-    buttonLabel: '👥 New group',
+    buttonLabel: t('command.cmd.group.label'),
     handler: async (invocation) => {
       // A bare /group opens the same text-input card as the panel's "New
       // group" button (the user types the group name); /group <name> creates
@@ -220,9 +269,12 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
       const name = invocation.rawInput.trim() || 'dsh-feishu';
       try {
         const { chatId } = await options.transport.createGroup(name, [invocation.senderOpenId]);
-        return { kind: 'success', text: `Group created: ${name} (${chatId})` };
+        return { kind: 'success', text: t('command.info.groupCreated', { name, chatId }) };
       } catch (error: unknown) {
-        return { kind: 'error', text: `group creation failed: ${String(error)}` };
+        return {
+          kind: 'error',
+          text: t('command.error.groupCreateFailed', { detail: String(error) }),
+        };
       }
     },
   });
@@ -230,15 +282,15 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     name: 'cancel',
     description: 'Stop the current turn',
     category: 'session',
-    buttonLabel: '⏹ Stop turn',
+    buttonLabel: t('command.cmd.cancel.label'),
     handler: (invocation) => {
       const sessionId = options.sessionMap.get(invocation.chatId);
       const agent = sessionId === undefined ? undefined : options.agentStore.get(sessionId);
       if (agent !== undefined) {
         agent.cancel({ kind: 'user' }, { keepInbox: true });
-        return { kind: 'success', text: 'Stopped.' };
+        return { kind: 'success', text: t('command.result.stopped') };
       }
-      return { kind: 'error', text: 'no active session to stop.' };
+      return { kind: 'error', text: t('command.error.noSessionStop') };
     },
   });
   commands.register({
@@ -246,7 +298,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     description: 'Set this chat\u2019s working directory (session restarts in it)',
     usage: '<path>',
     category: 'session',
-    buttonLabel: '📁 Change dir',
+    buttonLabel: t('command.cmd.cd.label'),
     handler: async (invocation) => {
       const target = invocation.rawInput.trim();
       if (target === '') {
@@ -263,7 +315,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
       options.sessionMap.remint(invocation.chatId);
       return {
         kind: 'success',
-        text: `Working directory set to ${resolved.path} (session restarts on your next message).`,
+        text: t('command.info.cwdSetRestart', { path: resolved.path }),
       };
     },
   });
@@ -273,7 +325,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
       'Pick a project directory (bare scans the default roots; /repo <path> scans that path)',
     usage: '[path]',
     category: 'session',
-    buttonLabel: '📚 Pick project',
+    buttonLabel: t('command.cmd.repo.label'),
     handler: async (invocation) => {
       // /repo ALWAYS opens the picker card (the only command whose arg form
       // does too). `/repo <path>` scans that path as the repo root; bare uses
@@ -299,17 +351,27 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     name: 'status',
     description: 'Show this chat’s session status',
     category: 'system',
-    buttonLabel: '📊 Status',
+    buttonLabel: t('command.cmd.status.label'),
     handler: (invocation) => {
       const sessionId = options.sessionMap.get(invocation.chatId);
       const agent = sessionId === undefined ? undefined : options.agentStore.get(sessionId);
       const output = options.lastOutput(invocation.chatId);
       const lines = [
-        `chat: ${invocation.chatId}`,
-        `session: ${sessionId ?? '(none yet)'}`,
-        `agent: ${agent !== undefined ? 'live' : 'idle'}`,
-        `last output: ${output === undefined ? '(none)' : `${output.length} chars`}`,
-        `mention mode: ${options.groupMentionMode ?? 'always'}`,
+        t('command.status.chat', { id: invocation.chatId }),
+        t('command.status.session', {
+          id: sessionId === undefined ? t('command.status.sessionNone') : sessionId,
+        }),
+        t('command.status.agent', {
+          state:
+            agent !== undefined ? t('command.status.agentLive') : t('command.status.agentIdle'),
+        }),
+        t('command.status.lastOutput', {
+          summary:
+            output === undefined
+              ? t('command.status.lastOutputNone')
+              : t('command.status.lastOutputChars', { count: output.length }),
+        }),
+        t('command.status.mentionMode', { mode: mentionModeLabel(options.groupMentionMode) }),
       ];
       return { kind: 'success', text: lines.join('\n') };
     },
@@ -318,7 +380,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     name: 'feishu-status',
     description: 'Show the surface diagnostic card (connection, sessions, activity)',
     category: 'system',
-    buttonLabel: '📡 Surface status',
+    buttonLabel: t('command.cmd.feishuStatus.label'),
     handler: async (invocation) => {
       const raw = options.transport.connectionState?.();
       const connection: StatusView['connection'] =
@@ -326,7 +388,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
       await options.transport.sendCard(
         invocation.chatId,
         buildStatusCard({
-          appId: options.appId ?? '(not configured)',
+          appId: options.appId ?? t('status.notConfigured'),
           connection,
           sessionCount: options.sessionMap.size,
           lastInboundAt: options.lastInboundAt,
@@ -343,16 +405,16 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     name: 'schedule',
     description: 'List active reminders for this chat',
     category: 'system',
-    buttonLabel: '⏰ Reminders',
+    buttonLabel: t('command.cmd.schedule.label'),
     handler: async (invocation) => {
       const sessionId = options.sessionMap.get(invocation.chatId);
       if (sessionId === undefined) {
-        return { kind: 'error', text: 'no session yet — send a message first.' };
+        return { kind: 'error', text: t('command.error.noSession') };
       }
       if (options.readSession === undefined) {
         return {
           kind: 'error',
-          text: 'schedule listing unavailable — the session query service is not mounted.',
+          text: t('command.error.scheduleUnavailable'),
         };
       }
       try {
@@ -362,27 +424,27 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
         if (folded.active.length === 0) {
           return {
             kind: 'success',
-            text: 'No active reminders — ask the agent to create one (e.g. “remind me in 5 minutes”).',
+            text: t('command.info.noReminders'),
           };
         }
         const now = Date.now();
         const lines = folded.active.map((record) => {
           const view = scheduleView(record, now);
-          const prompt = record.prompt === '' ? '(no prompt)' : record.prompt;
+          const prompt = record.prompt === '' ? t('status.noPrompt') : record.prompt;
           const rule =
             record.kind === 'after'
-              ? `after ${record.afterSeconds}s`
+              ? t('command.schedule.rule.after', { seconds: record.afterSeconds })
               : record.kind === 'at'
-                ? `at ${record.scheduledAt}`
-                : `every ${record.everySeconds}s`;
+                ? t('command.schedule.rule.at', { at: record.scheduledAt })
+                : t('command.schedule.rule.every', { seconds: record.everySeconds });
           return `${rule} · ${prompt} (${view.state})`;
         });
-        return { kind: 'success', text: `Active reminders:\n${lines.join('\n')}` };
+        return { kind: 'success', text: `${t('command.schedule.title')}\n${lines.join('\n')}` };
       } catch (error: unknown) {
         options.logger.warn(`schedule listing unavailable: ${String(error)}`);
         return {
           kind: 'error',
-          text: 'schedule listing unavailable — ask the agent to list reminders instead.',
+          text: t('command.error.scheduleFallback'),
         };
       }
     },
@@ -393,7 +455,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
       'Switch this session\u2019s model (bare opens the picker); /model <provider>/<model> switches directly',
     usage: '<provider/model>',
     category: 'system',
-    buttonLabel: '🤖 Model',
+    buttonLabel: t('command.cmd.model.label'),
     handler: async (invocation) => {
       const raw = invocation.rawInput.trim();
       if (raw === '') {
@@ -422,14 +484,19 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
         if (selection === undefined) {
           return {
             kind: 'error',
-            text: 'no model selection available — the agentDefaultModel service is not mounted.',
+            text: t('command.error.modelSelectionUnavailable'),
           };
         }
         const effort =
-          selection.reasoningEffort === undefined ? '' : ` · effort ${selection.reasoningEffort}`;
+          selection.reasoningEffort === undefined
+            ? ''
+            : t('status.effortSuffix', { effort: selection.reasoningEffort });
         return {
           kind: 'success',
-          text: `model: ${selection.provider} · ${selection.model}${effort}`,
+          text: t('command.info.modelLine', {
+            selection: `${selection.provider} · ${selection.model}`,
+            effort,
+          }),
         };
       }
       const parsed = parseModelArg(raw);
@@ -438,7 +505,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
       if (service === undefined) {
         return {
           kind: 'error',
-          text: 'model switching unavailable — the agentDefaultModel service is not mounted.',
+          text: t('command.error.modelSwitchUnavailable'),
         };
       }
       await service.saveSelection(parsed.selection);
@@ -452,7 +519,9 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
       );
       return {
         kind: 'success',
-        text: `Model set to ${parsed.selection.provider} · ${parsed.selection.model} (this session + default).`,
+        text: t('command.info.modelSet', {
+          selection: `${parsed.selection.provider} · ${parsed.selection.model}`,
+        }),
       };
     },
   });
@@ -460,16 +529,16 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     name: 'export',
     description: 'Export this chat’s session log as a file',
     category: 'system',
-    buttonLabel: '📤 Export',
+    buttonLabel: t('command.cmd.export.label'),
     handler: async (invocation) => {
       const sessionId = options.sessionMap.get(invocation.chatId);
       if (sessionId === undefined) {
-        return { kind: 'error', text: 'no session to export yet — send a message first.' };
+        return { kind: 'error', text: t('command.error.exportNoSession') };
       }
       if (options.readSession === undefined) {
         return {
           kind: 'error',
-          text: 'session export unavailable — the session query service is not mounted.',
+          text: t('command.error.exportUnavailable'),
         };
       }
       try {
@@ -483,15 +552,13 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
         );
         return {
           kind: 'success',
-          text: `Exported ${log.events.length} events to ${fileName}.`,
+          text: t('command.info.exportedEvents', { count: log.events.length, file: fileName }),
         };
       } catch (error: unknown) {
         options.logger.warn(`session export failed: ${String(error)}`);
         const detail = String(error);
-        const scopeHint = detail.includes('im:resource')
-          ? ' — the Feishu app needs the im:resource:upload permission scope (developer console → Permissions).'
-          : '';
-        return { kind: 'error', text: `session export failed: ${detail}${scopeHint}` };
+        const scopeHint = detail.includes('im:resource') ? t('inbound.unavailableUploadScope') : '';
+        return { kind: 'error', text: t('command.error.exportFailed', { detail }) + scopeHint };
       }
     },
   });
@@ -499,7 +566,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     name: 'sessions',
     description: 'List saved sessions and act on one in this chat',
     category: 'session',
-    buttonLabel: '🗂️ Sessions',
+    buttonLabel: t('command.cmd.sessions.label'),
     handler: async (invocation) => {
       // The panel state machine owns the session list/detail flow.
       await options.pushPanel(invocation.chatId, { kind: 'sessions', archived: false });
@@ -511,7 +578,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     description: 'Resume a saved session (bare opens the session list to pick one)',
     usage: '<id>',
     category: 'session',
-    buttonLabel: '↩️ Resume session',
+    buttonLabel: t('command.cmd.resume.label'),
     // The Sessions button owns the list/detail flow; a separate resume
     // button is redundant (user report).
     hiddenFromPanel: true,
@@ -530,23 +597,23 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
   // the reset never destroys user data (content-integrity rule).
   const startFresh = async (invocation: CommandInvocation): Promise<CommandResult> => {
     if (options.isWorking(invocation.chatId)) {
-      return { kind: 'error', text: 'a turn is running — stop it first.' };
+      return { kind: 'error', text: t('command.error.turnRunning') };
     }
     if (options.sessionMap.get(invocation.chatId) === undefined) {
-      return { kind: 'error', text: 'nothing to clear — this chat has no session yet.' };
+      return { kind: 'error', text: t('command.error.nothingToClear') };
     }
     options.sessionMap.remint(invocation.chatId);
     options.resetChat(invocation.chatId);
     return {
       kind: 'success',
-      text: 'New conversation started — the previous session stays saved; /sessions can resume it.',
+      text: t('command.info.newConversation'),
     };
   };
   commands.register({
     name: 'clear',
     description: 'Start a fresh conversation (previous session stays saved)',
     category: 'session',
-    buttonLabel: '✨ Fresh start',
+    buttonLabel: t('command.cmd.clear.label'),
     // /new IS the panel button; /clear stays a slash-only alias (the two
     // commands are the same action — duplicate buttons confuse (user report)).
     hiddenFromPanel: true,
@@ -556,7 +623,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     name: 'new',
     description: 'Start a new conversation (alias of /clear)',
     category: 'session',
-    buttonLabel: '➕ New chat',
+    buttonLabel: t('command.cmd.new.label'),
     handler: startFresh,
   });
   for (const spec of HARNESS_COMMANDS) {
@@ -565,7 +632,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
       description: spec.description,
       ...(spec.usage === undefined ? {} : { usage: spec.usage }),
       category: 'system',
-      buttonLabel: spec.buttonLabel,
+      buttonLabel: t(spec.buttonLabelKey),
       handler: async (invocation) => {
         // A bare /goal /feedback opens the panel text-input card (matching
         // the panel palette button). /compact stays direct: it is a harness
@@ -580,12 +647,12 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
           return { kind: 'success', text: '' };
         }
         if (options.isWorking(invocation.chatId)) {
-          return { kind: 'error', text: 'a turn is running — stop it first.' };
+          return { kind: 'error', text: t('command.error.turnRunning') };
         }
         if (options.executeCommand === undefined) {
           return {
             kind: 'error',
-            text: `/${spec.name} is unavailable — the dsh command registry is not mounted.`,
+            text: t('command.error.cmdUnavailableRegistry', { name: spec.name }),
           };
         }
         const agent = await options.ensureAgent(invocation.chatId);
@@ -593,7 +660,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
         if (result !== undefined) return result;
         return {
           kind: 'error',
-          text: `/${spec.name} is unavailable on this deployment.`,
+          text: t('command.error.cmdUnavailableDeployment', { name: spec.name }),
         };
       },
     });
@@ -606,12 +673,12 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     description: 'Switch the permission preset — sandbox mode + approval policy',
     usage: '<preset>',
     category: 'system',
-    buttonLabel: '🔐 Permission',
+    buttonLabel: t('command.cmd.permission.label'),
     handler: async (invocation) => {
       const raw = invocation.rawInput.trim();
       if (raw !== '') return runHarnessCommand(options, invocation, 'permission');
       if (options.isWorking(invocation.chatId)) {
-        return { kind: 'error', text: 'a turn is running — stop it first.' };
+        return { kind: 'error', text: t('command.error.turnRunning') };
       }
       if (options.permissionPresets === undefined) {
         // Degraded: no picker data source — fall back to the harness report.
@@ -637,7 +704,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     description: 'Enter or leave plan mode (bare toggles; /plan on|off sets it)',
     usage: '[on|off]',
     category: 'system',
-    buttonLabel: '🗺️ Plan mode',
+    buttonLabel: t('command.cmd.plan.label'),
     handler: async (invocation) => {
       const raw = invocation.rawInput.trim();
       // A bare /plan toggles plan mode; /plan on|off sets it explicitly. The
@@ -649,7 +716,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
         return runHarnessCommand(options, invocation, 'plan');
       }
       if (options.isWorking(invocation.chatId)) {
-        return { kind: 'error', text: 'a turn is running — stop it first.' };
+        return { kind: 'error', text: t('command.error.turnRunning') };
       }
       const planMode = options.planMode;
       if (planMode === undefined) {

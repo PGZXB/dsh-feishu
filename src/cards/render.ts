@@ -15,6 +15,8 @@
 import { basename } from 'node:path';
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import type { ButtonAction, CardElement, CardJson } from '../feishu/types.js';
+import type { MessageKey } from '../i18n/index.js';
+import { t } from '../i18n/index.js';
 import type { ProjectInfo } from '../projects.js';
 import { markdownToElements } from './markdown.js';
 import { toolRowTitle } from './tool-summary.js';
@@ -232,8 +234,7 @@ export function buildRepoPickerCard(
   const elements: CardElement[] = [
     {
       tag: 'markdown',
-      content:
-        '**Pick a project directory** — choose one from the dropdown, or use `/cd <path>` for a custom directory.',
+      content: t('card.repo.pickerIntro'),
     },
     { tag: 'hr' },
   ];
@@ -245,7 +246,7 @@ export function buildRepoPickerCard(
       actions: [
         {
           tag: 'select_static',
-          placeholder: { tag: 'plain_text', content: 'Choose a project…' },
+          placeholder: { tag: 'plain_text', content: t('card.repo.placeholder') },
           options: projects.map((project, index) => ({
             text: {
               tag: 'plain_text',
@@ -283,13 +284,13 @@ export function buildRepoPickerCard(
       if (hasPrev)
         nav.push({
           tag: 'button',
-          text: { tag: 'plain_text', content: '‹ Prev' },
+          text: { tag: 'plain_text', content: t('card.page.prev') },
           value: { kind: 'repo-page', page: String(page - 1) },
         });
       if (hasNext)
         nav.push({
           tag: 'button',
-          text: { tag: 'plain_text', content: 'Next ›' },
+          text: { tag: 'plain_text', content: t('card.page.next') },
           value: { kind: 'repo-page', page: String(page + 1) },
         });
       elements.push({ tag: 'action', actions: nav });
@@ -297,7 +298,7 @@ export function buildRepoPickerCard(
   }
   return {
     config: { wide_screen_mode: true },
-    header: { title: { tag: 'plain_text', content: '📚 Pick a project' }, template: 'wathet' },
+    header: { title: { tag: 'plain_text', content: t('card.repo.title') }, template: 'wathet' },
     elements,
   };
 }
@@ -307,10 +308,13 @@ export function buildRepoPickerCard(
 export function buildRepoPickedCard(path: string): CardJson {
   return {
     config: { wide_screen_mode: true },
-    header: { title: { tag: 'plain_text', content: '📚 Project picked' }, template: 'green' },
+    header: {
+      title: { tag: 'plain_text', content: t('card.repo.pickedTitle') },
+      template: 'green',
+    },
     elements: [
-      { tag: 'markdown', content: `✅ Working directory set to\n\n\`${path}\`` },
-      { tag: 'note', elements: [{ tag: 'plain_text', content: 'Run /repo again to change it.' }] },
+      { tag: 'markdown', content: t('card.repo.pickedBody', { path }) },
+      { tag: 'note', elements: [{ tag: 'plain_text', content: t('card.repo.note') }] },
     ],
   };
 }
@@ -338,7 +342,7 @@ function statusButtonRows(status: CardStatus, hasRows: boolean, collapsed: boole
   if (status === 'working') {
     actions.push({
       tag: 'button',
-      text: { tag: 'plain_text', content: '⏹ Stop turn' },
+      text: { tag: 'plain_text', content: t('card.button.stopTurn') },
       type: 'danger',
       value: actionValue({ kind: 'stop' }),
     });
@@ -346,18 +350,18 @@ function statusButtonRows(status: CardStatus, hasRows: boolean, collapsed: boole
     if (status === 'done') {
       actions.push({
         tag: 'button',
-        text: { tag: 'plain_text', content: '📋 Copy' },
+        text: { tag: 'plain_text', content: t('card.button.copy') },
         value: actionValue({ kind: 'copy' }),
       });
     }
     actions.push({
       tag: 'button',
-      text: { tag: 'plain_text', content: '🔁 Retry' },
+      text: { tag: 'plain_text', content: t('card.button.retry') },
       value: actionValue({ kind: 'retry' }),
     });
     actions.push({
       tag: 'button',
-      text: { tag: 'plain_text', content: '⚙️ Panel' },
+      text: { tag: 'plain_text', content: t('card.button.panel') },
       value: actionValue({ kind: 'panel' }),
     });
   }
@@ -368,7 +372,10 @@ function statusButtonRows(status: CardStatus, hasRows: boolean, collapsed: boole
       actions: [
         {
           tag: 'button',
-          text: { tag: 'plain_text', content: collapsed ? '▸ Expand' : '▾ Collapse' },
+          text: {
+            tag: 'plain_text',
+            content: collapsed ? t('card.button.expand') : t('card.button.collapse'),
+          },
           type: 'default',
           value: actionValue({ kind: 'toggle-rows' }),
         },
@@ -420,13 +427,13 @@ export function rowLine(row: TurnRow): string {
   if (row.kind === 'think') {
     // Always "Thinking" — a live latest-line would flicker through
     // throttled card patches; the full text lives in the expand card.
-    return '☁️ Think · Thinking';
+    return t('card.row.thinking');
   }
   if (row.kind === 'steering') {
     // A steered user message injected into the running turn. The line shows
     // the compact label + a preview; the full text lives in the expand card.
     const preview = truncateTail(row.text, QUEUE_PREVIEW_CHARS).replace(/\n+/g, ' ');
-    return `💬 Steer · ${preview}`;
+    return t('card.row.steerLine', { preview });
   }
   const icon = row.status === 'running' ? '🔧' : row.status === 'done' ? '✅' : '❌';
   return `${icon} ${toolRowTitle(row.name)} · ${row.summary}`;
@@ -439,8 +446,8 @@ export function rowLine(row: TurnRow): string {
  */
 export function collapseSequence(rows: readonly TurnRow[]): string {
   const names = rows.map((row) => {
-    if (row.kind === 'think') return 'think';
-    if (row.kind === 'steering') return 'steer';
+    if (row.kind === 'think') return t('card.sequence.think');
+    if (row.kind === 'steering') return t('card.sequence.steer');
     return row.name;
   });
   return names.map(stripAngleBrackets).join(' → ');
@@ -503,16 +510,24 @@ export function statsGrouperText(stats: CardSnapshot['sessionStats']): string {
   if (stats === undefined) return '';
   const groups: string[] = [];
   if (stats.stepCount > 0) {
-    const counts = [`${stats.turnCount} turns`, `${stats.stepCount} steps`];
-    if (stats.toolCount > 0) counts.push(`${stats.toolCount} tools`);
+    const counts = [
+      t('card.stats.turns', { count: stats.turnCount }),
+      t('card.stats.steps', { count: stats.stepCount }),
+    ];
+    if (stats.toolCount > 0) counts.push(t('card.stats.tools', { count: stats.toolCount }));
     groups.push(counts.join(' · '));
   }
   const usage = stats.tokenUsage;
   const billedInput = usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
   if (billedInput > 0 || usage.outputTokens > 0) {
     const cacheHit = billedInput > 0 ? Math.round((usage.cacheReadTokens / billedInput) * 100) : 0;
-    const tokenGroup = `input ${formatTokenCount(billedInput)} · output ${formatTokenCount(usage.outputTokens)}`;
-    groups.push(cacheHit > 0 ? `cache ${cacheHit}% · ${tokenGroup}` : tokenGroup);
+    const tokenGroup = t('card.stats.tokens', {
+      input: formatTokenCount(billedInput),
+      output: formatTokenCount(usage.outputTokens),
+    });
+    groups.push(
+      cacheHit > 0 ? t('card.stats.cache', { percent: cacheHit, tokens: tokenGroup }) : tokenGroup,
+    );
   }
   if (
     stats.contextWindow !== undefined &&
@@ -523,7 +538,7 @@ export function statsGrouperText(stats: CardSnapshot['sessionStats']): string {
       100,
       Math.round((stats.currentContextTokens / stats.contextWindow) * 100),
     );
-    groups.push(`context ${percent}%`);
+    groups.push(t('card.stats.context', { percent }));
   }
   return groups.join(' | ');
 }
@@ -562,15 +577,15 @@ export function buildCard(snapshot: CardSnapshot): CardJson {
       // color already carries the semantic.
       elements.push({
         tag: 'markdown',
-        content: stopping ? '**⏹ Stopping…**' : '**… working**',
+        content: stopping ? t('card.status.line.stopping') : t('card.status.line.working'),
       });
     } else {
       const terminalNote =
         snapshot.status === 'error'
-          ? '⚠️ Turn failed'
+          ? t('card.status.note.error')
           : snapshot.status === 'stopped'
-            ? '⏹ Stopped'
-            : '✅ Done';
+            ? t('card.status.note.stopped')
+            : t('card.status.note.done');
       elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: terminalNote }] });
       // The failure reason, surfaced as a readable line instead of the dead
       // "see the card for details" — a MISSING_CREDENTIAL tells the admin
@@ -586,7 +601,7 @@ export function buildCard(snapshot: CardSnapshot): CardJson {
           actions: [
             {
               tag: 'button',
-              text: { tag: 'plain_text', content: '📄 Export log' },
+              text: { tag: 'plain_text', content: t('card.button.exportLog') },
               type: 'default',
               value: { kind: 'send-log' },
             },
@@ -603,7 +618,7 @@ export function buildCard(snapshot: CardSnapshot): CardJson {
     elements.push({ tag: 'hr' });
     elements.push({
       tag: 'markdown',
-      content: '**📎 Produced**',
+      content: t('card.details.produced'),
     });
     elements.push({
       tag: 'action',
@@ -677,14 +692,18 @@ export function buildRowDetailsCard(row: TurnRow): CardJson {
     elements.push({
       tag: 'markdown',
       content:
-        text === '' ? '_(empty steered message)_' : fencedCode(truncateHead(text, MAX_CARD_CHARS)),
+        text === ''
+          ? t('card.details.emptySteered')
+          : fencedCode(truncateHead(text, MAX_CARD_CHARS)),
     });
   } else if (row.kind === 'think') {
     const text = row.text.trim();
     elements.push({
       tag: 'markdown',
       content:
-        text === '' ? '_(no reasoning text)_' : fencedCode(truncateHead(text, MAX_CARD_CHARS)),
+        text === ''
+          ? t('card.details.noReasoning')
+          : fencedCode(truncateHead(text, MAX_CARD_CHARS)),
     });
   } else {
     elements.push({
@@ -704,7 +723,7 @@ export function buildRowDetailsCard(row: TurnRow): CardJson {
       });
     }
     if (row.args === '' && row.result === '') {
-      elements.push({ tag: 'markdown', content: '_(no recorded args or result)_' });
+      elements.push({ tag: 'markdown', content: t('card.details.empty') });
     }
   }
   return {
@@ -714,10 +733,10 @@ export function buildRowDetailsCard(row: TurnRow): CardJson {
         tag: 'plain_text',
         content:
           row.kind === 'steering'
-            ? '💬 Steer'
+            ? t('card.details.title.steer')
             : row.kind === 'think'
-              ? '☁️ Think'
-              : `🔧 ${toolRowTitle(row.name)}`,
+              ? t('card.details.title.think')
+              : t('card.details.title.tool', { name: toolRowTitle(row.name) }),
       },
       template: 'wathet',
     },
@@ -792,18 +811,16 @@ export function panelPages(
 }
 
 /** Category icon per panel group, making sections scannable. */
-const CATEGORY_ICONS: Record<string, string> = {
-  session: '🧩',
-  chat: '💬',
-  system: '⚙️',
-};
-
 /** Capitalize a category id for display ('session' → '🧩 Session'). */
 function categoryLabel(category: string): string {
+  // Known categories come from the catalog; an unknown id keeps the
+  // capitalized fallback so a future category still renders labeled.
+  if (category === 'session') return t('panel.category.session');
+  if (category === 'chat') return t('panel.category.chat');
+  if (category === 'system') return t('panel.category.system');
   const name =
     category === '' ? category : `${category.charAt(0).toUpperCase()}${category.slice(1)}`;
-  const icon = CATEGORY_ICONS[category] ?? '';
-  return `${icon} ${name}`.trim();
+  return name;
 }
 
 /**
@@ -834,7 +851,7 @@ export function buildPanelCard(
   if (running) {
     core.push({
       tag: 'button',
-      text: { tag: 'plain_text', content: '⏹ Stop current turn' },
+      text: { tag: 'plain_text', content: t('card.panel.stopTurn') },
       type: 'danger',
       value: actionValue({ kind: 'stop' }),
     });
@@ -842,12 +859,12 @@ export function buildPanelCard(
   core.push(
     {
       tag: 'button',
-      text: { tag: 'plain_text', content: '🔁 Retry last' },
+      text: { tag: 'plain_text', content: t('card.panel.retryLast') },
       value: actionValue({ kind: 'retry' }),
     },
     {
       tag: 'button',
-      text: { tag: 'plain_text', content: '📋 Copy last' },
+      text: { tag: 'plain_text', content: t('card.panel.copyLast') },
       value: actionValue({ kind: 'copy' }),
     },
   );
@@ -903,14 +920,14 @@ export function buildPanelCard(
       if (index > 0) {
         nav.push({
           tag: 'button',
-          text: { tag: 'plain_text', content: '◀️ Prev' },
+          text: { tag: 'plain_text', content: t('card.page.prevFull') },
           value: actionValue({ kind: 'panel-page', page: String(index - 1) }),
         });
       }
       if (index < total - 1) {
         nav.push({
           tag: 'button',
-          text: { tag: 'plain_text', content: 'Next ▶️' },
+          text: { tag: 'plain_text', content: t('card.page.nextFull') },
           value: actionValue({ kind: 'panel-page', page: String(index + 1) }),
         });
       }
@@ -920,7 +937,7 @@ export function buildPanelCard(
   return {
     config: { wide_screen_mode: true },
     header: {
-      title: { tag: 'plain_text', content: '⚙️ dsh-feishu panel' },
+      title: { tag: 'plain_text', content: t('panel.title') },
       template: 'wathet',
     },
     elements,
@@ -1043,17 +1060,20 @@ export function buildPanelNoticeCard(options: {
  *   file message; N for the N-th bare attachment awaiting follow-up).
  */
 export function buildInboundFileCard(name: string, savedPath?: string, count = 1): CardJson {
-  const pendingLine = count > 1 ? `\n\n**${count} files awaiting your instruction.**` : '';
+  const pendingLine = count > 1 ? `\n\n${t('card.file.pending', { count })}` : '';
   return {
     config: { wide_screen_mode: true },
-    header: { title: { tag: 'plain_text', content: '📎 File received' }, template: 'blue' },
+    header: {
+      title: { tag: 'plain_text', content: t('card.file.receivedTitle') },
+      template: 'blue',
+    },
     elements: [
       {
         tag: 'markdown',
         content:
           savedPath === undefined
-            ? `**${name}**\n\nTell me what to do with it.${pendingLine}`
-            : `**${name}**\n\nSaved to \`${savedPath}\` — tell me what to do with it.${pendingLine}`,
+            ? `${t('card.file.tellUnsaved', { name })}${pendingLine}`
+            : `${t('card.file.tellSaved', { name, path: savedPath })}${pendingLine}`,
       },
     ],
   };
@@ -1070,7 +1090,7 @@ export function buildPanelBusyCard(title: string): CardJson {
   return {
     config: { wide_screen_mode: true },
     header: { title: { tag: 'plain_text', content: title }, template: 'wathet' },
-    elements: [{ tag: 'markdown', content: '⏳ Operating…' }],
+    elements: [{ tag: 'markdown', content: t('panel.operating') }],
   };
 }
 
@@ -1111,18 +1131,17 @@ export function buildPermissionPickerCard(presets: readonly PermissionPresetView
   const elements: CardElement[] = [
     {
       tag: 'markdown',
-      content:
-        '**Choose a permission preset** — sandbox mode + approval policy for this chat’s session.',
+      content: t('panel.permission.intro'),
     },
     { tag: 'hr' },
   ];
   const current = presets.find((preset) => preset.current);
   if (presets.length === 0) {
-    elements.push({ tag: 'markdown', content: 'No presets configured on this deployment.' });
+    elements.push({ tag: 'markdown', content: t('panel.permission.noneConfigured') });
     return {
       config: { wide_screen_mode: true },
       header: {
-        title: { tag: 'plain_text', content: '🔐 Permission presets' },
+        title: { tag: 'plain_text', content: t('panel.permission.title') },
         template: 'wathet',
       },
       elements,
@@ -1142,7 +1161,7 @@ export function buildPermissionPickerCard(presets: readonly PermissionPresetView
     actions: [
       {
         tag: 'select_static',
-        placeholder: { tag: 'plain_text', content: 'Choose a preset…' },
+        placeholder: { tag: 'plain_text', content: t('panel.permission.placeholder') },
         ...(canPreselect ? { initial_option: currentName } : {}),
         options: presets.map((preset) => ({
           text: { tag: 'plain_text', content: preset.label },
@@ -1158,13 +1177,19 @@ export function buildPermissionPickerCard(presets: readonly PermissionPresetView
     elements: [
       {
         tag: 'plain_text',
-        content: current === undefined ? 'No preset selected yet.' : `★ current: ${current.label}`,
+        content:
+          current === undefined
+            ? t('panel.permission.noneSelected')
+            : t('card.currentNote', { label: current.label }),
       },
     ],
   });
   return {
     config: { wide_screen_mode: true },
-    header: { title: { tag: 'plain_text', content: '🔐 Permission presets' }, template: 'wathet' },
+    header: {
+      title: { tag: 'plain_text', content: t('panel.permission.title') },
+      template: 'wathet',
+    },
     elements,
   };
 }
@@ -1200,8 +1225,7 @@ export function buildModelPickerCard(
   const elements: CardElement[] = [
     {
       tag: 'markdown',
-      content:
-        '**Choose a model** — the pick switches THIS session’s model immediately and saves the default for new sessions.',
+      content: t('panel.model.intro'),
     },
     { tag: 'hr' },
   ];
@@ -1209,7 +1233,7 @@ export function buildModelPickerCard(
   if (options.length === 0) {
     elements.push({
       tag: 'markdown',
-      content: 'No models available on this deployment — use /model <provider>/<model> to set one.',
+      content: t('panel.model.noneConfigured'),
     });
   } else if (options.length <= REPO_SELECT_MAX_OPTIONS) {
     const canPreselect =
@@ -1219,7 +1243,7 @@ export function buildModelPickerCard(
       actions: [
         {
           tag: 'select_static',
-          placeholder: { tag: 'plain_text', content: 'Choose a model…' },
+          placeholder: { tag: 'plain_text', content: t('panel.model.placeholder') },
           ...(canPreselect ? { initial_option: currentSelection } : {}),
           options: options.map((option) => ({
             text: { tag: 'plain_text', content: option.label },
@@ -1249,14 +1273,14 @@ export function buildModelPickerCard(
       if (index > 0) {
         nav.push({
           tag: 'button',
-          text: { tag: 'plain_text', content: '‹ Prev' },
+          text: { tag: 'plain_text', content: t('card.page.prev') },
           value: actionValue({ kind: 'model-page', page: String(index - 1) }),
         });
       }
       if (index < total - 1) {
         nav.push({
           tag: 'button',
-          text: { tag: 'plain_text', content: 'Next ›' },
+          text: { tag: 'plain_text', content: t('card.page.next') },
           value: actionValue({ kind: 'model-page', page: String(index + 1) }),
         });
       }
@@ -1271,15 +1295,15 @@ export function buildModelPickerCard(
         content:
           current === undefined
             ? currentSelection === undefined
-              ? 'No model selected yet.'
-              : `★ current: ${currentSelection}`
-            : `★ current: ${current.label}`,
+              ? t('panel.model.noneSelected')
+              : t('card.currentNote', { label: currentSelection })
+            : t('card.currentNote', { label: current.label }),
       },
     ],
   });
   return {
     config: { wide_screen_mode: true },
-    header: { title: { tag: 'plain_text', content: '🤖 Model' }, template: 'wathet' },
+    header: { title: { tag: 'plain_text', content: t('panel.model.title') }, template: 'wathet' },
     elements,
   };
 }
@@ -1301,13 +1325,21 @@ export function buildApprovalCard(
 ): CardJson {
   return {
     config: { wide_screen_mode: true },
-    header: { title: { tag: 'plain_text', content: '🔐 Approval needed' }, template: 'orange' },
+    header: {
+      title: { tag: 'plain_text', content: t('card.approval.neededTitle') },
+      template: 'orange',
+    },
     elements: [
       {
         tag: 'markdown',
-        content: `${mention}**${stripAngleBrackets(toolName)}** wants to run${
-          reason === undefined || reason === '' ? '.' : `:\n\n${stripAngleBrackets(reason)}`
-        }`,
+        content:
+          reason === undefined || reason === ''
+            ? mention + t('card.approval.wantRunPlain', { tool: stripAngleBrackets(toolName) })
+            : mention +
+              t('card.approval.wantRunReason', {
+                tool: stripAngleBrackets(toolName),
+                reason: stripAngleBrackets(reason),
+              }),
       },
       { tag: 'hr' },
       {
@@ -1315,13 +1347,13 @@ export function buildApprovalCard(
         actions: [
           {
             tag: 'button',
-            text: { tag: 'plain_text', content: '✅ Allow once' },
+            text: { tag: 'plain_text', content: t('card.approval.allowOnce') },
             type: 'primary',
             value: actionValue({ kind: 'approval', decision: 'allow', id: requestId }),
           },
           {
             tag: 'button',
-            text: { tag: 'plain_text', content: '❌ Reject' },
+            text: { tag: 'plain_text', content: t('card.approval.reject') },
             type: 'danger',
             value: actionValue({ kind: 'approval', decision: 'reject', id: requestId }),
           },
@@ -1336,15 +1368,18 @@ export function buildApprovalCard(
 export function buildApprovalDecidedCard(outcome: string): CardJson {
   const label =
     outcome === 'allowed-once'
-      ? '✅ Allowed once'
+      ? t('card.approval.outcome.allowedOnce')
       : outcome === 'rejected'
-        ? '❌ Rejected'
+        ? t('card.approval.outcome.rejected')
         : outcome === 'unavailable'
-          ? '⚠️ Unavailable'
-          : '⏹ Cancelled';
+          ? t('card.approval.outcome.unavailable')
+          : t('card.approval.outcome.cancelled');
   return {
     config: { wide_screen_mode: true },
-    header: { title: { tag: 'plain_text', content: '🔐 Approval' }, template: 'wathet' },
+    header: {
+      title: { tag: 'plain_text', content: t('card.approval.doneTitle') },
+      template: 'wathet',
+    },
     elements: [{ tag: 'note', elements: [{ tag: 'plain_text', content: label }] }],
   };
 }
@@ -1388,14 +1423,14 @@ export function buildQuestionCard(
   if (question.options.length === 0) {
     elements.push({
       tag: 'markdown',
-      content: 'Reply with your answer as a message — no options to pick from.',
+      content: t('card.question.freeTextHint'),
     });
     elements.push({
       tag: 'action',
       actions: [
         {
           tag: 'button',
-          text: { tag: 'plain_text', content: '✖ Cancel' },
+          text: { tag: 'plain_text', content: t('card.question.cancel') },
           type: 'default',
           value: actionValue({ kind: 'question-cancel', id: question.id }),
         },
@@ -1403,7 +1438,10 @@ export function buildQuestionCard(
     });
     return {
       config: { wide_screen_mode: true },
-      header: { title: { tag: 'plain_text', content: '❓ Question' }, template: 'wathet' },
+      header: {
+        title: { tag: 'plain_text', content: t('card.question.title') },
+        template: 'wathet',
+      },
       elements,
     };
   }
@@ -1413,7 +1451,9 @@ export function buildQuestionCard(
       tag: 'button' as const,
       text: {
         tag: 'plain_text' as const,
-        content: `${isSelected ? '✅ ' : ''}${option.label}`,
+        content: isSelected
+          ? t('card.question.selectedOption', { label: option.label })
+          : option.label,
       },
       type: isSelected ? ('primary' as const) : ('default' as const),
       value: question.multiSelect
@@ -1428,7 +1468,7 @@ export function buildQuestionCard(
       actions: [
         {
           tag: 'button',
-          text: { tag: 'plain_text', content: '✅ Submit' },
+          text: { tag: 'plain_text', content: t('card.question.submit') },
           type: 'primary',
           value: actionValue({ kind: 'question-submit', id: question.id }),
         },
@@ -1437,7 +1477,7 @@ export function buildQuestionCard(
   }
   return {
     config: { wide_screen_mode: true },
-    header: { title: { tag: 'plain_text', content: '❓ Question' }, template: 'wathet' },
+    header: { title: { tag: 'plain_text', content: t('card.question.title') }, template: 'wathet' },
     elements,
   };
 }
@@ -1446,10 +1486,13 @@ export function buildQuestionCard(
 export function buildQuestionAnsweredCard(question: string, answer: string): CardJson {
   return {
     config: { wide_screen_mode: true },
-    header: { title: { tag: 'plain_text', content: '❓ Question' }, template: 'wathet' },
+    header: { title: { tag: 'plain_text', content: t('card.question.title') }, template: 'wathet' },
     elements: [
       { tag: 'markdown', content: `**${stripAngleBrackets(question)}**` },
-      { tag: 'note', elements: [{ tag: 'plain_text', content: `Answer: ${answer}` }] },
+      {
+        tag: 'note',
+        elements: [{ tag: 'plain_text', content: t('card.question.answeredNote', { answer }) }],
+      },
     ],
   };
 }
@@ -1464,14 +1507,12 @@ export interface StatusView {
   readonly lastInboundAt: number | undefined;
 }
 
-/** The connection line label per state. */
-const CONNECTION_LABEL: Record<StatusView['connection'], string> = {
-  ready: '✅ ready',
-  reconnecting: '⚠️ reconnecting',
-  error: '❌ error',
-  memory: '🧪 memory (test transport)',
-  unknown: '❓ unknown',
-};
+/** The connection line label per state — resolved at CALL time so the
+ *  active locale's wording is used (a module-load lookup would freeze the
+ *  default locale before `apply()` configures it). */
+function connectionLabel(connection: StatusView['connection']): string {
+  return t(`card.status.conn.${connection}`);
+}
 
 /**
  * Build the `/feishu-status` diagnostic card: app id, live connection
@@ -1482,18 +1523,20 @@ const CONNECTION_LABEL: Record<StatusView['connection'], string> = {
  */
 export function buildStatusCard(view: StatusView): CardJson {
   const last =
-    view.lastInboundAt === undefined ? 'never' : new Date(view.lastInboundAt).toISOString();
+    view.lastInboundAt === undefined
+      ? t('card.status.never')
+      : new Date(view.lastInboundAt).toISOString();
   return {
     config: { wide_screen_mode: true },
-    header: { title: { tag: 'plain_text', content: '📊 dsh-feishu status' }, template: 'wathet' },
+    header: { title: { tag: 'plain_text', content: t('card.status.title') }, template: 'wathet' },
     elements: [
       {
         tag: 'markdown',
         content: [
-          `**app:** \`${view.appId}\``,
-          `**connection:** ${CONNECTION_LABEL[view.connection]}`,
-          `**sessions:** ${view.sessionCount}`,
-          `**last inbound:** ${last}`,
+          t('card.status.app', { appId: view.appId }),
+          t('card.status.connection', { state: connectionLabel(view.connection) }),
+          t('card.status.sessions', { count: view.sessionCount }),
+          t('card.status.lastInbound', { time: last }),
         ].join('\n'),
       },
     ],
@@ -1521,21 +1564,22 @@ export const QUEUE_PREVIEW_CHARS = 200;
 /** Longest preview folded into a queue-card header. */
 const QUEUE_HEADER_CHARS = 40;
 
-/** Header label per non-queued lifecycle state (message-queue). */
-const QUEUE_STATUS_TITLE: Record<Exclude<QueueItemStatus, 'queued'>, string> = {
-  editing: 'Editing',
-  steering: 'Steering…',
-  steered: 'Steered',
-  sent: 'Sent',
-  removed: 'Removed',
+/** Catalog key per non-queued lifecycle state (message-queue). */
+const QUEUE_STATUS_TITLE: Record<Exclude<QueueItemStatus, 'queued'>, MessageKey> = {
+  editing: 'card.queue.title.editing',
+  steering: 'card.queue.title.steering',
+  steered: 'card.queue.title.steered',
+  sent: 'card.queue.title.sent',
+  removed: 'card.queue.title.removed',
 };
 
-/** The status marker shown on a terminal/in-progress queue card. */
-const QUEUE_STATUS_MARKER: Partial<Record<QueueItemStatus, string>> = {
-  steering: '💬 Steering…',
-  steered: '✅ Steered',
-  sent: '📤 Sent',
-  removed: '🗑️ Removed',
+/** The catalog key of the status marker shown on a terminal/in-progress
+ *  queue card. */
+const QUEUE_STATUS_MARKER: Partial<Record<QueueItemStatus, MessageKey>> = {
+  steering: 'card.queue.marker.steering',
+  steered: 'card.queue.marker.steered',
+  sent: 'card.queue.marker.sent',
+  removed: 'card.queue.marker.removed',
 };
 
 /**
@@ -1555,14 +1599,14 @@ export function buildQueueItemCard(item: QueueItemView, running: boolean): CardJ
   const title =
     item.status === 'queued'
       ? `⏳ ${truncateTail(item.text, QUEUE_HEADER_CHARS)}`
-      : `⏳ ${QUEUE_STATUS_TITLE[item.status]}`;
+      : `⏳ ${t(QUEUE_STATUS_TITLE[item.status])}`;
   const elements: CardElement[] = [];
   const marker = QUEUE_STATUS_MARKER[item.status];
-  if (marker !== undefined) elements.push({ tag: 'markdown', content: marker });
+  if (marker !== undefined) elements.push({ tag: 'markdown', content: t(marker) });
   if (!running && item.status === 'queued') {
     elements.push({
       tag: 'markdown',
-      content: '➡️ Steer unavailable — no turn is running.',
+      content: t('card.queue.steerUnavailable'),
     });
   }
   elements.push({ tag: 'markdown', content: truncateTail(item.text, QUEUE_PREVIEW_CHARS) });
@@ -1572,7 +1616,7 @@ export function buildQueueItemCard(item: QueueItemView, running: boolean): CardJ
     if (running) {
       buttons.push({
         tag: 'button',
-        text: { tag: 'plain_text', content: '➡️ Steer' },
+        text: { tag: 'plain_text', content: t('card.queue.steerButton') },
         value: actionValue({ kind: 'queue-steer', id: item.id }),
       });
     }
@@ -1583,7 +1627,7 @@ export function buildQueueItemCard(item: QueueItemView, running: boolean): CardJ
     });
     buttons.push({
       tag: 'button',
-      text: { tag: 'plain_text', content: '🗑️ Remove' },
+      text: { tag: 'plain_text', content: t('card.queue.remove') },
       type: 'default',
       value: actionValue({ kind: 'queue-remove', id: item.id }),
     });
@@ -1599,11 +1643,11 @@ export function buildQueueItemCard(item: QueueItemView, running: boolean): CardJ
         {
           tag: 'input',
           name: 'text',
-          placeholder: { tag: 'plain_text', content: 'Edit queued text' },
+          placeholder: { tag: 'plain_text', content: t('card.queue.editPlaceholder') },
         },
         {
           tag: 'button',
-          text: { tag: 'plain_text', content: '✏️ Submit' },
+          text: { tag: 'plain_text', content: t('card.queue.submit') },
           type: 'primary',
           // Feishu requires a name for form-container buttons (ErrCode 200530).
           name: 'queue-edit-submit',
@@ -1617,7 +1661,7 @@ export function buildQueueItemCard(item: QueueItemView, running: boolean): CardJ
       actions: [
         {
           tag: 'button',
-          text: { tag: 'plain_text', content: '↩️ Cancel' },
+          text: { tag: 'plain_text', content: t('card.queue.cancel') },
           type: 'default',
           value: actionValue({ kind: 'queue-edit-cancel', id: item.id }),
         },

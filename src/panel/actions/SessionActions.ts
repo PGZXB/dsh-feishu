@@ -9,6 +9,7 @@
 
 import type { CommandResult } from '../../commands.js';
 import type { CardAction } from '../../feishu/types.js';
+import { t } from '../../i18n/index.js';
 import { PanelAction } from './ActionRegistry.js';
 import type { PanelActionContext } from './PanelAction.js';
 
@@ -17,7 +18,7 @@ export class ResumeSessionAction extends PanelAction {
   readonly kind = 'resume-session';
   readonly allowedWhileWorking = false;
   protected override busyTitle(): string {
-    return '🗂️ Session';
+    return t('sessions.detail.title');
   }
   protected override work(
     ctx: PanelActionContext,
@@ -46,7 +47,7 @@ export class SessionArchiveAction extends PanelAction {
   readonly kind = 'session-archive';
   readonly allowedWhileWorking = false;
   protected override busyTitle(): string {
-    return '🗂️ Session';
+    return t('sessions.detail.title');
   }
   protected override async work(
     ctx: PanelActionContext,
@@ -58,17 +59,19 @@ export class SessionArchiveAction extends PanelAction {
     if (workspace === undefined) {
       return {
         kind: 'error',
-        text: 'Archiving sessions is unavailable on this deployment.',
+        text: t('panel.action.archiveUnavailable'),
       };
     }
     try {
       await workspace.archiveSession(sessionId);
-      return { kind: 'success', text: `Archived session ${sessionId}.` };
+      return { kind: 'success', text: t('panel.action.sessionArchived', { sessionId }) };
     } catch (error: unknown) {
       ctx.services.logger.warn(`session archive failed: ${String(error)}`);
       return {
         kind: 'error',
-        text: `Archiving failed: ${error instanceof Error ? error.message : String(error)}`,
+        text: t('panel.action.archiveFailed', {
+          message: error instanceof Error ? error.message : String(error),
+        }),
       };
     }
   }
@@ -82,7 +85,7 @@ export class SessionExportAction extends PanelAction {
   readonly kind = 'session-export';
   readonly allowedWhileWorking = true;
   protected override busyTitle(): string {
-    return '🗂️ Session';
+    return t('sessions.detail.title');
   }
   protected override work(
     ctx: PanelActionContext,

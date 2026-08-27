@@ -34,6 +34,13 @@ describe('mergeGuidedConfig', () => {
     );
   });
 
+  it('accepts a valid locale and falls back to the default otherwise', () => {
+    expect(mergeGuidedConfig({ locale: 'zh-CN' }, DEFAULTS).locale).toBe('zh-CN');
+    expect(mergeGuidedConfig({ locale: 'en-us' }, DEFAULTS).locale).toBe('en-US');
+    expect(mergeGuidedConfig({ locale: 'fr' }, DEFAULTS).locale).toBeUndefined();
+    expect(mergeGuidedConfig({ locale: '' }, DEFAULTS).locale).toBeUndefined();
+  });
+
   it('parses y/n/yes/no and falls back to the default otherwise', () => {
     expect(mergeGuidedConfig({ requireWorkingDir: 'n' }, DEFAULTS).requireWorkingDir).toBe(false);
     expect(mergeGuidedConfig({ requireWorkingDir: 'yes' }, DEFAULTS).requireWorkingDir).toBe(true);

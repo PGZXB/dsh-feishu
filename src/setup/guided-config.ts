@@ -1,7 +1,7 @@
 /**
  * Guided setup prompts: the wizard asks the user for the surface options
  * that need a value up front (repoRoots / groupMentionMode /
- * requireWorkingDir), showing a default for each — an empty input (just
+ * requireWorkingDir / locale), showing a default for each — an empty input (just
  * Enter) accepts the default. Non-interactive runs (stdin is not a TTY,
  * e.g. CI or scripts) skip the prompts and return no answers, so the
  * caller falls back to the defaults silently.
@@ -20,7 +20,10 @@ export interface GuidedAnswers {
   repoRoots?: string;
   groupMentionMode?: string;
   requireWorkingDir?: string;
+  locale?: string;
 }
+
+const LOCALES: readonly GuidedConfig['locale'][] = ['en-US', 'zh-CN'];
 
 const MENTION_MODES: readonly GuidedConfig['groupMentionMode'][] = [
   'always',
@@ -65,10 +68,21 @@ export function mergeGuidedConfig(answers: GuidedAnswers, defaults: GuidedConfig
   const requireWorkingDir =
     requireRaw === '' ? defaults.requireWorkingDir : (parsedRequire ?? defaults.requireWorkingDir);
 
+  const localeRaw = answers.locale?.trim() ?? '';
+  // Case-normalize the recognized values (a user typing `ZH-CN` means
+  // `zh-CN`); anything unrecognized keeps the default.
+  const localeNormalized = localeRaw.toLowerCase();
+  const locale =
+    localeNormalized === ''
+      ? defaults.locale
+      : (LOCALES.find((value) => value !== undefined && value.toLowerCase() === localeNormalized) ??
+        defaults.locale);
+
   return {
     ...(repoRoots !== undefined ? { repoRoots: [...repoRoots] } : {}),
     ...(groupMentionMode !== undefined ? { groupMentionMode } : {}),
     ...(requireWorkingDir !== undefined ? { requireWorkingDir } : {}),
+    ...(locale !== undefined ? { locale } : {}),
   };
 }
 
@@ -93,6 +107,10 @@ function display(guided: GuidedConfig): PromptSpec[] {
       label: 'Refuse work until a working directory is chosen (y/n)',
       current: guided.requireWorkingDir === false ? 'n' : 'y',
     },
+    {
+      label: 'Surface language / 界面语言 (en-US | zh-CN)',
+      current: guided.locale ?? 'en-US',
+    },
   ];
 }
 
@@ -114,6 +132,7 @@ export async function promptGuidedConfig(defaults: GuidedConfig): Promise<Guided
       const trimmed = answer.trim();
       if (spec.label.startsWith('Project scan roots')) answers.repoRoots = trimmed;
       else if (spec.label.startsWith('Group mention mode')) answers.groupMentionMode = trimmed;
+      else if (spec.label.startsWith('Surface language')) answers.locale = trimmed;
       else answers.requireWorkingDir = trimmed;
     }
   } finally {

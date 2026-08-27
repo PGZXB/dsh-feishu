@@ -31,7 +31,8 @@
 import { actionValue, buildPanelBusyCard, buildPanelNoticeCard } from '../cards/render.js';
 import type { CommandResult } from '../commands.js';
 import type { CardJson, FeishuTransport } from '../feishu/types.js';
-import type { PanelView } from './types.js';
+import { t } from '../i18n/index.js';
+import { isPanelInputCommand, type PanelView, panelConfirmCopy, panelInputCopy } from './types.js';
 
 /** Logger surface the panel needs. */
 export interface PanelLogger {
@@ -71,34 +72,29 @@ export interface PanelHost {
 function panelViewTitle(view: PanelView): string {
   switch (view.kind) {
     case 'menu':
-      return '⚙️ dsh-feishu panel';
+      return t('panel.title');
     case 'input':
-      return PANEL_TITLE_BY_INPUT[view.command] ?? '⚙️ dsh-feishu panel';
+      return panelInputTitle(view.command);
     case 'confirm':
-      return view.command === 'clear' ? '✨ New chat' : '🧹 Compact';
+      return panelConfirmCopy(view.command).title;
     case 'sessions':
-      return '🗂️ Sessions';
+      return t('sessions.list.title');
     case 'session-detail':
-      return '🗂️ Session';
+      return t('sessions.detail.title');
     case 'picker':
       return view.picker === 'repo'
-        ? '📚 Pick a project'
+        ? t('card.repo.title')
         : view.picker === 'model'
-          ? '🤖 Model'
-          : '🔐 Permission';
+          ? t('panel.model.title')
+          : t('command.cmd.permission.label');
   }
 }
 
-/** Input-view titles (mirrors PANEL_INPUT_SPEC in types.ts; kept local so
- *  this module stays free of the spec table's field/placeholder copy). */
-const PANEL_TITLE_BY_INPUT: Record<string, string> = {
-  cd: '📁 Change working directory',
-  group: '👥 New group',
-  goal: '🎯 Goal',
-  feedback: '💬 Feedback',
-  'rename-session': '✏️ Rename session',
-  'find-session': '🔎 Find session',
-};
+/** Input-view titles — resolved from the catalog at call time. */
+function panelInputTitle(command: string): string {
+  if (isPanelInputCommand(command)) return panelInputCopy(command).title;
+  return command;
+}
 
 /**
  * The panel state machine controller. One instance per bridge; state is
@@ -252,7 +248,7 @@ export class PanelController {
           `panel menu repost after render failure failed: ${String(postError)}`,
         );
       }
-      await this.host.text(chatId, '⚠️ The panel view could not be rendered — see the bot log.');
+      await this.host.text(chatId, t('panel.renderFailedView'));
       return { messageId };
     }
     // A card with a parent (its stack is deeper than one) can return to it:
@@ -268,7 +264,7 @@ export class PanelController {
             actions: [
               {
                 tag: 'button',
-                text: { tag: 'plain_text', content: '⬅ Back' },
+                text: { tag: 'plain_text', content: t('panel.back') },
                 value: actionValue({ kind: 'panel-back' }),
               },
             ],
@@ -283,7 +279,7 @@ export class PanelController {
 
   /** The loading placeholder for an async panel view (Back only). */
   private loadingPanelCard(view: PanelView): CardJson {
-    return buildPanelNoticeCard({ title: panelViewTitle(view), hint: '⏳ Loading…' });
+    return buildPanelNoticeCard({ title: panelViewTitle(view), hint: t('panel.loading') });
   }
 
   /**
@@ -364,7 +360,7 @@ export class PanelController {
       return sent;
     } catch (fallbackError: unknown) {
       this.host.logger.error(`panel card could not be posted: ${String(fallbackError)}`);
-      await this.host.text(chatId, '⚠️ The panel card could not be displayed — see the bot log.');
+      await this.host.text(chatId, t('panel.renderFailedCard'));
       return { messageId: '' };
     }
   }

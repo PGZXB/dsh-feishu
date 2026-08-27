@@ -80,9 +80,16 @@ export interface PendingInboundFile {
 
 import type { PanelView } from './panel/types.js';
 
-export { isPanelInputCommand, PANEL_CONFIRM_SPEC, PANEL_INPUT_SPEC } from './panel/types.js';
+export {
+  isPanelInputCommand,
+  PANEL_CONFIRM_SPEC,
+  PANEL_INPUT_SPEC,
+  panelConfirmCopy,
+  panelInputCopy,
+} from './panel/types.js';
 
 import { turnTitle } from './cards/StreamingCardController.js';
+import { t } from './i18n/index.js';
 
 export { turnTitle } from './cards/StreamingCardController.js';
 
@@ -749,10 +756,8 @@ export class Bridge {
       );
       await this.options.transport.sendText(
         message.chatId,
-        `⚠️ I can't process messages of type \`${message.unsupportedType}\` yet.` +
-          (message.unsupportedType === 'folder'
-            ? ' Folder contents cannot be downloaded via the API — please send the files individually or as a zip archive instead.'
-            : ''),
+        t('inbound.unsupportedType', { type: message.unsupportedType }) +
+          (message.unsupportedType === 'folder' ? t('inbound.folderNote') : ''),
       );
       return;
     }
@@ -811,7 +816,7 @@ export class Bridge {
         );
         await this.replyCommandResult(message.chatId, {
           kind: 'error',
-          text: 'a turn is running — stop it first.',
+          text: t('command.error.turnRunning'),
         });
         return;
       }
@@ -845,10 +850,7 @@ export class Bridge {
       return;
     }
     this.options.logger.debug(`unknown command ${line}: replying with help hint`);
-    await this.options.transport.sendText(
-      message.chatId,
-      `Unknown command ${line} — send /help to list commands.`,
-    );
+    await this.options.transport.sendText(message.chatId, t('command.unknown', { line }));
   }
 
   /** Send a command result as a text message (empty text posts no message). */
@@ -867,7 +869,7 @@ export class Bridge {
   private async replyResultCard(chatId: string, result: CommandResult): Promise<void> {
     const text = result.kind === 'error' ? `⚠️ ${result.text}` : result.text;
     if (text === '') return;
-    const title = result.kind === 'error' ? '⚠️ Action failed' : '✅ Done';
+    const title = result.kind === 'error' ? t('result.failedTitle') : t('card.status.note.done');
     await this.options.transport
       .sendCard(chatId, buildResultCard(title, text, result.kind === 'error'))
       .catch(async (error: unknown) => {
@@ -941,16 +943,16 @@ export class Bridge {
     cwd?: string,
   ): Promise<CommandResult> {
     if (this.refuseWhileWorking(chatId)) {
-      return { kind: 'error', text: 'a turn is running — stop it first.' };
+      return { kind: 'error', text: t('command.error.turnRunning') };
     }
     if (this.options.sessionMap.get(chatId) === sessionId) {
-      return { kind: 'error', text: `session ${sessionId} is already active in this chat.` };
+      return { kind: 'error', text: t('resume.error.sessionBusy', { sessionId }) };
     }
     const agent = this.options.agentStore.get(sessionId);
     if (agent !== undefined && agent.status === 'running') {
       return {
         kind: 'error',
-        text: `session ${sessionId} has an active turn — stop it in its chat first.`,
+        text: t('resume.error.sessionTurnRunning', { sessionId }),
       };
     }
     if (agent === undefined) {
@@ -979,13 +981,10 @@ export class Bridge {
     // previous binding — if any — is detached).
     this.options.sessionMap.set(chatId, sessionId);
     this.resetChatState(chatId);
-    const hint =
-      this.options.sessionMap.cwdFor(chatId) === undefined
-        ? ' This chat has no working directory — pick one with /repo or /cd before sending a message.'
-        : '';
+    const hint = this.options.sessionMap.cwdFor(chatId) === undefined ? t('resume.noCwdHint') : '';
     return {
       kind: 'success',
-      text: `Resumed session ${sessionId} — send a message to continue it.${hint}`,
+      text: t('resume.success', { sessionId }) + hint,
     };
   }
 
@@ -1102,7 +1101,7 @@ export class Bridge {
     if (this.options.readSession === undefined) {
       return {
         kind: 'error',
-        text: 'session export unavailable — the session query service is not mounted.',
+        text: t('command.error.exportUnavailable'),
       };
     }
     try {
@@ -1110,14 +1109,15 @@ export class Bridge {
       const transcript = buildSessionExport(log.events);
       const fileName = `session-${sessionId}.md`;
       await this.options.transport.sendFile(chatId, fileName, new TextEncoder().encode(transcript));
-      return { kind: 'success', text: `Exported ${log.events.length} events to ${fileName}.` };
+      return {
+        kind: 'success',
+        text: t('command.info.exportedEvents', { count: log.events.length, file: fileName }),
+      };
     } catch (error: unknown) {
       this.options.logger.warn(`session export failed: ${String(error)}`);
       const detail = String(error);
-      const scopeHint = detail.includes('im:resource')
-        ? ' — the Feishu app needs the im:resource:upload permission scope (developer console → Permissions).'
-        : '';
-      return { kind: 'error', text: `session export failed: ${detail}${scopeHint}` };
+      const scopeHint = detail.includes('im:resource') ? t('inbound.unavailableUploadScope') : '';
+      return { kind: 'error', text: t('command.error.exportFailed', { detail }) + scopeHint };
     }
   }
 
@@ -1194,12 +1194,12 @@ export class Bridge {
     const stopped = this.streaming.state(chatId)?.status === 'stopped';
     const output = this.streaming.lastOutput(chatId);
     const statusLine = running
-      ? '**Running** — a turn is in progress.'
+      ? t('panel.cardMenu.running')
       : stopped
-        ? '**Stopped** — the last turn was interrupted.'
+        ? t('panel.cardMenu.stopped')
         : output === undefined
-          ? '**Idle** — send a message to start a turn.'
-          : '**Ready** — the last answer is in the card above; copy or retry it.';
+          ? t('panel.cardMenu.idle')
+          : t('panel.cardMenu.ready');
     // The panel carries the chat's session context so a tap always shows
     // which session the buttons act on. An unpinned chat (no /repo or /cd)
     // surfaces the working-directory requirement instead of a fake cwd.
@@ -1208,7 +1208,7 @@ export class Bridge {
     const cwd = pinned ?? this.options.defaultCwd;
     const contextLine =
       pinned === undefined && this.options.requireWorkingDir !== false
-        ? 'No working directory — pick one with /repo or /cd first'
+        ? t('panel.context.noCwd')
         : sessionId === undefined
           ? `No session yet · \`${cwd}\``
           : `session \`${sessionId}\` · \`${cwd}\``;
@@ -1225,13 +1225,13 @@ export class Bridge {
   /** The plan-mode toggle button label for a chat's current state. */
   private planModeButtonLabel(chatId: string): string {
     const planMode = this.options.planMode;
-    if (planMode === undefined) return '🗺️ Plan mode';
+    if (planMode === undefined) return t('panel.planMode.plan');
     const sessionId = this.options.sessionMap.get(chatId);
     const agent = sessionId === undefined ? undefined : this.options.agentStore.get(sessionId);
-    if (agent === undefined) return '🗺️ Plan mode';
+    if (agent === undefined) return t('panel.planMode.plan');
     const current = planMode.get(agent);
     const active = current.pending ?? current.active;
-    return active ? '🗺️ Leave plan mode' : '🗺️ Plan mode';
+    return active ? t('panel.planMode.leave') : t('panel.planMode.plan');
   }
 
   /**
@@ -1396,11 +1396,7 @@ export class Bridge {
       this.options.logger.debug(
         `message ${message.messageId}: refused by working-directory gate (no cwd)`,
       );
-      await this.options.transport.sendText(
-        message.chatId,
-        '⚠️ No working directory chosen yet — DSH won’t start work here until you pick one. ' +
-          'Send /repo to choose a project, or /cd <path> to set a directory.',
-      );
+      await this.options.transport.sendText(message.chatId, t('gate.workingDirRequired'));
       return;
     }
     // The message-queue gate: a message that arrives while a turn is running
@@ -1699,7 +1695,7 @@ export class Bridge {
     if (entry.status === 'queued' || entry.status === 'editing') {
       entry.status = 'sent';
     }
-    await this.options.transport.sendText(chatId, '⚠️ That queued message was already consumed.');
+    await this.options.transport.sendText(chatId, t('queue.alreadyConsumed'));
     await this.renderQueueItem(chatId, itemId, entry);
   }
 
@@ -2251,10 +2247,13 @@ export class Bridge {
       this.options.logger.info(
         `log export ${file.name}: ${file.content.length} bytes -> chat ${chatId}`,
       );
-      return { kind: 'success', text: `Sent the dsh-feishu log (${file.content.length} bytes).` };
+      return { kind: 'success', text: t('command.info.logSent', { count: file.content.length }) };
     } catch (error: unknown) {
       this.options.logger.warn(`log export ${chatId} failed: ${String(error)}`);
-      return { kind: 'error', text: `could not send the dsh-feishu log: ${String(error)}` };
+      return {
+        kind: 'error',
+        text: t('command.error.logSendFailedDetail', { detail: String(error) }),
+      };
     }
   }
 

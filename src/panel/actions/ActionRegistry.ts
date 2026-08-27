@@ -26,6 +26,7 @@
 
 import type { CommandResult } from '../../commands.js';
 import type { CardAction } from '../../feishu/types.js';
+import { t } from '../../i18n/index.js';
 import type { PanelActionContext } from './PanelAction.js';
 
 /** One panel action's marker kind (the `action.value.kind` it handles). */
@@ -64,7 +65,7 @@ export abstract class PanelAction {
   protected transition?(ctx: PanelActionContext, action: CardAction): Promise<void>;
   /** The panel header title shown on the operating placeholder. */
   protected busyTitle(_ctx: PanelActionContext, _action: CardAction): string {
-    return '⚙️ dsh-feishu panel';
+    return t('panel.title');
   }
   /** The business mutation; its outcome becomes the result card. */
   protected work?(
@@ -96,7 +97,7 @@ export abstract class PanelAction {
       ctx.services.logger.debug(
         `panel action ${this.kind}: refused while working (chat ${action.chatId})`,
       );
-      await ctx.replyText(action.chatId, '⚠️ a turn is running — stop it first.');
+      await ctx.replyText(action.chatId, t('command.error.turnRunningShort'));
       return;
     }
     ctx.services.logger.debug(

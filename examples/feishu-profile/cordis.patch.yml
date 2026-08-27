@@ -21,6 +21,9 @@
     # The working-directory gate: turns are refused until /repo or /cd
     # pins a directory. Keep true unless you want the defaultCwd fallback.
     requireWorkingDir: true
+    # Surface language for card/button copy: en-US | zh-CN
+    # (the FEISHU_LOCALE env var is a lower-priority fallback).
+    # locale: en-US
     # Two-stage reaction ack emojis (received -> done/error/stopped).
     # Set received to '' to disable the ack entirely.
     reactions:

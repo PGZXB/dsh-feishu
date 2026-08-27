@@ -17,6 +17,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
 import type { CardAction, FeishuTransport } from '../feishu/types.js';
+import { t } from '../i18n/index.js';
 import { isImagePath } from '../outbound.js';
 import type { SessionMap } from '../session-map.js';
 import {
@@ -168,7 +169,7 @@ export function friendlyTurnError(error: { code?: string; message: string }): st
   if (code !== '' && message !== '') return `${code}: ${message}`;
   if (code !== '') return code;
   if (message !== '') return message;
-  return 'The turn failed with an unspecified error.';
+  return t('error.unspecified');
 }
 
 /** Session-scoped cumulative usage folded from the event stream (exact
@@ -544,9 +545,9 @@ export class StreamingCardController {
         );
         const title =
           plugin === 'schedule'
-            ? '⏰ Reminder'
+            ? t('controller.reminder.title')
             : plugin === 'compact'
-              ? '🧹 Compacting…'
+              ? t('controller.info.compacting')
               : `⏰ ${plugin} notification`;
         this.cardStates.set(chatId, {
           title,
@@ -668,7 +669,7 @@ export class StreamingCardController {
         const resultText = assistantText(event.data.message.content[0]?.content ?? []);
         const status = event.data.error !== undefined ? 'error' : 'done';
         this.host.logger.debug(
-          `streaming tool/result ${chatId}: call ${event.data.message.content[0]?.toolCallId ?? '(unknown)'} -> ${status}`,
+          `streaming tool/result ${chatId}: call ${event.data.message.content[0]?.toolCallId ?? t('panel.view.unknownSession')} -> ${status}`,
         );
         // Find the correlated tool row (also the create-fallback path source).
         const index = state.rows.findIndex(
@@ -788,7 +789,9 @@ export class StreamingCardController {
           // `friendlyTurnError`.
           await this.host.transport.sendText(
             chatId,
-            `${this.host.textMentionFor(chatId)}⚠️ Turn failed: ${state.errorText ?? 'unknown error'}`,
+            `${this.host.textMentionFor(chatId)}${t('error.turnFailed', {
+              error: state.errorText ?? t('error.unknown'),
+            })}`,
           );
         }
         break;
@@ -815,7 +818,7 @@ export class StreamingCardController {
         let state = this.cardStates.get(chatId);
         if (state === undefined || state.status !== 'working') {
           state = {
-            title: '🧹 Compacting…',
+            title: t('controller.info.compacting'),
             content: '',
             rows: [],
             openThinkId: undefined,
@@ -827,7 +830,7 @@ export class StreamingCardController {
           };
           this.cardStates.set(chatId, state);
           try {
-            await this.host.cards.open(chatId, '🧹 Compacting…');
+            await this.host.cards.open(chatId, t('controller.info.compacting'));
           } catch (error: unknown) {
             this.host.logger.warn(`compaction card unavailable: ${String(error)}`);
           }
@@ -857,7 +860,7 @@ export class StreamingCardController {
               state.content =
                 message !== undefined && typeof message === 'string'
                   ? `⚠️ ${message}`
-                  : '⚠️ Compaction failed.';
+                  : t('controller.error.compactionFailed');
             }
           }
           state.status = status;
@@ -872,7 +875,7 @@ export class StreamingCardController {
             // failed turn).
             await this.host.transport.sendText(
               chatId,
-              `${this.host.textMentionFor(chatId)}⚠️ Compaction failed — see the card for details`,
+              `${this.host.textMentionFor(chatId)}${t('controller.error.compactionFailedDetails')}`,
             );
           }
         }
@@ -902,10 +905,7 @@ export class StreamingCardController {
           this.host.logger.info(
             `stop for chat ${action.chatId}: no live agent (stale card or restarted)`,
           );
-          await this.host.transport.sendText(
-            action.chatId,
-            'No active session to stop — the bot may have restarted. Send a message to start fresh.',
-          );
+          await this.host.transport.sendText(action.chatId, t('controller.error.noSessionToStop'));
           return;
         }
         if (agent.status !== 'running') {
@@ -913,10 +913,7 @@ export class StreamingCardController {
           // nothing to cancel (agent.cancel is a no-op then — sending
           // "Stopping…" with no follow-up read as a hang, user report).
           this.host.logger.info(`stop for chat ${action.chatId}: agent idle, nothing to stop`);
-          await this.host.transport.sendText(
-            action.chatId,
-            'No active turn to stop — the last turn already finished.',
-          );
+          await this.host.transport.sendText(action.chatId, t('controller.error.noTurnToStop'));
           return;
         }
         // The same cancel the DSH web Stop button issues (session.cancel →
@@ -940,10 +937,7 @@ export class StreamingCardController {
           await this.host.transport.sendText(action.chatId, output);
         } else {
           // A silent no-op reads as broken (user report pattern).
-          await this.host.transport.sendText(
-            action.chatId,
-            'Nothing to copy — no completed answer yet.',
-          );
+          await this.host.transport.sendText(action.chatId, t('controller.info.nothingToCopy'));
         }
         return;
       }
@@ -952,7 +946,7 @@ export class StreamingCardController {
         if (prompt === undefined || prompt === '') {
           await this.host.transport.sendText(
             action.chatId,
-            'Nothing to retry — send a message first.',
+            t('controller.info.nothingToRetryHint'),
           );
           return;
         }
@@ -1059,7 +1053,7 @@ export class StreamingCardController {
           this.host.logger.warn(`send-log ${action.chatId}: failed (${msg})`);
           await this.host.transport.sendText(
             action.chatId,
-            `⚠️ Could not send the dsh-feishu log (${msg}).`,
+            t('controller.error.logSendFailed', { message: msg }),
           );
         }
         return;

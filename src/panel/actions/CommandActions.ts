@@ -10,11 +10,12 @@
 
 import type { CommandResult, SurfaceCommand } from '../../commands.js';
 import type { CardAction } from '../../feishu/types.js';
+import { t } from '../../i18n/index.js';
 import {
   isPanelInputCommand,
-  PANEL_CONFIRM_SPEC,
-  PANEL_INPUT_SPEC,
   type PanelInputCommand,
+  panelConfirmCopy,
+  panelInputCopy,
 } from '../types.js';
 import { PanelAction } from './ActionRegistry.js';
 import type { PanelActionContext } from './PanelAction.js';
@@ -81,7 +82,7 @@ export class CommandAction extends PanelAction {
     }
   }
   protected override busyTitle(_ctx: PanelActionContext, action: CardAction): string {
-    return action.value.name ?? '⚙️ dsh-feishu panel';
+    return action.value.name ?? t('panel.title');
   }
   protected override work(
     ctx: PanelActionContext,
@@ -131,8 +132,8 @@ export class PanelInputSubmitAction extends PanelAction {
   }
   protected override busyTitle(_ctx: PanelActionContext, action: CardAction): string {
     const name = action.value.command;
-    if (isPanelInputCommand(name)) return PANEL_INPUT_SPEC[name].title;
-    return '⚙️ dsh-feishu panel';
+    if (isPanelInputCommand(name)) return panelInputCopy(name).title;
+    return t('panel.title');
   }
   protected override work(
     ctx: PanelActionContext,
@@ -149,7 +150,7 @@ export class PanelInputSubmitAction extends PanelAction {
       if (sessionTitle === undefined) {
         return {
           kind: 'error',
-          text: 'Renaming sessions is unavailable on this deployment.',
+          text: t('panel.action.renameUnavailable'),
         };
       }
       return (async () => {
@@ -165,16 +166,18 @@ export class PanelInputSubmitAction extends PanelAction {
           if (session === undefined) {
             return {
               kind: 'error',
-              text: 'This session could not be loaded — resume it before renaming.',
+              text: t('panel.action.sessionNotLoaded'),
             };
           }
           sessionTitle.rename(session, rawInput);
-          return { kind: 'success', text: `Renamed session ${sessionId}.` };
+          return { kind: 'success', text: t('panel.action.sessionRenamed', { sessionId }) };
         } catch (error: unknown) {
           ctx.services.logger.warn(`session rename failed: ${String(error)}`);
           return {
             kind: 'error',
-            text: `Rename failed: ${error instanceof Error ? error.message : String(error)}`,
+            text: t('panel.action.renameFailed', {
+              message: error instanceof Error ? error.message : String(error),
+            }),
           };
         }
       })();
@@ -199,7 +202,7 @@ export class PanelInputSubmitAction extends PanelAction {
   private inputValue(action: CardAction): string {
     const commandName = action.value.command;
     if (!isPanelInputCommand(commandName)) return '';
-    const fieldName = PANEL_INPUT_SPEC[commandName].fieldName;
+    const fieldName = panelInputCopy(commandName).fieldName;
     return action.formValue?.[fieldName] ?? '';
   }
 }
@@ -210,8 +213,8 @@ export class PanelConfirmAction extends PanelAction {
   readonly allowedWhileWorking = false;
   protected override busyTitle(_ctx: PanelActionContext, action: CardAction): string {
     const name = action.value.command;
-    if (name === 'clear' || name === 'compact') return PANEL_CONFIRM_SPEC[name].title;
-    return '⚙️ dsh-feishu panel';
+    if (name === 'clear' || name === 'compact') return panelConfirmCopy(name).title;
+    return t('panel.title');
   }
   protected override work(
     ctx: PanelActionContext,

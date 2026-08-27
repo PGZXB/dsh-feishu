@@ -48,6 +48,7 @@ import { StreamingCardManager } from './cards/streaming.js';
 import type { CommandResult } from './commands.js';
 import { consoleExporter } from './console-exporter.js';
 import type { FeishuTransport } from './feishu/types.js';
+import { isLocale, type Locale, setActiveLocale } from './i18n/index.js';
 import { logFilePath } from './log-file.js';
 import { createMemoryTransport } from './memory-transport.js';
 import { registerSendFileTool } from './outbound.js';
@@ -117,6 +118,12 @@ export interface Config {
    */
   readonly requireWorkingDir?: boolean;
   /**
+   * UI language for everything the bot says on the Feishu surface (cards,
+   * panels, command labels, gate notices). Default `en-US`. Falls back to
+   * the `FEISHU_LOCALE` environment variable.
+   */
+  readonly locale?: Locale;
+  /**
    * Two-stage reaction ack emojis (received / done / error / stopped).
    * Defaults GoGoGo / DONE / ERROR / ERROR — valid Feishu `emoji_type`
    * values (WARN is NOT in the platform's reaction table and the ack 400s).
@@ -148,6 +155,7 @@ export const Config: z<Config> = z.object({
   unknownCommand: z.union([z.const('error'), z.const('passthrough')]).required(false),
   repoRoots: z.array(z.string()).required(false),
   requireWorkingDir: z.boolean().required(false),
+  locale: z.union([z.const('en-US'), z.const('zh-CN')]).required(false),
   reactions: z
     .object({
       received: z.string().required(false),
@@ -290,6 +298,20 @@ export function resolveUnknownCommand(config: Config): 'error' | 'passthrough' |
   const env = process.env.FEISHU_UNKNOWN_COMMAND;
   if (env === 'error' || env === 'passthrough') return env;
   return undefined;
+}
+
+/**
+ * Resolve the surface UI locale: config first, then `FEISHU_LOCALE`, then
+ * the default. The same resolver pattern as every other routing option.
+ * @param config - the plugin config.
+ * @returns a shipped locale (`resolveLocale` never returns undefined — the
+ *   bot must always be able to speak).
+ */
+export function resolveLocale(config: Config): Locale {
+  if (config.locale !== undefined) return config.locale;
+  const env = process.env.FEISHU_LOCALE;
+  if (isLocale(env)) return env;
+  return 'en-US';
 }
 
 /** The default transport factory picks this up; see below. */
@@ -436,6 +458,11 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
   const allowedChats = resolveAllowedChats(config);
   const groupMentionMode = resolveGroupMentionMode(config);
   const unknownCommand = resolveUnknownCommand(config);
+  // The UI locale is process-wide and fixed at boot (one surface per dsh
+  // process): every card/panel/command message renders through it.
+  const locale = resolveLocale(config);
+  setActiveLocale(locale);
+  logger.debug(`[feishu] locale=${locale}`);
   logger.debug(
     `[feishu] routing: allowedChats=${allowedChats !== undefined && allowedChats.length > 0 ? allowedChats.join(',') : '(all)'} ` +
       `allowedUsers=${allowedUsers !== undefined && allowedUsers.length > 0 ? allowedUsers.length : '(all)'} ` +

@@ -5,7 +5,7 @@
 
 import { join } from 'node:path';
 import type { Agent } from '@deepseek-ai/dsh-agent';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   planModeResultText,
   registerSurfaceCommands,
@@ -14,6 +14,7 @@ import {
 } from '../src/commands/surface.js';
 import { CommandRegistry, type CommandResult } from '../src/commands.js';
 import type { CardAction, CardJson, FeishuTransport } from '../src/feishu/types.js';
+import { createTranslator, type MessageKey, setActiveLocale } from '../src/i18n/index.js';
 import { SessionMap } from '../src/session-map.js';
 
 /** A minimal transport fake (only what the commands touch). */
@@ -305,6 +306,81 @@ describe('surface command set', () => {
     const { host } = makeCommands();
     const result = await runHarnessCommand(host, { chatId: 'oc_chat', rawInput: '' }, 'goal');
     expect(result?.kind).toBe('error');
+  });
+});
+
+describe('surface command copy is locale-aware', () => {
+  const zh = (key: MessageKey): string => createTranslator('zh-CN')(key);
+
+  afterEach(() => setActiveLocale('en-US'));
+
+  it('resolves harness-command button labels at REGISTRATION time (module-load freeze regression)', () => {
+    // The HARNESS_COMMANDS table must NOT resolve `t(...)` at module load —
+    // that freezes the pre-apply() en-US locale (the Goal/Compact/Feedback
+    // bug). Registering under zh-CN must yield zh button labels.
+    setActiveLocale('zh-CN');
+    const { commands } = makeCommands();
+    expect(commands.find('goal')?.buttonLabel).toBe(zh('command.cmd.goal.label'));
+    expect(commands.find('compact')?.buttonLabel).toBe(zh('command.cmd.compact.label'));
+    expect(commands.find('feedback')?.buttonLabel).toBe(zh('command.cmd.feedback.label'));
+    // Sanity: every surface command button resolves through command.cmd.*.label.
+    expect(commands.find('log')?.buttonLabel).toBe(zh('command.cmd.log.label'));
+    expect(commands.find('cancel')?.buttonLabel).toBe(zh('command.cmd.cancel.label'));
+    expect(commands.find('model')?.buttonLabel).toBe(zh('command.cmd.model.label'));
+    expect(commands.find('export')?.buttonLabel).toBe(zh('command.cmd.export.label'));
+    expect(commands.find('sessions')?.buttonLabel).toBe(zh('command.cmd.sessions.label'));
+    expect(commands.find('plan')?.buttonLabel).toBe(zh('command.cmd.plan.label'));
+    expect(commands.find('status')?.buttonLabel).toBe(zh('command.cmd.status.label'));
+  });
+
+  it('/help renders the localized command list', async () => {
+    setActiveLocale('zh-CN');
+    const { commands } = makeCommands();
+    const result = await commands.find('help')?.handler({
+      chatId: 'oc_chat',
+      senderOpenId: 'ou_user',
+      rawInput: '',
+    });
+    expect(result?.kind).toBe('success');
+    if (result?.kind === 'success') {
+      expect(result.text).toContain(zh('command.help.title'));
+      expect(result.text).toContain(zh('command.help.goal'));
+      expect(result.text).toContain(zh('command.help.compact'));
+      expect(result.text).toContain(zh('command.help.hint'));
+      // The command id/usage tokens stay verbatim.
+      expect(result.text).toContain('/goal <text>');
+    }
+  });
+
+  it('/status renders the localized text report', async () => {
+    setActiveLocale('zh-CN');
+    const { commands } = makeCommands();
+    const result = await commands.find('status')?.handler({
+      chatId: 'oc_chat',
+      senderOpenId: 'ou_user',
+      rawInput: '',
+    });
+    expect(result?.kind).toBe('success');
+    if (result?.kind === 'success') {
+      expect(result.text).toContain('聊天：oc_chat');
+      expect(result.text).toContain('会话：feishu-session-1');
+      expect(result.text).toContain('代理：运行中');
+      expect(result.text).toContain('最后输出：（无）');
+      expect(result.text).toContain('提及模式：总是');
+    }
+    // en byte-identity for the same state (session bound, no output yet).
+    setActiveLocale('en-US');
+    const enResult = await commands.find('status')?.handler({
+      chatId: 'oc_chat',
+      senderOpenId: 'ou_user',
+      rawInput: '',
+    });
+    expect(enResult?.kind).toBe('success');
+    if (enResult?.kind === 'success') {
+      expect(enResult.text).toBe(
+        'chat: oc_chat\nsession: feishu-session-1\nagent: live\nlast output: (none)\nmention mode: always',
+      );
+    }
   });
 });
 
