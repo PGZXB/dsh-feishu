@@ -128,7 +128,7 @@ export const zhMessages: Record<MessageKey, string> = {
   'sessions.list.toggleArchived': '🗄️ 归档列表',
   'sessions.list.toggleActive': '◀️ 进行中的会话',
   'sessions.list.find': '🔎 查找会话',
-  'sessions.list.title': '🗂️ 会话',
+  'sessions.list.title': '🗂️ 会话管理',
   'sessions.list.placeholder': '请选择会话…',
   'sessions.list.empty': '还没有会话 —— 发送一条消息开始第一个会话。',
   'sessions.list.emptyArchived': '没有已归档的会话。',
@@ -143,7 +143,7 @@ export const zhMessages: Record<MessageKey, string> = {
   'sessions.badge.liveMark': '●',
   'sessions.badge.live': '● 存活',
   'sessions.badge.saved': '💾 已保存',
-  'sessions.detail.title': '🗂️ 会话',
+  'sessions.detail.title': '🗂️ 会话管理',
   'sessions.detail.cwd': '工作目录：`{cwd}`',
   'sessions.detail.cwdNone': '工作目录：—',
   'sessions.detail.created': '创建于：{age}',
@@ -154,7 +154,7 @@ export const zhMessages: Record<MessageKey, string> = {
   'sessions.action.rename': '✏️ 重命名',
   'sessions.action.archive': '🗄️ 归档',
   'sessions.action.restore': '♻️ 恢复',
-  'sessions.action.export': '📤 导出',
+  'sessions.action.export': '📤 导出会话',
 
   // ── Panel chrome + views ────────────────────────────────────────────────
   'panel.title': '⚙️ dsh-feishu 面板',
