@@ -227,6 +227,7 @@ source _dev/bot-env.sh        # 设置 DSH_HOME=_dev/dsh-home 并 source _dev/se
 | `src/i18n/en-US.ts` + `src/i18n/zh-CN.ts` | 任何用户可见文案变更：在同一个 PR 中同时向两个目录添加键 |
 | `docs/e2e-testing.md`（+ `.zh.md`） | E2E UI 套件：场景、运行手册、约束、捕获到的网页选择器 |
 | `docs/pitfalls.md`（+ `.zh.md`） | 实战踩坑；每条都伴随回归测试 |
+| `docs/portable-deployment.md`（+ `.zh.md`） | 绿色/便携部署包：构建方式、多实例模型、每实例部署 |
 | `AGENTS.md` | agent 指南、约定、流程（本文件） |
 | `CONTRIBUTING.md` / `SECURITY.md` | 贡献指南 / 安全姿态（低频、刻意为之） |
 
