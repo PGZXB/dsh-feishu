@@ -262,6 +262,57 @@ export const enMessages = {
   'command.cmd.goal.label': '🎯 Goal',
   'command.cmd.feedback.label': '💬 Feedback',
 
+  // ── /help rendering (user-facing descriptions of the surface commands;
+  //    the registry-facing `description` fields stay English by design) ────
+  'command.help.title': 'dsh-feishu commands:',
+  'command.help.hint':
+    'A bare command with optional args opens a picker/input card (same as its panel button); other slash lines are forwarded to dsh when they exist in its registry.',
+  'command.help.help': 'List all surface commands',
+  'command.help.panel': 'Open the control panel card (all commands as buttons)',
+  'command.help.log': 'Send the dsh-feishu log file to this chat',
+  'command.help.group': 'Create a group chat with you and the bot',
+  'command.help.cancel': 'Stop the current turn',
+  'command.help.cd': 'Set this chat’s working directory (session restarts in it)',
+  'command.help.repo':
+    'Pick a project directory (bare scans the default roots; /repo <path> scans that path)',
+  'command.help.status': 'Show this chat’s session status',
+  'command.help.feishuStatus': 'Show the surface diagnostic card (connection, sessions, activity)',
+  'command.help.schedule': 'List active reminders for this chat',
+  'command.help.model':
+    'Switch this session’s model (bare opens the picker); /model <provider>/<model> switches directly',
+  'command.help.export': 'Export this chat’s session log as a file',
+  'command.help.sessions': 'List saved sessions and act on one in this chat',
+  'command.help.resume': 'Resume a saved session (bare opens the session list to pick one)',
+  'command.help.clear': 'Start a fresh conversation (previous session stays saved)',
+  'command.help.new': 'Start a new conversation (alias of /clear)',
+  'command.help.goal': 'Set or view the goal for a long-running task',
+  'command.help.compact': 'Compact older conversation history',
+  'command.help.feedback': 'Send feedback',
+  'command.help.permission': 'Switch the permission preset — sandbox mode + approval policy',
+  'command.help.plan': 'Enter or leave plan mode (bare toggles; /plan on|off sets it)',
+
+  // ── /status text report (the `status` command's text output) ────────────
+  'command.status.chat': 'chat: {id}',
+  'command.status.session': 'session: {id}',
+  'command.status.sessionNone': '(none yet)',
+  'command.status.agent': 'agent: {state}',
+  'command.status.agentLive': 'live',
+  'command.status.agentIdle': 'idle',
+  'command.status.lastOutput': 'last output: {summary}',
+  'command.status.lastOutputNone': '(none)',
+  'command.status.lastOutputChars': '{count} chars',
+  'command.status.mentionMode': 'mention mode: {mode}',
+  'command.status.mention.always': 'always',
+  'command.status.mention.never': 'never',
+  'command.status.mention.ambient': 'ambient',
+  'command.status.mention.topic': 'topic',
+
+  // ── /schedule report ────────────────────────────────────────────────────
+  'command.schedule.title': 'Active reminders:',
+  'command.schedule.rule.after': 'after {seconds}s',
+  'command.schedule.rule.at': 'at {at}',
+  'command.schedule.rule.every': 'every {seconds}s',
+
   // ── Command / panel-action feedback ─────────────────────────────────────
   'command.result.stopped': 'Stopped.',
   'command.info.newConversation':
@@ -283,6 +334,7 @@ export const enMessages = {
   'command.info.planAlreadyActive': 'Plan mode is already active.',
   'command.info.planAlreadyInactive': 'Plan mode is already inactive.',
   'command.info.planEntryCancelled': 'Plan mode entry cancelled.',
+  'command.info.modelLine': 'model: {selection}{effort}',
   'command.error.noSessionStop': 'no active session to stop.',
   'command.error.noSession': 'no session yet — send a message first.',
   'command.error.turnRunning': 'a turn is running — stop it first.',
@@ -303,6 +355,8 @@ export const enMessages = {
   'command.error.exportUnavailable':
     'session export unavailable — the session query service is not mounted.',
   'command.error.exportFailed': 'session export failed: {detail}',
+  'command.error.groupCreateFailed': 'group creation failed: {detail}',
+  'command.error.logSendFailedDetail': 'could not send the dsh-feishu log: {detail}',
   'resume.error.sessionBusy': 'Session {sessionId} is already active in this chat.',
   'resume.error.sessionTurnRunning':
     'Session {sessionId} has an active turn — stop it in its chat first.',
@@ -318,6 +372,13 @@ export const enMessages = {
   'panel.action.sessionArchived': 'Archived session {sessionId}.',
   'panel.action.renameFailed': 'Rename failed: {message}',
   'panel.action.archiveFailed': 'Archiving failed: {message}',
+  'panel.action.permissionSwitchFailed': 'could not switch to preset {preset}: {detail}',
+
+  // ── Permission preset display names (the service exposes raw ids) ───────
+  'preset.readOnly': 'read-only',
+  'preset.workspaceWrite': 'workspace-write',
+  'preset.dangerFullAccess': 'danger-full-access',
+  'preset.custom': 'Custom',
 
   // ── Streaming controller feedback (stop/retry/copy/compact/reminder) ────
   'controller.info.nothingToRetry': 'Nothing to retry',

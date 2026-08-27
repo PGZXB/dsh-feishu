@@ -27,7 +27,7 @@ import { buildStatusCard } from '../cards/render.js';
 import type { CommandInvocation, CommandRegistry, CommandResult } from '../commands.js';
 import { resolveDirectory } from '../directory.js';
 import type { FeishuTransport } from '../feishu/types.js';
-import { t } from '../i18n/index.js';
+import { type MessageKey, t } from '../i18n/index.js';
 import { parseModelArg } from '../model-args.js';
 import { applySessionModelSwitch, sessionSelection } from '../model-switch.js';
 import type { PanelView } from '../panel/types.js';
@@ -50,26 +50,58 @@ const HARNESS_COMMANDS: ReadonlyArray<{
   readonly name: string;
   readonly description: string;
   readonly usage?: string;
-  readonly buttonLabel: string;
+  /** A catalog key, resolved to a label AT REGISTRATION TIME (never at
+   *  module load — a module-level `t()` freezes the pre-`apply()` locale). */
+  readonly buttonLabelKey: MessageKey;
 }> = [
   {
     name: 'goal',
     description: 'Set or view the goal for a long-running task',
     usage: '<text>',
-    buttonLabel: t('command.cmd.goal.label'),
+    buttonLabelKey: 'command.cmd.goal.label',
   },
   {
     name: 'compact',
     description: 'Compact older conversation history',
-    buttonLabel: t('command.confirm.compact.title'),
+    buttonLabelKey: 'command.confirm.compact.title',
   },
   {
     name: 'feedback',
     description: 'Send feedback',
     usage: '<text>',
-    buttonLabel: t('command.cmd.feedback.label'),
+    buttonLabelKey: 'command.cmd.feedback.label',
   },
 ];
+
+/**
+ * Surface command name → its localized `/help` description key. The
+ * registry-facing `description` fields stay English (contract text); `/help`
+ * renders the localized copy instead. Unknown names (not ours) fall back to
+ * the English description.
+ */
+const COMMAND_HELP_KEYS: Readonly<Record<string, MessageKey>> = {
+  help: 'command.help.help',
+  panel: 'command.help.panel',
+  log: 'command.help.log',
+  group: 'command.help.group',
+  cancel: 'command.help.cancel',
+  cd: 'command.help.cd',
+  repo: 'command.help.repo',
+  status: 'command.help.status',
+  'feishu-status': 'command.help.feishuStatus',
+  schedule: 'command.help.schedule',
+  model: 'command.help.model',
+  export: 'command.help.export',
+  sessions: 'command.help.sessions',
+  resume: 'command.help.resume',
+  clear: 'command.help.clear',
+  new: 'command.help.new',
+  goal: 'command.help.goal',
+  compact: 'command.help.compact',
+  feedback: 'command.help.feedback',
+  permission: 'command.help.permission',
+  plan: 'command.help.plan',
+};
 
 /** Mirror the harness /plan command's outcome wording for a toggle. */
 export function planModeResultText(
@@ -159,6 +191,22 @@ export async function runHarnessCommand(
   return { kind: 'error', text: t('command.error.cmdUnavailableDeployment', { name }) };
 }
 
+/** Localize a group-mention mode id for the /status report. */
+function mentionModeLabel(mode: 'always' | 'never' | 'ambient' | 'topic' | undefined): string {
+  switch (mode) {
+    case 'always':
+      return t('command.status.mention.always');
+    case 'never':
+      return t('command.status.mention.never');
+    case 'ambient':
+      return t('command.status.mention.ambient');
+    case 'topic':
+      return t('command.status.mention.topic');
+    default:
+      return t('command.status.mention.always');
+  }
+}
+
 /**
  * Register the built-in surface commands.
  * @param commands - the surface command registry.
@@ -174,14 +222,16 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     handler: () => {
       const lines = commands
         .list()
-        .map(
-          (command) =>
-            `/${command.name}${command.usage === undefined ? '' : ` ${command.usage}`} — ${command.description}`,
-        )
+        .map((command) => {
+          const helpKey = COMMAND_HELP_KEYS[command.name];
+          return `/${command.name}${command.usage === undefined ? '' : ` ${command.usage}`} — ${
+            helpKey === undefined ? command.description : t(helpKey)
+          }`;
+        })
         .join('\n');
       return {
         kind: 'success',
-        text: `dsh-feishu commands:\n${lines}\n\nA bare command with optional args opens a picker/input card (same as its panel button); other slash lines are forwarded to dsh when they exist in its registry.`,
+        text: `${t('command.help.title')}\n${lines}\n\n${t('command.help.hint')}`,
       };
     },
   });
@@ -221,7 +271,10 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
         const { chatId } = await options.transport.createGroup(name, [invocation.senderOpenId]);
         return { kind: 'success', text: t('command.info.groupCreated', { name, chatId }) };
       } catch (error: unknown) {
-        return { kind: 'error', text: `group creation failed: ${String(error)}` };
+        return {
+          kind: 'error',
+          text: t('command.error.groupCreateFailed', { detail: String(error) }),
+        };
       }
     },
   });
@@ -304,11 +357,21 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
       const agent = sessionId === undefined ? undefined : options.agentStore.get(sessionId);
       const output = options.lastOutput(invocation.chatId);
       const lines = [
-        `chat: ${invocation.chatId}`,
-        `session: ${sessionId ?? '(none yet)'}`,
-        `agent: ${agent !== undefined ? 'live' : 'idle'}`,
-        `last output: ${output === undefined ? '(none)' : `${output.length} chars`}`,
-        `mention mode: ${options.groupMentionMode ?? 'always'}`,
+        t('command.status.chat', { id: invocation.chatId }),
+        t('command.status.session', {
+          id: sessionId === undefined ? t('command.status.sessionNone') : sessionId,
+        }),
+        t('command.status.agent', {
+          state:
+            agent !== undefined ? t('command.status.agentLive') : t('command.status.agentIdle'),
+        }),
+        t('command.status.lastOutput', {
+          summary:
+            output === undefined
+              ? t('command.status.lastOutputNone')
+              : t('command.status.lastOutputChars', { count: output.length }),
+        }),
+        t('command.status.mentionMode', { mode: mentionModeLabel(options.groupMentionMode) }),
       ];
       return { kind: 'success', text: lines.join('\n') };
     },
@@ -325,7 +388,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
       await options.transport.sendCard(
         invocation.chatId,
         buildStatusCard({
-          appId: options.appId ?? '(not configured)',
+          appId: options.appId ?? t('status.notConfigured'),
           connection,
           sessionCount: options.sessionMap.size,
           lastInboundAt: options.lastInboundAt,
@@ -370,13 +433,13 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
           const prompt = record.prompt === '' ? t('status.noPrompt') : record.prompt;
           const rule =
             record.kind === 'after'
-              ? `after ${record.afterSeconds}s`
+              ? t('command.schedule.rule.after', { seconds: record.afterSeconds })
               : record.kind === 'at'
-                ? `at ${record.scheduledAt}`
-                : `every ${record.everySeconds}s`;
+                ? t('command.schedule.rule.at', { at: record.scheduledAt })
+                : t('command.schedule.rule.every', { seconds: record.everySeconds });
           return `${rule} · ${prompt} (${view.state})`;
         });
-        return { kind: 'success', text: `Active reminders:\n${lines.join('\n')}` };
+        return { kind: 'success', text: `${t('command.schedule.title')}\n${lines.join('\n')}` };
       } catch (error: unknown) {
         options.logger.warn(`schedule listing unavailable: ${String(error)}`);
         return {
@@ -425,10 +488,15 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
           };
         }
         const effort =
-          selection.reasoningEffort === undefined ? '' : ` · effort ${selection.reasoningEffort}`;
+          selection.reasoningEffort === undefined
+            ? ''
+            : t('status.effortSuffix', { effort: selection.reasoningEffort });
         return {
           kind: 'success',
-          text: `model: ${selection.provider} · ${selection.model}${effort}`,
+          text: t('command.info.modelLine', {
+            selection: `${selection.provider} · ${selection.model}`,
+            effort,
+          }),
         };
       }
       const parsed = parseModelArg(raw);
@@ -564,7 +632,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
       description: spec.description,
       ...(spec.usage === undefined ? {} : { usage: spec.usage }),
       category: 'system',
-      buttonLabel: spec.buttonLabel,
+      buttonLabel: t(spec.buttonLabelKey),
       handler: async (invocation) => {
         // A bare /goal /feedback opens the panel text-input card (matching
         // the panel palette button). /compact stays direct: it is a harness

@@ -125,7 +125,7 @@ export const zhMessages: Record<MessageKey, string> = {
   // ── Sessions (list, detail, ages, badges) ───────────────────────────────
   'sessions.list.intro': '**已保存的会话** —— 选择一个查看详情并操作。',
   'sessions.list.archivedIntro': '**已归档的会话** —— 选择一个查看并恢复。',
-  'sessions.list.toggleArchived': '🗄️ 归档',
+  'sessions.list.toggleArchived': '🗄️ 归档列表',
   'sessions.list.toggleActive': '◀️ 进行中的会话',
   'sessions.list.find': '🔎 查找会话',
   'sessions.list.title': '🗂️ 会话',
@@ -240,7 +240,7 @@ export const zhMessages: Record<MessageKey, string> = {
   'command.cmd.cd.label': '📁 更改目录',
   'command.cmd.repo.label': '📚 选择项目',
   'command.cmd.status.label': '📊 状态',
-  'command.cmd.feishuStatus.label': '📡 表面状态',
+  'command.cmd.feishuStatus.label': '📡 插件状态',
   'command.cmd.schedule.label': '⏰ 提醒',
   'command.cmd.model.label': '🤖 模型',
   'command.cmd.export.label': '📤 导出',
@@ -251,6 +251,55 @@ export const zhMessages: Record<MessageKey, string> = {
   'command.cmd.permission.label': '🔐 权限',
   'command.cmd.goal.label': '🎯 目标',
   'command.cmd.feedback.label': '💬 反馈',
+
+  // ── /help 渲染（命令的用户可见描述；注册表的 description 字段按设计保持英文）──
+  'command.help.title': 'dsh-feishu 命令：',
+  'command.help.hint':
+    '不带参数的命令会打开选择/输入卡片（与面板按钮一致）；其余斜杠命令若存在于 dsh 注册表中则透传。',
+  'command.help.help': '列出所有界面命令',
+  'command.help.panel': '打开控制面板卡片（所有命令以按钮形式展示）',
+  'command.help.log': '将 dsh-feishu 日志文件发送到此聊天',
+  'command.help.group': '创建包含你和机器人的群聊',
+  'command.help.cancel': '停止当前回复',
+  'command.help.cd': '设置本聊天的工作目录（会话将在此重启）',
+  'command.help.repo': '选择项目目录（不带参数扫描默认根；/repo <路径> 扫描该路径）',
+  'command.help.status': '显示本聊天的会话状态',
+  'command.help.feishuStatus': '显示界面诊断卡片（连接、会话、活动）',
+  'command.help.schedule': '列出本聊天的活跃提醒',
+  'command.help.model':
+    '切换本会话的模型（不带参数打开选择器）；/model <provider>/<model> 直接切换',
+  'command.help.export': '将本聊天的会话日志导出为文件',
+  'command.help.sessions': '列出已保存的会话并在此聊天中操作',
+  'command.help.resume': '继续一个已保存的会话（不带参数打开会话列表选择）',
+  'command.help.clear': '开始全新的对话（之前的会话保持已保存）',
+  'command.help.new': '开始新对话（/clear 的别名）',
+  'command.help.goal': '设置或查看长期任务的目标',
+  'command.help.compact': '压缩较早的对话历史',
+  'command.help.feedback': '发送反馈',
+  'command.help.permission': '切换权限预设 —— 沙箱模式 + 审批策略',
+  'command.help.plan': '进入或退出计划模式（不带参数切换；/plan on|off 显式设置）',
+
+  // ── /status 文本报告（status 命令的文本输出）──────────────────────────
+  'command.status.chat': '聊天：{id}',
+  'command.status.session': '会话：{id}',
+  'command.status.sessionNone': '（还没有）',
+  'command.status.agent': '代理：{state}',
+  'command.status.agentLive': '运行中',
+  'command.status.agentIdle': '空闲',
+  'command.status.lastOutput': '最后输出：{summary}',
+  'command.status.lastOutputNone': '（无）',
+  'command.status.lastOutputChars': '{count} 字符',
+  'command.status.mentionMode': '提及模式：{mode}',
+  'command.status.mention.always': '总是',
+  'command.status.mention.never': '从不',
+  'command.status.mention.ambient': '环境',
+  'command.status.mention.topic': '话题',
+
+  // ── /schedule 报告 ─────────────────────────────────────────────────────
+  'command.schedule.title': '活跃提醒：',
+  'command.schedule.rule.after': '{seconds} 秒后',
+  'command.schedule.rule.at': '于 {at}',
+  'command.schedule.rule.every': '每 {seconds} 秒',
 
   // ── Command / panel-action feedback ─────────────────────────────────────
   'command.result.stopped': '已停止。',
@@ -278,6 +327,13 @@ export const zhMessages: Record<MessageKey, string> = {
   'panel.action.sessionArchived': '会话 {sessionId} 已归档。',
   'panel.action.renameFailed': '重命名失败：{message}',
   'panel.action.archiveFailed': '归档失败：{message}',
+  'panel.action.permissionSwitchFailed': '无法切换到预设 {preset}：{detail}',
+
+  // ── 权限预设显示名（服务暴露的是原始 id）───────────────────────────────
+  'preset.readOnly': '只读',
+  'preset.workspaceWrite': '工作区可写',
+  'preset.dangerFullAccess': '完全访问',
+  'preset.custom': '自定义',
 
   // ── Streaming controller feedback (stop/retry/copy/compact/reminder) ────
   'controller.info.nothingToRetry': '没有可重试的内容',
@@ -316,9 +372,12 @@ export const zhMessages: Record<MessageKey, string> = {
   'command.info.planAlreadyActive': '计划模式已经开启。',
   'command.info.planAlreadyInactive': '计划模式已经关闭。',
   'command.info.planEntryCancelled': '已取消进入计划模式。',
+  'command.info.modelLine': '模型：{selection}{effort}',
   'command.error.cmdUnavailableDeployment': '/{name} 在当前部署上不可用。',
   'command.error.cmdUnavailableRegistry': '/{name} 不可用 —— 未挂载 dsh 命令注册表。',
   'command.error.exportFailed': '会话导出失败：{detail}',
+  'command.error.groupCreateFailed': '群组创建失败：{detail}',
+  'command.error.logSendFailedDetail': '无法发送 dsh-feishu 日志：{detail}',
   'resume.error.sessionBusy': '会话 {sessionId} 已在该聊天中激活。',
   'resume.error.sessionTurnRunning': '会话 {sessionId} 有回复正在运行 —— 请先在其聊天中停止。',
 

@@ -8,7 +8,7 @@
 
 import type { CommandResult } from '../../commands.js';
 import type { CardAction } from '../../feishu/types.js';
-import { t } from '../../i18n/index.js';
+import { permissionPresetLabel, t } from '../../i18n/index.js';
 import { applySessionModelSwitch } from '../../model-switch.js';
 import { PanelAction } from './ActionRegistry.js';
 import type { PanelActionContext } from './PanelAction.js';
@@ -31,7 +31,7 @@ export class RepoPickAction extends PanelAction {
     ctx.services.sessionMap.remint(action.chatId);
     return {
       kind: 'success',
-      text: `Working directory set to ${resolved.path} (session restarts on your next message).`,
+      text: t('command.info.cwdSetRestart', { path: resolved.path }),
     };
   }
   protected override async finish(ctx: PanelActionContext, action: CardAction): Promise<void> {
@@ -69,12 +69,20 @@ export class PermissionPickAction extends PanelAction {
       service.set(agent.session, preset);
     } catch (error: unknown) {
       ctx.services.logger.warn(`permission pick failed: ${String(error)}`);
-      return { kind: 'error', text: `could not switch to preset ${preset}: ${String(error)}` };
+      return {
+        kind: 'error',
+        text: t('panel.action.permissionSwitchFailed', {
+          preset,
+          detail: String(error),
+        }),
+      };
     }
     const option = service.optionOf(preset);
     return {
       kind: 'success',
-      text: `Permission preset switched to ${option.name ?? preset}.`,
+      text: t('command.info.permissionSwitched', {
+        preset: permissionPresetLabel(option.name ?? preset),
+      }),
     };
   }
   protected override async finish(ctx: PanelActionContext, action: CardAction): Promise<void> {
@@ -118,7 +126,9 @@ export class ModelPickAction extends PanelAction {
     );
     return {
       kind: 'success',
-      text: `Model set to ${parsed.selection.provider} · ${parsed.selection.model} (this session + default).`,
+      text: t('command.info.modelSet', {
+        selection: `${parsed.selection.provider} · ${parsed.selection.model}`,
+      }),
     };
   }
   protected override async finish(ctx: PanelActionContext, action: CardAction): Promise<void> {

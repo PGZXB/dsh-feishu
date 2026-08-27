@@ -64,12 +64,14 @@ export class SessionArchiveAction extends PanelAction {
     }
     try {
       await workspace.archiveSession(sessionId);
-      return { kind: 'success', text: `Archived session ${sessionId}.` };
+      return { kind: 'success', text: t('panel.action.sessionArchived', { sessionId }) };
     } catch (error: unknown) {
       ctx.services.logger.warn(`session archive failed: ${String(error)}`);
       return {
         kind: 'error',
-        text: `Archiving failed: ${error instanceof Error ? error.message : String(error)}`,
+        text: t('panel.action.archiveFailed', {
+          message: error instanceof Error ? error.message : String(error),
+        }),
       };
     }
   }

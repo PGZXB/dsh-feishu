@@ -21,7 +21,7 @@ import {
 } from '../../cards/render.js';
 import { buildSessionDetailCard, buildSessionsCard } from '../../cards/session-list.js';
 import type { CardJson } from '../../feishu/types.js';
-import { t } from '../../i18n/index.js';
+import { permissionPresetLabel, t } from '../../i18n/index.js';
 import { type PanelView, panelConfirmCopy, panelInputCopy } from '../types.js';
 import type { PanelViewContext } from './PanelViewContext.js';
 import type { PanelViewState } from './PanelViewState.js';
@@ -197,7 +197,7 @@ export class PermissionPickerViewState implements PanelViewState {
       const option = service.optionOf(name);
       return {
         name,
-        label: option.name ?? name,
+        label: permissionPresetLabel(option.name ?? name),
         description: option.description,
         current: name === currentPreset,
       };

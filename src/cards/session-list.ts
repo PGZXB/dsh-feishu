@@ -214,11 +214,15 @@ export function buildSessionDetailCard(view: SessionDetailView, canMutate: boole
   const rows = [
     `**${stripAngleBrackets(view.title ?? t('common.untitled'))}**`,
     `\`${view.sessionId}\``,
-    view.cwd !== undefined ? `cwd: \`${view.cwd}\`` : t('sessions.detail.cwdNone'),
-    view.createdAt > 0 ? `created: ${ageLabel(view.createdAt)}` : t('sessions.detail.createdNone'),
-    `messages: ${view.messageCount}`,
+    view.cwd !== undefined
+      ? t('sessions.detail.cwd', { cwd: view.cwd })
+      : t('sessions.detail.cwdNone'),
+    view.createdAt > 0
+      ? t('sessions.detail.created', { age: ageLabel(view.createdAt) })
+      : t('sessions.detail.createdNone'),
+    t('sessions.detail.messages', { count: view.messageCount }),
     ...(view.lastSummary !== undefined && view.lastSummary !== ''
-      ? ['', `**Last answer**`, view.lastSummary.slice(0, 200)]
+      ? ['', t('sessions.detail.lastAnswer'), view.lastSummary.slice(0, 200)]
       : []),
   ];
   const actions: Array<{

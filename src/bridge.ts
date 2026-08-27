@@ -816,7 +816,7 @@ export class Bridge {
         );
         await this.replyCommandResult(message.chatId, {
           kind: 'error',
-          text: 'a turn is running — stop it first.',
+          text: t('command.error.turnRunning'),
         });
         return;
       }
@@ -869,7 +869,7 @@ export class Bridge {
   private async replyResultCard(chatId: string, result: CommandResult): Promise<void> {
     const text = result.kind === 'error' ? `⚠️ ${result.text}` : result.text;
     if (text === '') return;
-    const title = result.kind === 'error' ? '⚠️ Action failed' : t('card.status.note.done');
+    const title = result.kind === 'error' ? t('result.failedTitle') : t('card.status.note.done');
     await this.options.transport
       .sendCard(chatId, buildResultCard(title, text, result.kind === 'error'))
       .catch(async (error: unknown) => {
@@ -943,7 +943,7 @@ export class Bridge {
     cwd?: string,
   ): Promise<CommandResult> {
     if (this.refuseWhileWorking(chatId)) {
-      return { kind: 'error', text: 'a turn is running — stop it first.' };
+      return { kind: 'error', text: t('command.error.turnRunning') };
     }
     if (this.options.sessionMap.get(chatId) === sessionId) {
       return { kind: 'error', text: t('resume.error.sessionBusy', { sessionId }) };
@@ -2247,10 +2247,13 @@ export class Bridge {
       this.options.logger.info(
         `log export ${file.name}: ${file.content.length} bytes -> chat ${chatId}`,
       );
-      return { kind: 'success', text: `Sent the dsh-feishu log (${file.content.length} bytes).` };
+      return { kind: 'success', text: t('command.info.logSent', { count: file.content.length }) };
     } catch (error: unknown) {
       this.options.logger.warn(`log export ${chatId} failed: ${String(error)}`);
-      return { kind: 'error', text: `could not send the dsh-feishu log: ${String(error)}` };
+      return {
+        kind: 'error',
+        text: t('command.error.logSendFailedDetail', { detail: String(error) }),
+      };
     }
   }
 

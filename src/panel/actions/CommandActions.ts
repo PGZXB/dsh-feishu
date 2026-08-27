@@ -170,12 +170,14 @@ export class PanelInputSubmitAction extends PanelAction {
             };
           }
           sessionTitle.rename(session, rawInput);
-          return { kind: 'success', text: `Renamed session ${sessionId}.` };
+          return { kind: 'success', text: t('panel.action.sessionRenamed', { sessionId }) };
         } catch (error: unknown) {
           ctx.services.logger.warn(`session rename failed: ${String(error)}`);
           return {
             kind: 'error',
-            text: `Rename failed: ${error instanceof Error ? error.message : String(error)}`,
+            text: t('panel.action.renameFailed', {
+              message: error instanceof Error ? error.message : String(error),
+            }),
           };
         }
       })();

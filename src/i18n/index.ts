@@ -135,3 +135,26 @@ export function setActiveLocale(locale: Locale): void {
 export function t(key: MessageKey, params?: Readonly<Record<string, string | number>>): string {
   return active(key, params);
 }
+
+/**
+ * The permission-preset ids the dsh service advertises → their catalog keys.
+ * Deployment-custom preset ids (not in this table) fall back to the raw id.
+ */
+const PERMISSION_PRESET_KEYS: Readonly<Record<string, MessageKey>> = {
+  'read-only': 'preset.readOnly',
+  'workspace-write': 'preset.workspaceWrite',
+  'danger-full-access': 'preset.dangerFullAccess',
+  custom: 'preset.custom',
+};
+
+/**
+ * Localize a permission-preset id for display. The dsh service exposes raw
+ * ids (`workspace-write`, `danger-full-access`, …); the surface translates
+ * the known ones and passes unknown ids through unchanged.
+ * @param name - the raw preset id (or `custom`).
+ * @returns the localized preset label.
+ */
+export function permissionPresetLabel(name: string): string {
+  const key = PERMISSION_PRESET_KEYS[name];
+  return key === undefined ? name : t(key);
+}

@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { buildApprovalCard, buildStatusCard } from '../src/cards/render.js';
 import { friendlyTurnError } from '../src/cards/StreamingCardController.js';
-import { buildSessionsCard, type SessionRowView } from '../src/cards/session-list.js';
-import { createTranslator, setActiveLocale } from '../src/i18n/index.js';
+import {
+  buildSessionDetailCard,
+  buildSessionsCard,
+  type SessionDetailView,
+  type SessionRowView,
+} from '../src/cards/session-list.js';
+import { createTranslator, permissionPresetLabel, setActiveLocale } from '../src/i18n/index.js';
 import { panelConfirmCopy, panelInputCopy } from '../src/panel/types.js';
 
 /**
@@ -97,6 +102,46 @@ describe('i18n zh-CN rendering', () => {
       // The static field name stays stable across locales.
       expect(panelInputCopy('cd').fieldName).toBe('path');
       expect(panelConfirmCopy('compact').message).toBe(constZh('command.confirm.compact.message'));
+    } finally {
+      setActiveLocale('en-US');
+    }
+  });
+
+  it('localizes the session-detail rows in Chinese', () => {
+    const view: SessionDetailView = {
+      sessionId: 'feishu-session-1',
+      title: 'old project',
+      cwd: '/repo/demo',
+      createdAt: Date.now(),
+      messageCount: 3,
+      lastSummary: 'done summary',
+      live: false,
+      current: false,
+      archived: false,
+    };
+    setActiveLocale('zh-CN');
+    try {
+      const card = JSON.stringify(buildSessionDetailCard(view, true));
+      expect(card).toContain(
+        createTranslator('zh-CN')('sessions.detail.cwd', { cwd: '/repo/demo' }),
+      );
+      expect(card).toContain('消息数：3');
+      expect(card).toContain('**上一个回答**');
+    } finally {
+      setActiveLocale('en-US');
+    }
+  });
+
+  it('localizes permission-preset ids through permissionPresetLabel', () => {
+    expect(permissionPresetLabel('workspace-write')).toBe('workspace-write');
+    expect(permissionPresetLabel('read-only')).toBe('read-only');
+    setActiveLocale('zh-CN');
+    try {
+      expect(permissionPresetLabel('workspace-write')).toBe('工作区可写');
+      expect(permissionPresetLabel('read-only')).toBe('只读');
+      expect(permissionPresetLabel('danger-full-access')).toBe('完全访问');
+      // Unknown (deployment-custom) ids pass through unchanged.
+      expect(permissionPresetLabel('custom-deploy-preset')).toBe('custom-deploy-preset');
     } finally {
       setActiveLocale('en-US');
     }

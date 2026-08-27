@@ -875,7 +875,7 @@ export class StreamingCardController {
             // failed turn).
             await this.host.transport.sendText(
               chatId,
-              `${this.host.textMentionFor(chatId)}⚠️ Compaction failed — see the card for details`,
+              `${this.host.textMentionFor(chatId)}${t('controller.error.compactionFailedDetails')}`,
             );
           }
         }
@@ -1053,7 +1053,7 @@ export class StreamingCardController {
           this.host.logger.warn(`send-log ${action.chatId}: failed (${msg})`);
           await this.host.transport.sendText(
             action.chatId,
-            `⚠️ Could not send the dsh-feishu log (${msg}).`,
+            t('controller.error.logSendFailed', { message: msg }),
           );
         }
         return;
