@@ -345,6 +345,7 @@ they land.
 | `docs/features.md` (+ `.zh.md`) | feature list / TODO tracker — every shipped or planned feature updates its row |
 | `src/i18n/en-US.ts` + `src/i18n/zh-CN.ts` | any user-facing string change: add the key(s) to BOTH catalogs in the same PR |
 | `docs/pitfalls.md` (+ `.zh.md`) | field-proven failure modes; every entry ships with its regression test |
+| `docs/portable-deployment.md` (+ `.zh.md`) | the self-contained/green deployment package: how to build it, its multi-instance model, and per-instance deployment |
 | `AGENTS.md` | agent guidance, conventions, workflow (this file) |
 | `CONTRIBUTING.md` / `SECURITY.md` | contribution guidance / security posture (rare, deliberate) |
 
