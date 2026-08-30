@@ -1481,8 +1481,11 @@ describe('Bridge', () => {
             (el) => el.tag === 'markdown' && 'content' in el && el.content === 'bash',
           ),
       ).toBe(true);
+      // The callback must carry the clicked card's own message id (the
+      // harness fake assigns 'msg-1' to the first posted card) — a wrong id
+      // is now ignored instead of cross-wiring the latest card.
       await h.bridge.handleCardAction({
-        messageId: 'mem-1',
+        messageId: 'msg-1',
         chatId: 'oc_chat',
         operatorOpenId: 'ou_user',
         value: { kind: 'toggle-rows' },
