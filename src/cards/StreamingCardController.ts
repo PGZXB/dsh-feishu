@@ -474,6 +474,21 @@ export class StreamingCardController {
    *  recent history is realistically clicked). */
   private static readonly FINISHED_RENDER_LIMIT = 20;
 
+  /**
+   * Freeze the terminal render of the card that JUST finished, keyed by its
+   * own message id. turn/end (and compaction/end) finalize WITHOUT a
+   * syncCard, so the render must be captured here — relying on the syncCard
+   * hook alone left a finished card that the user never re-touched with no
+   * frozen render, and expand/collapse clicks on it were "unretained".
+   * @param chatId - the chat whose turn ended.
+   * @param state - the chat's authoritative state (already terminal).
+   */
+  private captureFinishedRender(chatId: string, state: ChatCardState): void {
+    const messageId = this.host.cards.lastMessageId(chatId);
+    if (messageId === undefined) return;
+    this.rememberFinishedRender(chatId, messageId, this.snapshot(chatId, state));
+  }
+
   /** Record/refresh the frozen render for one finished card, bounded. */
   private rememberFinishedRender(chatId: string, messageId: string, snapshot: CardSnapshot): void {
     let perChat = this.finishedRenders.get(chatId);
@@ -834,6 +849,7 @@ export class StreamingCardController {
         // is none, and the card would keep the stale working render.)
         this.host.cards.patch(chatId, this.snapshot(chatId, state));
         await this.host.cards.finalize(chatId, status);
+        this.captureFinishedRender(chatId, state);
         // Two-stage ack, stage 2: swap 👀 for the terminal emoji.
         await this.ackTurnEnd(chatId, status);
         const finalText = state.content.trim();
@@ -929,6 +945,7 @@ export class StreamingCardController {
           state.stopRequested = false;
           this.host.cards.patch(chatId, this.snapshot(chatId, state));
           await this.host.cards.finalize(chatId, status);
+          this.captureFinishedRender(chatId, state);
           await this.ackTurnEnd(chatId, status);
           const finalText = state.content.trim();
           if (finalText !== '') this.lastOutputs.set(chatId, finalText);

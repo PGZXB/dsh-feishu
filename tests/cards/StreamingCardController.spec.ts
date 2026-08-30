@@ -335,6 +335,31 @@ describe('StreamingCardController', () => {
     expect(h.controller.state('oc_chat')?.collapsed).toBe(true);
   });
 
+  it('a finished card is captured at turn/end even if never re-touched (first-card expand)', async () => {
+    // User report: the FIRST card's expand did nothing. turn/end finalizes
+    // WITHOUT a syncCard, so the card's frozen render was never captured; a
+    // later card made it non-live and the click fell through as "unretained".
+    const h = makeController();
+    await h.controller.beginTurn('oc_chat', 'om-1', 'first');
+    await h.controller.handleEvent('feishu-session-1', reasoningEvent('analyzing…'));
+    await h.controller.handleEvent('feishu-session-1', turnEndEvent({ kind: 'completed' }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const firstCardId = 'msg-1';
+    // Turn 2 makes a NEW card live WITHOUT the first card being re-touched.
+    await h.controller.beginTurn('oc_chat', 'om-2', 'second');
+    await h.controller.handleEvent('feishu-session-1', reasoningEvent('thinking…'));
+    await h.controller.handleEvent('feishu-session-1', turnEndEvent({ kind: 'completed' }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const updatesBefore = h.transport.updatedTargets.length;
+    await h.controller.handleStreamingAction({ ...action('toggle-rows'), messageId: firstCardId });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const updates = h.transport.updatedTargets.slice(updatesBefore);
+    // The first card's render was captured at ITS turn/end, so the
+    // historical click retargets it (not silently ignored, not the latest).
+    expect(updates.map((u) => u.messageId)).toEqual([firstCardId]);
+    expect(h.controller.state('oc_chat')?.collapsed).toBe(true); // latest untouched
+  });
+
   it('toggle-rows on an unretained historical card is ignored (no cross-wiring)', async () => {
     const h = makeController();
     await h.controller.beginTurn('oc_chat', 'om-1', 'T');
