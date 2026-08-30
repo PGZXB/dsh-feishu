@@ -149,6 +149,15 @@ harness 沙箱（以及本 checkout 的环境）有一些特定规则：
   兼容（always/never/ambient/topic）。在 1 人 1 bot 的私人群中，`@`
   要求被放宽（`isSoloGroup`）。
 - `allowedChats` 是一个 allowlist；其外的聊天会被完全忽略。
+- **`bot/v3/info` 把 bot 自己的 open_id 放在 `bot.open_id` 下，而不是
+  `data.open_id`。** 提及门禁把每条入站群消息的提及列表与
+  `transport.getBotOpenId()` 比对；如果该 id 从未被解析出来，`mentioned`
+  恒为 false，于是 `always`/`topic` 模式下每条群消息（哪怕真的 `@` 了）
+  都被判为"未提及"——bot 静默忽略所有群消息。症状：日志里出现
+  "ignoring group message: bot not mentioned"，但用户确实 `@` 了 bot，
+  且全程没有任何报错。修复：同时解析两种结构（`parseBotOpenId`），并且
+  当响应不带 open_id 时在启动时大声告警，而不是静默失败。请用真实应用
+  验证线上结构——SDK 的 `request` 返回的是原始 body，`bot` 在顶层。
 
 ## Git 发现 vs 扫描根目录
 

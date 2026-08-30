@@ -227,6 +227,21 @@ export function normalizeMessageEvent(data: RawMessageEvent): FeishuMessage | un
 }
 
 /**
+ * Parse the bot's own open id out of a `bot/v3/info` response. The current
+ * API nests it under `bot.open_id`; the legacy shape put it under
+ * `data.open_id`. Reading only one of the two silently disables the group
+ * mention gate (every @-mention looks like a plain message). Pure function —
+ * unit-testable without any SDK connection.
+ * @param response - the parsed `bot/v3/info` body (code must already be 0).
+ * @returns the bot's open id, or `undefined` when the body carries none.
+ */
+export function parseBotOpenId(response: unknown): string | undefined {
+  const body = response as { bot?: { open_id?: string }; data?: { open_id?: string } };
+  const openId = body.bot?.open_id ?? body.data?.open_id;
+  return openId !== undefined && openId !== '' ? openId : undefined;
+}
+
+/**
  * Normalize a raw `card.action.trigger` payload into a surface action, or
  * `undefined` when no actionable payload is present. Message/chat ids may be
  * nested under `context` (current v2 shape) or at the root (fallback).
@@ -374,17 +389,31 @@ export class LarkTransport implements FeishuTransport {
 
   /** Fetch and cache the bot's own open id (`bot/v3/info`). */
   private async resolveBotOpenId(): Promise<void> {
-    const response = await this.client.request<{
-      code?: number;
-      msg?: string;
-      data?: { open_id?: string };
-    }>({ method: 'GET', url: '/open-apis/bot/v3/info' });
-    const code = response?.code ?? -1;
+    const response = await this.client.request<unknown>({
+      method: 'GET',
+      url: '/open-apis/bot/v3/info',
+    });
+    const code = (response as { code?: number })?.code ?? -1;
     if (code !== 0) {
-      throw new FeishuApiError('bot.v3.info', code, response?.msg ?? 'unknown error');
+      throw new FeishuApiError(
+        'bot.v3.info',
+        code,
+        (response as { msg?: string })?.msg ?? 'unknown error',
+      );
     }
-    const openId = response.data?.open_id;
-    if (openId !== undefined && openId !== '') this.botOpenIdValue = openId;
+    const openId = parseBotOpenId(response);
+    if (openId !== undefined) {
+      this.botOpenIdValue = openId;
+      this.logger?.debug(`bot open id resolved: ${openId}`);
+    } else {
+      // Fail loud: the group mention gate needs the bot's own open id to tell
+      // "the bot was mentioned" apart from "someone else was mentioned". A
+      // bot whose id cannot be resolved leaves every group @-mention looking
+      // like a plain message under `always`/`topic` modes.
+      this.logger?.warn(
+        'bot/v3/info succeeded but carried no bot open id — group mention detection is disabled',
+      );
+    }
   }
 
   /** The bot's own open id, or `undefined` until resolved. */
