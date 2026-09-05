@@ -204,7 +204,9 @@ class FakeAgentStore {
     return {
       followup,
       cancel,
-      session: { id: sessionId, events: [] },
+      // dsh@next Session exposes `snapshotEvents()` (an event-sourced log),
+      // not a public `events` field. Keep `events` for older paths too.
+      session: { id: sessionId, events: [], snapshotEvents: () => [] },
       // A stable scoped ctx with a minimal `on` so the real
       // installModelSelection (coupled by the /model session switch) registers
       // its waterfall listeners without throwing. The listeners are never
@@ -3305,7 +3307,7 @@ class FakePermissionService implements PermissionPresetService {
     const description = descriptions[name];
     return description === undefined ? { value: name, name } : { value: name, name, description };
   }
-  current(_events: readonly unknown[]): string {
+  current(_session: unknown): string {
     return this.currentPreset;
   }
   set(_session: unknown, name: string): void {

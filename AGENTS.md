@@ -234,7 +234,13 @@ When adapting:
 - Confirm the session-log reader still parses new logs (zstd frames, `seq`
   continuity).
 - Refresh the lockfile against the official registry (npmmirror misses
-  `@deepseek-ai/dsh-bash-env`).
+  `@deepseek-ai/dsh-bash-env`), then run `pnpm dedupe` so the base packages
+  (`@deepseek-ai/cordis`, `@deepseek-ai/schemastery`, …) resolve to ONE
+  version each. A partial `pnpm install` can keep two versions in the
+  lockfile; the peer-hash forks then load `dsh-tools` twice, and its
+  module-level `Symbol` scheduler key splits identity — every tool call dies
+  with "Cannot read properties of undefined (reading 'prepare')" even though
+  typecheck is green.
 - Re-verify all gates (`FEISHU_INT_REQUIRED=1`) with a profile installed from
   the NEW CLI; never touch `~/.dsh` — only `_dev/` test homes.
 - Update the compat badge + Note in `README.md` / `README.zh.md`.
@@ -291,9 +297,11 @@ These rules came from real bugs; each has a regression test and a
   not depend on harness packages at runtime (`ctx.get(name)`), but the seam
   must mirror the actual surface — getters vs methods matter
   (`ctx.permissionPresets.names` is a GETTER, not `names()`; `current`
-  takes `events`, `set` takes `session`). Wrong shapes typecheck fine and
+  took events in one rc and the SESSION in the next, where the service folds
+  `session.snapshotEvents()` itself). Wrong shapes typecheck fine and
   blow up at runtime ("events is not iterable", "names is not a function").
-  Read the installed `.d.ts` before writing the seam.
+  Read the installed `.d.ts` before writing the seam — these shapes move
+  between rc releases.
 - **Some web commands have no host implementation.** `/export` and `/model`
   are client-side contributions (a browser download observer, a
   `commandUi.popupSelect`). Check the harness source for "Web-only" before

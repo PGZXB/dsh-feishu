@@ -228,6 +228,43 @@ function checkHarnessPackagesArePeerDeps() {
   }
 }
 
+/**
+ * The lockfile must resolve every @deepseek-ai package to exactly ONE
+ * instance (one packages: key). A version fork of a base package
+ * (@deepseek-ai/cordis, @deepseek-ai/schemastery, …) makes pnpm's peer
+ * hashing fork the whole dsh-agent graph, so dsh-tools loads multiple times
+ * in one process; its module-local Symbol scheduler key then splits identity
+ * and every tool call dies with "Cannot read properties of undefined
+ * (reading 'prepare')" — even though every harness package is correctly a
+ * peerDependency. Run `pnpm dedupe` to converge; see docs/pitfalls.md
+ * ("Version forks of the base packages").
+ */
+function checkSingleDshInstancePerPackage() {
+  const lock = readFileSync(join(ROOT, 'pnpm-lock.yaml'), 'utf8');
+  const keys = new Map();
+  // Quoted packages: keys only — `  '@deepseek-ai/cordis@4.0.2(...peers...)':`.
+  // The suffix after the first `(` lists PEERS, not versions; capture the
+  // key's own name and version (the text before the first `'` or `(`).
+  for (const match of lock.matchAll(/^[ \t]*'?(@deepseek-ai\/[a-z0-9-]+)@([^(':]+)['(:]/gm)) {
+    const [, name, version] = match;
+    const versions = keys.get(name) ?? new Set();
+    versions.add(version);
+    keys.set(name, versions);
+  }
+  const forks = [...keys.entries()]
+    .filter(([, versions]) => versions.size > 1)
+    .map(([name, versions]) => `${name}@${[...versions].join(' + ')}`);
+  if (forks.length > 0) {
+    fail(
+      `@deepseek-ai packages resolve to multiple versions in pnpm-lock.yaml (run \`pnpm dedupe\`; version forks split dsh-tools instances and break tool calls): ${forks.join(', ')}`,
+    );
+  } else if (keys.size === 0) {
+    fail('pnpm-lock.yaml lists no @deepseek-ai packages — is it a real lockfile?');
+  } else {
+    pass(`every @deepseek-ai package resolves to a single version (${keys.size} packages)`);
+  }
+}
+
 checkTrackedDocs();
 checkNoMirrorLeaks();
 checkDocPairs();
@@ -235,6 +272,7 @@ checkCommits(commitCount);
 checkMinimumReleaseAge();
 checkVersionTrack();
 checkHarnessPackagesArePeerDeps();
+checkSingleDshInstancePerPackage();
 checkMainTreeClean();
 
 if (failures > 0) {
