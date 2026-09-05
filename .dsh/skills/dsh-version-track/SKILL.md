@@ -84,8 +84,9 @@ For the **B / `main`** track:
 
 For the **A / stable** track: cut a `release/*` branch from a commit adapted to the new dsh
 `@latest`, apply the same adaptation, bump the version, and open a "ready to release" PR.
-The actual `scripts/release.mjs` run (which pushes the branch and the `v*` tag → npm publish)
-is a **human-gated** action — do not trigger it; just prepare the branch and PR.
+The publish itself is a **human-gated** two-step action — do not trigger it: the release PR
+must be reviewed and squash-merged first, and only then is `node scripts/release.mjs tag`
+run on merged `main` to cut the `v*` tag → npm publish (see docs/development.md → "Releasing").
 
 ### 4. Refresh a label (green run, no code change)
 Update only `dsh-version.json`, e.g. set `dsh.next` to the current dsh `@next` / `dsh.stable`

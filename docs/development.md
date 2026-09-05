@@ -435,10 +435,22 @@ workflow" for the end-to-end practice.
 
 ## Publishing
 
-Releases are **tag-driven from a frozen `release/*` branch**, never from
-`main` — main is a development branch and may carry unreleased work (e.g.
-the next dsh compat pass), so a release must be cut from the exact commit
-that should ship.
+A release is a **reviewed release PR that merges first, then a tag cut on
+merged `main`** — never a direct tag push from a side branch. The version
+bump itself is always prepared on a frozen `release/vX.Y.Z` branch cut from
+the exact commit that should ship (main is a development branch and may
+carry unreleased work, e.g. the next dsh compat pass), but it lands through
+the same PR review as everything else, and the publish is triggered only
+after that PR has merged.
+
+The ordering is not cosmetic. GitHub's generated release notes
+(`--generate-notes`) resolve their "What's Changed" baseline from the
+PREVIOUS tag reachable in the new tag's history. A tag cut on a release
+branch that is later squash-merged never becomes an ancestor of later
+commits, so the next release silently falls back to an ancient tag and lists
+months of unrelated PRs. Tags cut on merged `main` keep every tag an
+ancestor of the next, and the Release workflow refuses tags that are not on
+main (`release.yml` → "Guard").
 
 ### Version tracks
 
@@ -472,16 +484,50 @@ publish stay human-gated).
 
 ### Releasing
 
+The release driver (`scripts/release.mjs`) has two phases — run them in
+order:
+
+**Phase 1 — prepare the release PR** (on a fresh `release/vX.Y.Z` branch):
+
 ```sh
-git checkout -b release/vX.Y.Z <commit>   # cut from the exact commit to ship
-node scripts/release.mjs <major|minor|patch>
+git checkout -b release/vX.Y.Z <commit>      # cut from the exact commit to ship
+node scripts/release.mjs prepare <major|minor|patch>
 ```
 
-`scripts/release.mjs` refuses to run outside a `release/*` branch, bumps
-`package.json`, runs the CI gates (through `scripts/run-gates.mjs` — direct
-binaries, no pnpm store dependency), commits `chore: release vX.Y.Z`, then
-pushes **the release branch and the `v*` tag** to origin. The
-[Release workflow](../.github/workflows/release.yml) then publishes to npm
-(`NODE_AUTH_TOKEN` — the same registry-token pattern the DeepSeek Harness
-release workflow uses) and creates a GitHub Release. Before the first
-public release, rotate the Feishu app secret (see `SECURITY.md`).
+`prepare` bumps `package.json`, runs the CI gates (through
+`scripts/run-gates.mjs` — direct binaries, no pnpm store dependency) and the
+real-client E2E acceptance (`--skip-e2e` exists as an explicit escape hatch
+for when the E2E environment cannot be provisioned — never the default),
+commits `chore: release vX.Y.Z`, pushes the branch, and opens the release PR
+against `main` (`gh pr create` when `gh` is installed, else it prints the
+compare URL). **No tag, no publish happens in this phase.**
+
+**Phase 2 — review, merge, tag** (after the release PR merges):
+
+```sh
+git checkout main && git pull
+node scripts/release.mjs tag
+```
+
+`tag` verifies main is clean and up to date with `origin/main`, refuses a
+tag that already exists, cuts `vX.Y.Z` at merged main's HEAD (the version
+comes from `package.json`), and pushes it. The
+[Release workflow](../.github/workflows/release.yml) then re-runs the gates,
+publishes to npm (`NODE_AUTH_TOKEN` — the same registry-token pattern the
+DeepSeek Harness release workflow uses) and creates the GitHub Release with
+generated notes. The workflow's "Guard" step fails any tag that does not
+point at merged main, so an accidental side-branch tag cannot ship.
+
+After the workflow goes green:
+
+1. verify the Actions run and the npm dist-tag;
+2. bump `dshFeishu.npmLatest` in `dsh-version.json` on main (a one-line
+   `chore:` commit) — it records a published fact, so it follows the publish;
+3. skim the release's What's Changed — with the ancestry intact it lists
+   exactly the PRs since the previous tag; if you ever must tag off main
+   for a hotfix from a release branch instead, regenerate the notes with an
+   explicit baseline (`POST /repos/…/releases/generate-notes` with
+   `previous_tag_name`) and patch the release body.
+
+Before the first public release, rotate the Feishu app secret (see
+`SECURITY.md`).
