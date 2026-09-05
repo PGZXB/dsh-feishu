@@ -258,6 +258,28 @@ The harness sandbox (and this checkout's environment) has specific rules:
   resumed chat
   is stuck behind the gate.
 
+## Activation-time snapshots of host services
+
+- Never read a host service's live value once at plugin activation and
+  cache it. `@deepseek-ai/dsh-base/cordis.patch.yml` mounts
+  `agent-default-model` with a hardcoded composition entry, and its
+  settings-backed user layer is wired in **after** the plugin may already
+  have run (mount-order race). The surface used to snapshot
+  `agentDefaultModel.currentSelection()` at activation and pass it as
+  static `agentOptions` on every create/resume — so after a restart the
+  FIRST turn of every fresh session ran the composition entry default
+  (`deepseek-official/deepseek-v4-flash`) while the `/model` panel showed
+  the saved default from `settings.yaml`: displayed model ≠ served model,
+  and only a `/model` in that chat fixed it. The same staleness also meant
+  a later `/model` `saveSelection` never reached agents created afterwards
+  until a restart. Fix: resolve agent options **lazily at each create/resume**
+  (by then every service is mounted and the live selection is read). The
+  dsh-base comment says it outright: "Settings may supply a saved selection;
+  consumers read it at creation time." Regression tests:
+  `tests/index.spec.ts` (lazy create + later-saveSelection cases) and
+  `tests/integration/real-composition.spec.ts` →
+  "fresh sessions run the saved default model, not the dsh-base entry (#62)".
+
 ## Integration-test traps
 
 - The integration suite shares the real profile (`_dev/dsh-home`). A test

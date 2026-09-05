@@ -20,6 +20,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { dump, load } from 'js-yaml';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { MemoryOutboxRecord } from '../../src/memory-transport.js';
 import { type MockLlmServer, startMockLlmServer } from './mock-llm-server.js';
@@ -214,6 +215,29 @@ function sendMessage(chatId: string, text: string): void {
     }),
     'utf8',
   );
+}
+
+/** The shared test home's `settings.yaml` (the dsh-base settings document). */
+const SETTINGS_PATH = join(DSH_HOME, 'settings.yaml');
+
+/** Write the `agent-default-model` section into the shared settings file
+ *  BEFORE a dsh process boots, preserving any other sections. Returns the
+ *  exact prior file content (or `undefined` when the file did not exist) so
+ *  the caller can restore it in `finally` — the integration suites share the
+ *  real profile (AGENTS.md: "Test-side state is part of the test"). */
+function writeSavedDefaultModel(provider: string, model: string): string | undefined {
+  const previous = existsSync(SETTINGS_PATH) ? readFileSync(SETTINGS_PATH, 'utf8') : undefined;
+  const doc = previous === undefined ? {} : (load(previous) as Record<string, unknown>);
+  doc['agent-default-model'] = { provider, model };
+  writeFileSync(SETTINGS_PATH, dump(doc), 'utf8');
+  return previous;
+}
+
+/** Restore the shared settings file to its exact prior content (or remove it
+ *  when it did not exist before the test). */
+function restoreSettings(previous: string | undefined): void {
+  if (previous === undefined) rmSync(SETTINGS_PATH, { force: true });
+  else writeFileSync(SETTINGS_PATH, previous, 'utf8');
 }
 
 describe.skipIf(!integrationReady)('real-composition integration', () => {
@@ -1863,6 +1887,74 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
       );
     }
   }, 120_000);
+
+  /** Issue #62: after a process restart, a NEW session's first turn must run
+   *  the SAVED `agent-default-model` from settings.yaml — the same model the
+   *  /model panel displays — never the dsh-base composition entry. The plugin
+   *  used to snapshot `agentDefaultModel.currentSelection()` once at
+   *  activation (before the settings user layer is wired), so every fresh
+   *  session's first request carried the entry default until a /model ran. */
+  it('fresh sessions run the saved default model, not the dsh-base entry (#62)', async () => {
+    const bin = dshBin;
+    const server = mock;
+    if (bin === undefined) throw new Error('dsh CLI unavailable');
+    if (server === undefined) throw new Error('mock LLM server unavailable');
+    // A saved default that differs from the composition entry
+    // (`deepseek-v4-flash`); deepseek-official keeps the adapter routing to
+    // the mock, only the model id differs.
+    const previous = writeSavedDefaultModel('deepseek-official', 'deepseek-v4-pro');
+    try {
+      child = spawn(bin, ['--profile', 'feishu-dev'], {
+        env: {
+          ...process.env,
+          DSH_HOME,
+          FEISHU_APP_ID: 'cli_mock_app',
+          FEISHU_APP_SECRET: 'mock_secret',
+          FEISHU_TRANSPORT: 'memory',
+          FEISHU_MEMORY_DIR: MEMORY_DIR,
+          DEEPSEEK_API_KEY: 'mock_key',
+          DEEPSEEK_BASE_URL: server.url,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('[feishu] bridge ready')) bridgeReady = true;
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
+
+      const chatId = `oc_default_${Date.now()}`;
+      await pinWorkingDir(chatId);
+      sendMessage(chatId, 'run with the saved default model');
+      await waitFor(
+        'the green final card patch',
+        () => readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'green'),
+        90_000,
+      );
+      // Every completion this agent issues — the turn's request(s) and the
+      // new-session title generation — must carry the SAVED model, never the
+      // dsh-base entry default. Assert on ANY request, not just the last:
+      // request ordering vs the title-generation completion is not stable.
+      expect(server.completionRequests()).toBeGreaterThanOrEqual(1);
+      const models = server
+        .requestBodies()
+        .map((body) => (body as { model?: unknown }).model)
+        .filter((model): model is string => typeof model === 'string');
+      expect(models.length).toBeGreaterThanOrEqual(1);
+      expect(models.every((model) => model === 'deepseek-v4-pro')).toBe(true);
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
+      );
+    } finally {
+      // Restore the shared test home's settings (AGENTS.md: test-side state
+      // is part of the test).
+      restoreSettings(previous);
+    }
+  }, 150_000);
 
   /** The working-directory gate on the real process: a fresh chat refuses
    *  turns with guidance until /cd pins a directory (user requirement: DSH

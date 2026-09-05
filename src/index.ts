@@ -476,7 +476,11 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
   });
   // Agents need an explicit provider/model; config overrides win, otherwise
   // the deployment default selection applies (the headless-runner pattern).
-  const resolvedAgentOptions = resolveAgentOptions(ctx, config);
+  // Resolved LAZILY per create/resume, never snapshotted once at activation:
+  // at activation the agentDefaultModel settings layer may not be wired into
+  // the service yet (mount-order race → the composition entry default would
+  // leak into every first turn), and a later /model saveSelection must reach
+  // agents created afterwards (both defects reported in #62).
   const agentStore: AgentStore = {
     get: (sessionId) => ctx.get('agents')?.get(sessionId as unknown as SessionId),
     resume: async (sessionId) => {
@@ -484,9 +488,14 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
       if (agents === undefined) {
         throw new Error('agents service unavailable; cannot resume a session');
       }
+      const resolved = resolveAgentOptions(ctx, config);
+      logger.debug(
+        `[feishu] agent options resume session=${String(sessionId)} ` +
+          `provider=${resolved?.provider ?? '(none)'} model=${resolved?.model ?? '(none)'}`,
+      );
       const { agent } = await agents.resume({
         resumeSessionId: sessionId as unknown as SessionId,
-        ...(resolvedAgentOptions !== undefined ? { agentOptions: resolvedAgentOptions } : {}),
+        ...(resolved !== undefined ? { agentOptions: resolved } : {}),
       });
       return agent;
     },
@@ -495,10 +504,15 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
       if (agents === undefined) {
         throw new Error('agents service unavailable; cannot create a session');
       }
+      const resolved = resolveAgentOptions(ctx, config);
+      logger.debug(
+        `[feishu] agent options create session=${String(sessionId)} ` +
+          `provider=${resolved?.provider ?? '(none)'} model=${resolved?.model ?? '(none)'}`,
+      );
       const { agent } = await agents.create({
         sessionId: sessionId as unknown as SessionId,
         meta: { cwd },
-        ...(resolvedAgentOptions !== undefined ? { agentOptions: resolvedAgentOptions } : {}),
+        ...(resolved !== undefined ? { agentOptions: resolved } : {}),
       });
       // Attach the new session to the workspace owning `cwd` (dsh web parity),
       // creating the workspace record when the directory is not yet
@@ -704,6 +718,14 @@ function promoteAmbientApiKey(ctx: Context, config: Config): void {
  * requests without both, so the resolved options carry whichever of the two
  * is known (a partial config with no default service fails loud at turn
  * time).
+ *
+ * MUST be called lazily at each agent create/resume, never once at plugin
+ * activation: the caller's activation may run before the
+ * `agentDefaultModel` settings user layer is wired (mount-order race), so an
+ * early snapshot captures the composition entry instead of the saved
+ * selection — the first turn of every fresh session runs the wrong model
+ * (#62). Lazy resolution also means a later `/model` `saveSelection` reaches
+ * agents created afterwards without a restart.
  * @param ctx - plugin context.
  * @param config - validated plugin config.
  * @returns agent options to pass on create/resume, or `undefined` when
