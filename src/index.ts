@@ -641,17 +641,17 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
   } else {
     ctx.logger.warn('[feishu] approval service unavailable; approvals fail closed');
   }
-  // Interactive questions: become the single userQuestions provider.
+  // Interactive questions: answer every `user-questions/request` with a
+  // Feishu question card. The dsh runtime asks the scoped answerer waterfall
+  // (`ctx.waterfall('user-questions/request', …)`); the surface listens on
+  // the same event and claims the request by returning a structured answer.
+  // Answerer instances dispose with the event subscription; the service's
+  // absence degrades to an unanswered question (loud, non-fatal).
   const userQuestionsService = ctx.get('userQuestions');
   if (userQuestionsService !== undefined) {
-    // The provider is cast through the service's own contract type: the
-    // surface stays structurally typed (no runtime dependency on the
-    // questions package), and the service's parameter shape may drift.
-    const questionsProvider = {
-      ask: (request: unknown) => bridge.askQuestions(request as AskQuestionsRequestLike),
-    } as Parameters<typeof userQuestionsService.registerProvider>[0];
-    const disposeQuestions = userQuestionsService.registerProvider(questionsProvider);
-    ctx.effect(() => disposeQuestions);
+    ctx.on('user-questions/request', (request: AskQuestionsRequestLike) =>
+      bridge.askQuestions(request),
+    );
   } else {
     ctx.logger.warn('[feishu] userQuestions service unavailable; questions cannot be rendered');
   }

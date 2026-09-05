@@ -171,15 +171,16 @@ export interface SessionListRow {
 
 /** Structural subset of `ctx.permissionPresets` (`@deepseek-ai/dsh-permission-presets`,
  *  mounted by dsh-base). Kept local so the plugin compiles without a
- *  dependency on the package. The real service folds a session's events for
- *  `current` and writes the session's durable knobs in `set`. */
+ *  dependency on the package. The real service reads a session's knob state
+ *  through the session itself (`current` folds `session.snapshotEvents()`),
+ *  and writes the session's durable knobs in `set`. */
 export interface PermissionPresetService {
   /** Switchable preset names, declaration order (a property getter). */
   readonly names: readonly string[];
   /** Client presentation for one preset (label falls back to the key). */
   optionOf(name: string): { value: string; name?: string; description?: string };
-  /** The preset currently effective for a session's events. */
-  current(events: readonly unknown[]): string;
+  /** The preset currently effective for a session. */
+  current(session: unknown): string;
   /** Record a changed preset and apply its sandbox/approval bundle. */
   set(session: unknown, name: string): void;
 }
@@ -255,7 +256,10 @@ export interface AskQuestionItemLike {
   readonly detail?: string;
   readonly options?: readonly { readonly label: string; readonly description?: string }[];
   readonly multiSelect?: boolean;
-  readonly intent?: string;
+  /** Presentation intent — a structured object (`{kind: 'plan-review'}`), not
+   *  a string. Kept `unknown` because the surface never consumes it; the
+   *  structural contract only needs it to be assignable both ways. */
+  readonly intent?: unknown;
 }
 
 /** Structural subset of `AskUserQuestionRequest`. */
@@ -265,11 +269,13 @@ export interface AskQuestionsRequestLike {
   readonly signal?: AbortSignal;
 }
 
-/** Structural subset of `AskUserQuestionAnswer`. */
+/** Structural subset of `AskUserQuestionAnswer`. The answer shape is mutable
+ *  to satisfy the dsh runtime's `AskUserQuestionAnswer` (`readonly` arrays are
+ *  not assignable to the mutable ones under `exactOptionalPropertyTypes`). */
 export interface AskQuestionsAnswerLike {
-  readonly answers: readonly {
+  readonly answers: {
     readonly id: string;
-    readonly selected: readonly string[];
+    selected: string[];
     readonly custom?: string;
   }[];
 }

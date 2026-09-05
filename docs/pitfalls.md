@@ -159,6 +159,26 @@ The harness sandbox (and this checkout's environment) has specific rules:
   keeps every `@deepseek-ai/*` package out of `dependencies`, including
   `@deepseek-ai/schemastery`). Guarded by the `check-conventions.mjs`
   "@deepseek-ai packages are peerDependencies" check.
+- **Version forks of the base packages split dsh's module identity even when
+  every harness package is correctly a peerDependency.** An incremental
+  version bump can leave two versions of a foundation package in the
+  lockfile (the plugins still resolving `@deepseek-ai/cordis@^4.0.1` while
+  the fresh CLI carries 4.0.2); pnpm's peer hashing then forks the whole
+  `dsh-agent` graph per peer combination, and `dsh-tools` loads multiple
+  times in one process. `dsh-tools` keys its tool-runtime scheduler in a
+  module-local `Symbol`, so each copy mints its own identity: the agent
+  loop's `ctx.tools[TOOL_RUNTIME_SCHEDULER]` reads `undefined` and every
+  tool call dies with
+  `Cannot read properties of undefined (reading 'prepare')` — the exact
+  symptom of the peerDependencies pitfall above, with the manifest
+  declared correctly. Text-only turns stream fine, which makes it look
+  like a plugin bug. Fix: `pnpm dedupe` (each base package —
+  `@deepseek-ai/cordis`, `@deepseek-ai/schemastery`, … — resolves to ONE
+  version) plus a fresh install; the lockfile must never carry two
+  versions of a `@deepseek-ai/*` package. Run it as part of every dsh
+  bump (see AGENTS.md → "Adapting to a new dsh release"). Guarded by the
+  `check-conventions.mjs` "one resolved @deepseek-ai instance per package"
+  check.
 
 ## Mention gate
 
@@ -226,14 +246,20 @@ The harness sandbox (and this checkout's environment) has specific rules:
 
 ## Service seams: getters vs methods
 
-- A structural `ctx.get(name)` seam must mirror the REAL service shape.
-  `ctx.permissionPresets.names` is a **property getter** (write `names`,
-  not `names()`); `current(events)` folds the session's events and
-  `set(session, name)` writes the session's knobs — passing the Agent
-  instead of `agent.session.events` fails at runtime with
-  "events is not iterable". `ctx.planMode.get(agent)` / `set(agent,
-  active)` take the Agent. Read the installed `.d.ts` before writing the
-  seam; wrong shapes typecheck cleanly.
+- A structural `ctx.get(name)` seam must mirror the REAL service shape, and
+  the shapes MOVE between rc releases. `ctx.permissionPresets.names` is a
+  **property getter** (write `names`, not `names()`). The preset `current`
+  shape has already flip-flopped: in one rc it folded the session's events
+  itself (`current(events)` — passing the session failed with "events is
+  not iterable"), and the next release (`0.1.2-rc.1`) reverted to taking
+  the session (`current(session: Session)`, folding
+  `session.snapshotEvents()` internally — passing the events array then
+  failed with "session.snapshotEvents is not a function"). Either way the
+  crash names the service's own internal member, not the seam — locate the
+  installed `.d.ts` (`@deepseek-ai/dsh-permission-presets`) and match it
+  exactly before adapting; wrong shapes typecheck cleanly because the seam
+  is structural on both sides. `ctx.planMode.get(agent)` / `set(agent,
+  active)` take the Agent.
 
 ## Buttons must be state-aware, not pass-throughs
 
