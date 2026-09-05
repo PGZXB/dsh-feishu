@@ -141,6 +141,21 @@ harness 沙箱（以及本 checkout 的环境）有一些特定规则：
   把每个 `@deepseek-ai/*` 包（含 `@deepseek-ai/schemastery`）都移出
   `dependencies`）。由 `check-conventions.mjs` 的 "@deepseek-ai packages are
   peerDependencies" 检查把关。
+- **即使每个 harness 包都正确声明为 peerDependency，基础包的版本分叉仍会
+  打裂 dsh 的模块身份。** 一次增量版本升级可能在 lockfile 里留下某基础包的
+  两个版本（插件还解析 `@deepseek-ai/cordis@^4.0.1`，而新 CLI 带的是 4.0.2）；
+  pnpm 的 peer 哈希随后按 peer 组合把整条 `dsh-agent` 依赖图分叉实例化，
+  `dsh-tools` 在单进程里被加载多份。`dsh-tools` 用模块内局部 `Symbol` 作
+  工具调度器的键，每份拷贝各自铸造身份：agent loop 的
+  `ctx.tools[TOOL_RUNTIME_SCHEDULER]` 读到 `undefined`，每次工具调用都死于
+  `Cannot read properties of undefined (reading 'prepare')` —— 与上一条
+  peerDependencies 坑的症状一模一样，而清单声明完全正确。纯文本回合正常
+  流式输出，使它看起来像插件 bug。修法：`pnpm dedupe`（让每个基础包 ——
+  `@deepseek-ai/cordis`、`@deepseek-ai/schemastery`、……—— 只解析到一个
+  版本）外加一次全新 install；lockfile 里绝不允许出现任何 `@deepseek-ai/*`
+  包的两个版本。每次 dsh 升级都要执行（见 AGENTS.md → "Adapting to a new
+  dsh release"）。由 `check-conventions.mjs` 的 "one resolved @deepseek-ai
+  instance per package" 检查把关。
 
 ## 提及门禁（mention gate）
 
@@ -201,13 +216,18 @@ harness 沙箱（以及本 checkout 的环境）有一些特定规则：
 
 ## 服务接缝：getter vs 方法
 
-- 结构化的 `ctx.get(name)` 接缝必须镜像 REAL 服务的形状。
-  `ctx.permissionPresets.names` 是一个 **属性 getter**（写 `names`，而不是
-  `names()`）；`current(events)` 折叠会话的 events，而 `set(session, name)`
-  写入会话的 knobs —— 传入 Agent 而不是 `agent.session.events` 会在运行时
-  以 "events is not iterable" 失败。`ctx.planMode.get(agent)` /
-  `set(agent, active)` 接受 Agent。在编写接缝之前阅读已安装的 `.d.ts`；
-  错误的形状也能干净地通过类型检查。
+- 结构化的 `ctx.get(name)` 接缝必须镜像 REAL 服务的形状，而且这些形状在
+  rc 版本之间会移动。`ctx.permissionPresets.names` 是一个 **属性 getter**
+  （写 `names`，而不是 `names()`）。预设 `current` 的形状已经反转过一次：
+  某个 rc 里它自己折叠会话 events（`current(events)` —— 传入 session 会以
+  "events is not iterable" 失败），下一个版本（`0.1.2-rc.1`）又改回接受
+  session（`current(session: Session)`，内部自己折叠
+  `session.snapshotEvents()` —— 此时传入 events 数组则以
+  "session.snapshotEvents is not a function" 失败）。无论哪种，崩溃信息
+  点名的是服务自己的内部成员而不是接缝 —— 适配前先读已安装的 `.d.ts`
+  （`@deepseek-ai/dsh-permission-presets`）并精确匹配；接缝两侧都是结构化
+  类型，错误形状照样干净地通过类型检查。`ctx.planMode.get(agent)` /
+  `set(agent, active)` 接受 Agent。
 
 ## 按钮必须是有状态感知的，而不是透传
 
