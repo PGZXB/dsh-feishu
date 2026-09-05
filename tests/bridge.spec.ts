@@ -3307,7 +3307,7 @@ class FakePermissionService implements PermissionPresetService {
     const description = descriptions[name];
     return description === undefined ? { value: name, name } : { value: name, name, description };
   }
-  current(_events: readonly unknown[]): string {
+  current(_session: unknown): string {
     return this.currentPreset;
   }
   set(_session: unknown, name: string): void {

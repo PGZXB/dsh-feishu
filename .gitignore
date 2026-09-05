@@ -46,3 +46,6 @@ node_modules-*/
 # E2E state (sessions/credentials/QRs) and run outputs — never committed
 e2e/.state/
 e2e/.output/
+
+# Plugin runtime artifacts (downloaded Feishu attachments at <cwd>/.dsh_feishu)
+.dsh_feishu/

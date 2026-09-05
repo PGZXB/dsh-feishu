@@ -171,15 +171,16 @@ export interface SessionListRow {
 
 /** Structural subset of `ctx.permissionPresets` (`@deepseek-ai/dsh-permission-presets`,
  *  mounted by dsh-base). Kept local so the plugin compiles without a
- *  dependency on the package. The real service folds a session's events for
- *  `current` and writes the session's durable knobs in `set`. */
+ *  dependency on the package. The real service reads a session's knob state
+ *  through the session itself (`current` folds `session.snapshotEvents()`),
+ *  and writes the session's durable knobs in `set`. */
 export interface PermissionPresetService {
   /** Switchable preset names, declaration order (a property getter). */
   readonly names: readonly string[];
   /** Client presentation for one preset (label falls back to the key). */
   optionOf(name: string): { value: string; name?: string; description?: string };
-  /** The preset currently effective for a session's events. */
-  current(events: readonly unknown[]): string;
+  /** The preset currently effective for a session. */
+  current(session: unknown): string;
   /** Record a changed preset and apply its sandbox/approval bundle. */
   set(session: unknown, name: string): void;
 }
