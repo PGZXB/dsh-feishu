@@ -1,7 +1,7 @@
 {
   "schema": "dsh-feishu-version-track/v1",
   "dsh": {
-    "stable": "0.1.2-rc.1",
+    "stable": "0.1.1-rc.2",
     "next": "0.1.2-rc.1"
   },
   "dshFeishu": {
