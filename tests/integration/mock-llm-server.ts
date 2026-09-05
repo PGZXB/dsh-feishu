@@ -134,6 +134,7 @@ export async function startMockLlmServer(): Promise<MockLlmServer> {
     if (script === undefined || script.length === 0) {
       res.write(sseChunk({ content: 'Hello from mock LLM ' }));
       res.write(sseChunk({ content: '— integration ok' }, true));
+      res.end('data: [DONE]\n\n');
       return;
     }
     const parts = [...script];
@@ -163,6 +164,7 @@ export async function startMockLlmServer(): Promise<MockLlmServer> {
       }
     }
     res.write(sseChunk({}, true));
+    res.end('data: [DONE]\n\n');
   }
 
   const server: Server = createServer((req, res) => {

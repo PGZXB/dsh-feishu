@@ -192,7 +192,7 @@ export class PermissionPickerViewState implements PanelViewState {
       };
     }
     const agent = await ctx.ensureAgent(chatId);
-    const currentPreset = service.current(agent.session.events);
+    const currentPreset = service.current(agent.session.snapshotEvents());
     const presets: PermissionPresetView[] = service.names.map((name) => {
       const option = service.optionOf(name);
       return {

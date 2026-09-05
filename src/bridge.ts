@@ -255,7 +255,10 @@ export interface AskQuestionItemLike {
   readonly detail?: string;
   readonly options?: readonly { readonly label: string; readonly description?: string }[];
   readonly multiSelect?: boolean;
-  readonly intent?: string;
+  /** Presentation intent — a structured object (`{kind: 'plan-review'}`), not
+   *  a string. Kept `unknown` because the surface never consumes it; the
+   *  structural contract only needs it to be assignable both ways. */
+  readonly intent?: unknown;
 }
 
 /** Structural subset of `AskUserQuestionRequest`. */
@@ -265,11 +268,13 @@ export interface AskQuestionsRequestLike {
   readonly signal?: AbortSignal;
 }
 
-/** Structural subset of `AskUserQuestionAnswer`. */
+/** Structural subset of `AskUserQuestionAnswer`. The answer shape is mutable
+ *  to satisfy the dsh runtime's `AskUserQuestionAnswer` (`readonly` arrays are
+ *  not assignable to the mutable ones under `exactOptionalPropertyTypes`). */
 export interface AskQuestionsAnswerLike {
-  readonly answers: readonly {
+  readonly answers: {
     readonly id: string;
-    readonly selected: readonly string[];
+    selected: string[];
     readonly custom?: string;
   }[];
 }

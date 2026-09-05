@@ -30,17 +30,8 @@
     # Durable workspace registry (session archive/restore, web-visible).
     # The workspace registry persists through the storage domain, so a
     # rename/archive on Feishu is observed by the dsh web UI sharing the
-    # same DSH_HOME, and vice versa. dsh-base does not mount these; the
-    # web-app bundle does (storage ×3 + workspace).
-    - id: storage
-      name: '@deepseek-ai/dsh-storage'
-    - id: storage-json
-      name: '@deepseek-ai/dsh-storage-json'
-      config:
-        root: !!js dshHomePath('storages')
-    - id: storage-domain
-      name: '@deepseek-ai/dsh-storage-domain'
-      config:
-        backend: json
+    # same DSH_HOME, and vice versa. dsh-base @0.1.2-rc.1 already mounts the
+    # storage ×3 domain core (storage / storage-json / storage-domain) with
+    # the same config, so only the `workspace` bundle row is added here.
     - id: workspace
       name: '@deepseek-ai/dsh-workspace'
