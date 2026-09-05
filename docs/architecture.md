@@ -67,7 +67,7 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 | `src/panel/views/` | Panel view **Strategy objects**: one `PanelViewState` per view (declaring its own `asyncData`) + `PanelViewRegistry`; the pickers are separate states (`picker:repo` / `picker:model` / `picker:permission`). |
 | `src/commands/surface.ts` | The surface command set: full registration of the plugin-owned slash commands (and their panel buttons) + `runHarnessCommand`, behind the `SurfaceCommandHost` seam. |
 | `src/bridge.ts` | **Facade + orchestration**: message routing (dedup, mention gate, slash dispatch), agent resolution ladder (live → resume mapped session → create → rebind fresh id on collision), the working-state and working-directory gates, the session lifecycle (`/sessions /resume /clear`), proactive mentions, and the four host seams (`StreamingCardHost` / `PanelHost` / `InteractionCardHost` / `SurfaceCommandHost`). All card surfaces live in the modules above. |
-| `src/index.ts` | Plugin entry: config, credential resolution, agent options (config or `agentDefaultModel`), wiring, `feishu-status` command. |
+| `src/index.ts` | Plugin entry: config, credential resolution, agent options (config or `agentDefaultModel`, resolved **lazily at each create/resume** — never snapshotted once at activation, see `docs/pitfalls.md` → "Activation-time snapshots of host services"), wiring, `feishu-status` command. |
 
 ## Key behaviors
 

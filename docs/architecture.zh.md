@@ -58,7 +58,7 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 | `src/panel/views/` | 作为 **Strategy 对象**的面板视图：每个视图一个 `PanelViewState`（自声明 `asyncData`）+ `PanelViewRegistry`；选择器是独立状态（`picker:repo` / `picker:model` / `picker:permission`）。 |
 | `src/commands/surface.ts` | surface 命令集：插件自有斜杠命令（及其面板按钮）的完整注册 + `runHarnessCommand`，依赖 `SurfaceCommandHost` seam。 |
 | `src/bridge.ts` | **门面 + 编排**：消息路由（去重、提及 gate、斜杠分发）、agent 解析阶梯（live → 恢复已映射 session → 新建 → 冲突时重绑新 id）、工作状态与工作目录 gate、session 生命周期（`/sessions /resume /clear`）、主动提及，以及四个宿主 seam（`StreamingCardHost` / `PanelHost` / `InteractionCardHost` / `SurfaceCommandHost`）。所有卡片表面都位于上述模块。 |
-| `src/index.ts` | 插件入口：配置、凭据解析、agent 选项（配置或 `agentDefaultModel`）、接线、`feishu-status` 命令。 |
+| `src/index.ts` | 插件入口：配置、凭据解析、agent 选项（配置或 `agentDefaultModel`，在**每次 create/resume 时惰性解析**——绝不在激活时快照一次，见 `docs/pitfalls.md` → “宿主服务的激活期快照”）、接线、`feishu-status` 命令。 |
 
 ## 关键行为
 

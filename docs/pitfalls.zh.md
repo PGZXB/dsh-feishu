@@ -229,6 +229,25 @@ harness 沙箱（以及本 checkout 的环境）有一些特定规则：
   中携带它；键入的 `/resume` 从会话列表中查找它），否则被恢复的聊天会
   卡在门禁后面。
 
+## 宿主服务的激活期快照
+
+- 绝不要在插件激活时读取宿主服务的实时值并缓存它。
+  `@deepseek-ai/dsh-base/cordis.patch.yml` 以硬编码的组合入口挂载
+  `agent-default-model`，而 settings 支撑的用户层是在插件可能已经运行
+  **之后**才接入的（挂载顺序竞态）。该表面曾在激活时快照
+  `agentDefaultModel.currentSelection()`，并把它作为静态 `agentOptions`
+  传给每次 create/resume——于是重启后每个新会话的首回合都运行组合入口
+  的兜底模型（`deepseek-official/deepseek-v4-flash`），而 `/model` 面板
+  显示的是 `settings.yaml` 中保存的默认模型：**显示的模型 ≠ 实际服务的
+  模型**，只有在该会话里执行一次 `/model` 才会恢复一致。同样的陈旧性还
+  意味着：之后某个会话 `/model` 触发的 `saveSelection` 在重启前永远到不了
+  后续新建的 agent。修复：在**每次 create/resume 时惰性解析** agent 选项
+  （彼时所有服务均已挂载，读取的是实时选择）。dsh-base 的注释直言：
+  "Settings may supply a saved selection; consumers read it at creation
+  time." 回归测试：`tests/index.spec.ts`（惰性 create + 后续 saveSelection
+  两个用例）与 `tests/integration/real-composition.spec.ts` →
+  "fresh sessions run the saved default model, not the dsh-base entry (#62)"。
+
 ## 集成测试陷阱
 
 - 集成测试套件共享真实 profile（`_dev/dsh-home`）。通过表面写入状态的

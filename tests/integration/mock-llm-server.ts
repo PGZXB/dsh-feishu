@@ -47,6 +47,13 @@ export interface MockLlmServer {
    */
   lastRequestBody(): unknown;
   /**
+   * Every parsed /chat/completions request body, in arrival order. Lets a
+   * test assert that ANY request matched a shape (e.g. that the agent's
+   * requests carried the saved default model, not just the last one — a
+   * title-generation completion can interleave with the turn's requests).
+   */
+  requestBodies(): unknown[];
+  /**
    * Serve one scripted response per completion request, in order. The agent
    * loop issues a new completion request after each tool result, so a
    * tool-calling turn needs two entries (tool call, then final answer).
@@ -100,6 +107,7 @@ function sseToolCallDelta(index: number, id: string, name: string, argumentsDelt
 export async function startMockLlmServer(): Promise<MockLlmServer> {
   let completions = 0;
   let lastBody: unknown;
+  const bodies: unknown[] = [];
   let scripts: readonly (readonly MockScriptChunk[])[] | undefined;
   let hold = false;
   let releaseHold: (() => void) | undefined;
@@ -167,7 +175,9 @@ export async function startMockLlmServer(): Promise<MockLlmServer> {
       req.on('data', (chunk: Buffer) => bodyChunks.push(chunk));
       req.on('end', () => {
         try {
-          lastBody = JSON.parse(Buffer.concat(bodyChunks).toString('utf8'));
+          const body = JSON.parse(Buffer.concat(bodyChunks).toString('utf8'));
+          lastBody = body;
+          bodies.push(body);
         } catch {
           lastBody = undefined;
         }
@@ -232,6 +242,7 @@ export async function startMockLlmServer(): Promise<MockLlmServer> {
       }),
     completionRequests: () => completions,
     lastRequestBody: () => lastBody,
+    requestBodies: () => bodies.slice(),
     setScripts: (next) => {
       scripts = next;
     },

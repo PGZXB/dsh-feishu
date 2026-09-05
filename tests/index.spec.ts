@@ -97,6 +97,9 @@ function makeFakeContext(
     credentials?: { resolve: () => Promise<unknown>; set: () => unknown };
     agents?: unknown;
     workspaceRegistry?: unknown;
+    agentDefaultModel?: {
+      currentSelection: () => { provider: string; model: string } | undefined;
+    };
   } = {},
 ): {
   ctx: Context;
@@ -123,6 +126,7 @@ function makeFakeContext(
     if (service === 'credentials') return options.credentials;
     if (service === 'agents') return options.agents;
     if (service === 'workspaceRegistry') return options.workspaceRegistry;
+    if (service === 'agentDefaultModel') return options.agentDefaultModel;
     return undefined;
   };
   const on = vi.fn(() => () => {});
@@ -314,9 +318,16 @@ describe('apply', () => {
     const attachSession = vi.fn(async () => {});
     const workspaceCreate = vi.fn(async () => ({ attachSession }));
     const followup = vi.fn();
-    const create = vi.fn(async ({ sessionId }: { sessionId: string }) => ({
-      agent: { id: sessionId, followup },
-    }));
+    const create = vi.fn(
+      async ({
+        sessionId,
+      }: {
+        sessionId: string;
+        agentOptions?: { provider?: string; model?: string };
+      }) => ({
+        agent: { id: sessionId, followup },
+      }),
+    );
     const agents = {
       get: () => undefined,
       resume: vi.fn(async () => {
@@ -354,6 +365,154 @@ describe('apply', () => {
     expect(workspaceCreate).toHaveBeenCalledWith(process.cwd(), expect.any(String));
     // And the freshly minted `feishu-…` session id was attached to it.
     expect(attachSession).toHaveBeenCalledWith(expect.stringMatching(/^feishu-/));
+  });
+
+  it('resolves agent options lazily at create — a post-activation default is used (#62)', async () => {
+    process.env.FEISHU_APP_ID = 'env_app';
+    process.env.FEISHU_APP_SECRET = 'env_secret';
+    process.env.DSH_HOME = mkdtempSync(`${tmpdir()}/dsh-feishu-`);
+    // The agentDefaultModel service starts on the dsh-base composition entry
+    // (deepseek) and only rewires to the settings-backed selection AFTER the
+    // plugin activates (mount-order race). A lazy create-time resolve must read
+    // the saved default; the old activation-time snapshot captured the entry.
+    const currentSelection = vi.fn(() => ({
+      provider: 'deepseek-official',
+      model: 'deepseek-v4-flash',
+    }));
+    const create = vi.fn(
+      async ({
+        sessionId,
+      }: {
+        sessionId: string;
+        agentOptions?: { provider?: string; model?: string };
+      }) => ({
+        agent: { id: sessionId, followup: vi.fn() },
+      }),
+    );
+    const agents = {
+      get: () => undefined,
+      resume: vi.fn(async () => {
+        throw new Error('not found');
+      }),
+      create,
+    };
+    const { ctx } = makeFakeContext({ agents, agentDefaultModel: { currentSelection } });
+    const transport = new FakeTransport();
+    apply(ctx, { requireWorkingDir: false }, { createTransport: () => transport });
+    // The settings layer lands after activation: the saved default is live now.
+    currentSelection.mockReturnValue({ provider: 'zai-coding-cn', model: 'glm-5.3' });
+    transport.emitMessage({
+      messageId: 'om_race_1',
+      chatId: 'oc_race_1',
+      chatType: 'p2p',
+      senderOpenId: 'ou_1',
+      text: 'hi',
+      mentions: [],
+      attachments: [],
+      createdAt: 1_700_000_000_000,
+    });
+    await vi.waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentOptions: { provider: 'zai-coding-cn', model: 'glm-5.3' },
+      }),
+    );
+  });
+
+  it('picks up a later default-model change for subsequently created sessions (#62)', async () => {
+    process.env.FEISHU_APP_ID = 'env_app';
+    process.env.FEISHU_APP_SECRET = 'env_secret';
+    process.env.DSH_HOME = mkdtempSync(`${tmpdir()}/dsh-feishu-`);
+    const currentSelection = vi.fn(() => ({ provider: 'p-a', model: 'm-a' }));
+    const create = vi.fn(
+      async ({
+        sessionId,
+      }: {
+        sessionId: string;
+        agentOptions?: { provider?: string; model?: string };
+      }) => ({
+        agent: { id: sessionId, followup: vi.fn() },
+      }),
+    );
+    const agents = {
+      get: () => undefined,
+      resume: vi.fn(async () => {
+        throw new Error('not found');
+      }),
+      create,
+    };
+    const { ctx } = makeFakeContext({ agents, agentDefaultModel: { currentSelection } });
+    const transport = new FakeTransport();
+    apply(ctx, { requireWorkingDir: false }, { createTransport: () => transport });
+    const emit = (messageId: string, chatId: string) =>
+      transport.emitMessage({
+        messageId,
+        chatId,
+        chatType: 'p2p',
+        senderOpenId: 'ou_1',
+        text: 'hi',
+        mentions: [],
+        attachments: [],
+        createdAt: 1_700_000_000_000,
+      });
+    emit('om_a_1', 'oc_a_1');
+    await vi.waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+    // A /model in any chat saves a new default (saveSelection rewires the
+    // service's source): the next created session must see it without a
+    // restart, not a stale activation-time snapshot.
+    currentSelection.mockReturnValue({ provider: 'p-b', model: 'm-b' });
+    emit('om_b_1', 'oc_b_1');
+    await vi.waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+    const calls = create.mock.calls.map(([opts]) => opts.agentOptions);
+    expect(calls[0]).toEqual({ provider: 'p-a', model: 'm-a' });
+    expect(calls[1]).toEqual({ provider: 'p-b', model: 'm-b' });
+  });
+
+  it('prefers config provider/model over the deployment default', async () => {
+    process.env.FEISHU_APP_ID = 'env_app';
+    process.env.FEISHU_APP_SECRET = 'env_secret';
+    process.env.DSH_HOME = mkdtempSync(`${tmpdir()}/dsh-feishu-`);
+    const currentSelection = vi.fn(() => ({ provider: 'saved-p', model: 'saved-m' }));
+    const create = vi.fn(
+      async ({
+        sessionId,
+      }: {
+        sessionId: string;
+        agentOptions?: { provider?: string; model?: string };
+      }) => ({
+        agent: { id: sessionId, followup: vi.fn() },
+      }),
+    );
+    const agents = {
+      get: () => undefined,
+      resume: vi.fn(async () => {
+        throw new Error('not found');
+      }),
+      create,
+    };
+    const { ctx } = makeFakeContext({ agents, agentDefaultModel: { currentSelection } });
+    const transport = new FakeTransport();
+    apply(
+      ctx,
+      { requireWorkingDir: false, provider: 'cfg-p', model: 'cfg-m' },
+      { createTransport: () => transport },
+    );
+    transport.emitMessage({
+      messageId: 'om_cfg_1',
+      chatId: 'oc_cfg_1',
+      chatType: 'p2p',
+      senderOpenId: 'ou_1',
+      text: 'hi',
+      mentions: [],
+      attachments: [],
+      createdAt: 1_700_000_000_000,
+    });
+    await vi.waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentOptions: { provider: 'cfg-p', model: 'cfg-m' },
+      }),
+    );
   });
 
   it('registers the feishu-status command when the commands service exists', () => {
