@@ -297,9 +297,18 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 
 ## 发布
 
-发布由 **冻结的 `release/*` 分支上的 tag** 驱动，**绝不在 `main` 上发**——
-main 是开发分支，可能带着未发布的工作（如下一轮 dsh 适配），所以发布必须
-从"恰好要发布的那个 commit"切出分支进行。
+一次发布 = **先合并一个经过 review 的 release PR，然后在合并后的 `main` 上
+打 tag**——绝不从侧分支直接推 tag。版本号的更新本身仍然在从"恰好要发布的
+那个 commit"切出的冻结 `release/vX.Y.Z` 分支上准备（main 是开发分支，可能
+带着未发布的工作，如下一轮 dsh 适配），但它和其它改动一样走 PR review 落
+到 main；发布只在 PR 合并之后由 tag 触发。
+
+这个顺序不是形式主义。GitHub 生成的 release notes（`--generate-notes`）以
+"新 tag 历史中可达的上一个 tag"为基线。如果 tag 打在稍后被 squash merge 的
+release 分支上，它永远不会成为后续提交的祖先，于是下一次发布就会静默回退到
+很老的 tag，列出几个月无关的 PR。打在合并后 main 上的 tag 保证相邻 tag 的
+祖先链完整；Release workflow 还会拒绝不在 main 上的 tag（`release.yml` 的
+"Guard" 步骤）。
 
 ### 版本轨道
 
@@ -321,16 +330,43 @@ latest release → dsh `@latest`），两条轨道分别验证：
 
 ### 发版步骤
 
+发版驱动脚本（`scripts/release.mjs`)分两个阶段，按顺序执行：
+
+**阶段 1 —— 准备 release PR**（在新的 `release/vX.Y.Z` 分支上）：
+
 ```sh
 git checkout -b release/vX.Y.Z <commit>   # 从要发布的那个 commit 切出
-node scripts/release.mjs <major|minor|patch>
+node scripts/release.mjs prepare <major|minor|patch>
 ```
 
-`scripts/release.mjs` 拒绝在非 `release/*` 分支上运行；它会更新
-`package.json`、运行 CI 门禁（通过 `scripts/run-gates.mjs`——直接调二进制，
-不依赖 pnpm store）、提交 `chore: release vX.Y.Z`，然后**把 release 分支和
-`v*` tag 一起推**到 origin。随后
-[Release workflow](../.github/workflows/release.yml) 发布到 npm
-（`NODE_AUTH_TOKEN`，沿用 DeepSeek Harness 发布 workflow 的 registry-token
-认证）并创建 GitHub Release。首次公开发布前，轮换飞书 app secret（见
-`SECURITY.md`）。
+`prepare` 会更新 `package.json`、运行 CI 门禁（通过
+`scripts/run-gates.mjs`——直接调二进制，不依赖 pnpm store）和真机 E2E
+验收（`--skip-e2e` 是给 E2E 环境确实无法准备时用的显式逃生门——绝非默认），
+提交 `chore: release vX.Y.Z`，推送分支，并向 `main` 发起 release PR（装了
+`gh` 就直接创建，否则打印 compare URL）。**本阶段不打 tag、不发布。**
+
+**阶段 2 —— review、合并、打 tag**（release PR 合并之后）：
+
+```sh
+git checkout main && git pull
+node scripts/release.mjs tag
+```
+
+`tag` 校验 main 干净且与 `origin/main` 一致、拒绝已存在的 tag，在合并后
+main 的 HEAD 上打 `vX.Y.Z`（版本号取自 `package.json`）并推送。
+[Release workflow](../.github/workflows/release.yml) 随之重跑门禁、发布到
+npm（`NODE_AUTH_TOKEN`，沿用 DeepSeek Harness 发布 workflow 的
+registry-token 认证）并创建带生成 notes 的 GitHub Release。workflow 的
+"Guard" 步骤会拒绝不指向合并后 main 的 tag，误推的侧分支 tag 无法发布。
+
+workflow 变绿之后：
+
+1. 核对 Actions 运行与 npm dist-tag；
+2. 在 main 上把 `dsh-version.json` 的 `dshFeishu.npmLatest` 更新为该版本
+   （一行 `chore:` 提交）——它记录的是已发布的事实，跟着发布走；
+3. 过一眼 release 的 What's Changed——祖先链完整时它恰好列出上一个 tag
+   以来的 PR；万一必须从 release 分支打热修 tag，用显式基线重新生成 notes
+   （`POST /repos/…/releases/generate-notes` 带 `previous_tag_name`）并修正
+   release body。
+
+首次公开发布前，轮换飞书 app secret（见 `SECURITY.md`）。

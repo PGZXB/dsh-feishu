@@ -1,10 +1,11 @@
 name: Release
 
 # Publish @dsh-feishu/dsh-feishu to npm and create a GitHub Release.
-# Triggered by a `v*` tag (e.g. v0.1.0). The tag must match the version in
-# package.json (see scripts/release.mjs which bumps, builds, gates, tags).
-# npm publish uses the NPM_TOKEN secret (registry-url + token auth — the
-# same pattern the DeepSeek Harness release workflow uses).
+# Triggered by a `v*` tag (e.g. v0.1.0). The tag must point at a commit on
+# merged `main` and match the version in package.json (see the two-phase
+# scripts/release.mjs: `prepare` opens the release PR, `tag` cuts the tag on
+# merged main). npm publish uses the NPM_TOKEN secret (registry-url + token
+# auth — the same pattern the DeepSeek Harness release workflow uses).
 on:
   push:
     tags: ['v*']
@@ -22,7 +23,19 @@ jobs:
     name: Publish to npm + GitHub Release
     runs-on: ubuntu-latest
     steps:
+      # Full history: the main-ancestry guard below needs both the tag commit
+      # and main to resolve their merge-base.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Guard — the tag must point at merged main
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "${{ github.sha }}" origin/main; then
+            echo "::error::Tag ${{ github.ref_name }} does not point at merged main. Releases publish from tags cut on merged main (scripts/release.mjs tag) — see docs/development.md → Publishing."
+            exit 1
+          fi
 
       - uses: pnpm/action-setup@v4
         with:
