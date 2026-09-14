@@ -230,7 +230,12 @@ When adapting:
 - Read upstream release notes first; grep our code for renamed modes/commands
   (rc.7: Code mode → PTC mode) in card labels, snapshots, tests.
 - Check surface shapes against the INSTALLED `.d.ts` (getters vs methods) —
-  compiling against new types is no guarantee of a working runtime.
+  compiling against new types is no guarantee of a working runtime. Include
+  the EVENT surfaces, not just services: a removed event type is a compile
+  error only where we switch on it, and a silently dead live path (0.1.5:
+  `assistant/chunk` left the session log for the agent-scoped
+  `agent/assistant-stream` frames) still passes every settle-based test. See
+  `docs/pitfalls.md` → "Live model output is not a session event".
 - Confirm the session-log reader still parses new logs (zstd frames, `seq`
   continuity).
 - Refresh the lockfile against the official registry (npmmirror misses

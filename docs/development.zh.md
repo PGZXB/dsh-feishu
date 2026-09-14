@@ -173,7 +173,7 @@ source _dev/bot-env.sh        # 设置 DSH_HOME=_dev/dsh-home 并 source _dev/se
 | `interactions` | `approval request <id>`、`approval <id> settled`、`question <id> settled` | 审批/提问生命周期 |
 | `actions` | `panel action <kind>: transition/refused/operation` | 面板 gate 与生命周期决策 |
 
-一次完整回合自顶向下读像这样：`inbound message m1 -> turn` → `streaming beginTurn` → `streaming event assistant/chunk` → `streaming tool/call` → `transport updateCard <card-id>` → `streaming event turn/end` → `streaming finalize <status>`。行为异常时，grep 消息/卡片/session id，链条断裂处就是 surface 丢失它的位置。
+一次完整回合自顶向下读像这样：`inbound message m1 -> turn` → `streaming beginTurn` → `streaming assistant-stream chunk` → `streaming tool/call` → `transport updateCard <card-id>` → `streaming event turn/end` → `streaming finalize <status>`。行为异常时，grep 消息/卡片/session id，链条断裂处就是 surface 丢失它的位置。
 
 ## 国际化（i18n）
 

@@ -33,6 +33,8 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
                                                                     │
                                                                     ▼
                                                               dsh session/event stream
+                                                              + 实时
+                                                              agent/assistant-stream
 ```
 
 ## 模块

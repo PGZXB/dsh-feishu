@@ -117,11 +117,13 @@ Reference: botmux streaming card; our `StreamingCardManager`.
 | Event | Card behavior |
 | --- | --- |
 | `turn/start` (via message) | open card, status working |
-| `assistant/chunk` text-delta | append to answer, patch |
-| `assistant/chunk` reasoning-delta | append to open think row, patch |
+| `agent/assistant-stream` chunk frame, text-delta | append to answer, patch |
+| `agent/assistant-stream` chunk frame, reasoning-delta | append to open think row, patch |
+| `agent/assistant-stream` end frame | settle the open think row (reasoning belongs to one attempt) |
 | `tool/call` | settle open think row; add tool row (running) |
 | `tool/result` | mark the matching tool row done/error, store result |
 | `assistant/message` | replace answer with assembled text |
+| `assistant/attempt` | settle the open think row; an abandoned/retried attempt committed no surface message, so the streamed text stays as-is |
 | `turn/end` | settle think row; status done/error; finalize card; keep snapshot + rows for re-assertion and the ⋯ buttons |
 | `compaction/start` | open a 🧹 Compacting card, status working (a compaction transaction is not a turn) |
 | `compaction/summary` | replace the card answer with the compaction summary |
