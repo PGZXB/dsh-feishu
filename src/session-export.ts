@@ -28,7 +28,6 @@ export interface SessionExportEvent {
     readonly name?: string;
     readonly arguments?: string;
     readonly reason?: { readonly kind?: string };
-    readonly chunk?: { readonly type?: string; readonly text?: string };
   };
 }
 

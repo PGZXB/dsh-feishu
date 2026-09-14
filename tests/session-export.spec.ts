@@ -57,10 +57,11 @@ describe('sessionExportLine', () => {
     expect(line).toContain('turn ended: aborted');
   });
 
-  it('renders nothing for streaming deltas', () => {
-    expect(
-      sessionExportLine(event('assistant/chunk', 1, { chunk: { type: 'text-delta', text: 'x' } })),
-    ).toBe('');
+  it('renders nothing for an attempt that committed no surface message', () => {
+    // dsh 0.1.5 logs no live deltas (`assistant/chunk` is gone): an
+    // abandoned/retried attempt settles as `assistant/attempt`, whose stream
+    // records are not transcript content.
+    expect(sessionExportLine(event('assistant/attempt', 1, {}))).toBe('');
   });
 });
 

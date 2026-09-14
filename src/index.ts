@@ -44,6 +44,7 @@ import {
   type PlanModeService,
   type SessionListRow,
 } from './bridge.js';
+import type { AssistantStreamFrameLike } from './cards/StreamingCardController.js';
 import { StreamingCardManager } from './cards/streaming.js';
 import type { CommandResult } from './commands.js';
 import { consoleExporter } from './console-exporter.js';
@@ -538,6 +539,14 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
     onSessionEvent: (listener) =>
       ctx.on('session/event', (session, event) => {
         listener(session.id, event);
+      }),
+    // Live model output is an agent-scoped publication since dsh 0.1.5 (the
+    // in-flight stream left the session event log): `agent/assistant-stream`
+    // carries one `{agent, frame}` payload, and the agent's live session id
+    // is what the surface maps back to a chat.
+    onAssistantStream: (listener) =>
+      ctx.on('agent/assistant-stream', (payload) => {
+        listener(payload.agent.session.id, payload.frame as unknown as AssistantStreamFrameLike);
       }),
     cards,
     defaultCwd: config.defaultCwd ?? process.cwd(),

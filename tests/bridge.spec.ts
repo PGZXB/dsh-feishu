@@ -26,6 +26,7 @@ import {
   sniffExtension,
   turnTitle,
 } from '../src/bridge.js';
+import type { AssistantStreamFrameLike } from '../src/cards/StreamingCardController.js';
 import { SESSION_SELECT_MAX } from '../src/cards/session-list.js';
 import { StreamingCardManager } from '../src/cards/streaming.js';
 import type { CommandResult } from '../src/commands.js';
@@ -229,6 +230,8 @@ interface Harness {
   bridge: Bridge;
   disposeEvents: () => void;
   emit: (sessionId: string, event: SessionEvent) => void;
+  /** Emit one live assistant-stream frame (`agent/assistant-stream`). */
+  emitStream: (sessionId: string, frame: AssistantStreamFrameLike) => void;
 }
 
 function makeHarness(
@@ -272,12 +275,23 @@ function makeHarness(
       if (index >= 0) listeners.splice(index, 1);
     };
   };
+  const streamListeners: Array<(sessionId: string, frame: AssistantStreamFrameLike) => void> = [];
+  const onAssistantStream = (
+    listener: (sessionId: string, frame: AssistantStreamFrameLike) => void,
+  ): (() => void) => {
+    streamListeners.push(listener);
+    return () => {
+      const index = streamListeners.indexOf(listener);
+      if (index >= 0) streamListeners.splice(index, 1);
+    };
+  };
   const cards = new StreamingCardManager(transport, { throttleMs: options.throttleMs ?? 10_000 });
   const bridge = new Bridge({
     transport,
     sessionMap,
     agentStore,
     onSessionEvent,
+    onAssistantStream,
     cards,
     defaultCwd: '/work',
     dataDir: '/work',
@@ -315,6 +329,9 @@ function makeHarness(
   const emit = (sessionId: string, event: SessionEvent): void => {
     for (const listener of [...listeners]) listener(sessionId, event);
   };
+  const emitStream = (sessionId: string, frame: AssistantStreamFrameLike): void => {
+    for (const listener of [...streamListeners]) listener(sessionId, frame);
+  };
   return {
     transport,
     agentStore,
@@ -322,6 +339,7 @@ function makeHarness(
     bridge,
     disposeEvents: () => () => {},
     emit,
+    emitStream,
   };
 }
 
@@ -344,13 +362,17 @@ function groupMessage(mentions: string[], overrides: Partial<FeishuMessage> = {}
   return message({ chatType: 'group', mentions, ...overrides });
 }
 
-function chunkEvent(text: string): SessionEvent {
+/** One live text delta as dsh 0.1.5 publishes it (`agent/assistant-stream`). */
+function chunkEvent(text: string): AssistantStreamFrameLike {
   return {
-    type: 'assistant/chunk',
-    seq: 1,
-    time: 0,
-    data: { turn: 0, step: 0, chunk: { type: 'text-delta', index: 0, text } },
-  } as unknown as SessionEvent;
+    type: 'chunk',
+    attemptId: 'attempt-1',
+    revision: 1,
+    turn: 0,
+    step: 0,
+    index: 0,
+    chunk: { type: 'text-delta', text },
+  };
 }
 
 function turnEndEvent(
@@ -703,8 +725,8 @@ describe('Bridge', () => {
   it('streams chunks into the card and sends the final answer as a fresh message', async () => {
     const h = makeHarness();
     await h.bridge.handleMessage(message());
-    await h.bridge.handleEvent('feishu-session-1', chunkEvent('Hello '));
-    await h.bridge.handleEvent('feishu-session-1', chunkEvent('world'));
+    await h.emitStream('feishu-session-1', chunkEvent('Hello '));
+    await h.emitStream('feishu-session-1', chunkEvent('world'));
     await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
     // The final card patch carries the accumulated text.
     const last = h.transport.updatedCards.at(-1);
@@ -807,12 +829,15 @@ describe('Bridge', () => {
   it('streams reasoning deltas into a think row (settled on turn end)', async () => {
     const h = makeHarness();
     await h.bridge.handleMessage(message());
-    await h.bridge.handleEvent('feishu-session-1', {
-      type: 'assistant/chunk',
-      seq: 1,
-      time: 0,
-      data: { turn: 0, step: 0, chunk: { type: 'reasoning-delta', index: 0, text: 'hmm…' } },
-    } as unknown as SessionEvent);
+    await h.emitStream('feishu-session-1', {
+      type: 'chunk',
+      attemptId: 'attempt-1',
+      revision: 1,
+      turn: 0,
+      step: 0,
+      index: 0,
+      chunk: { type: 'reasoning-delta', text: 'hmm…' },
+    });
     await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
     // Collapsed by default: the sequence line carries 'think'.
     const last = h.transport.updatedCards.at(-1);
@@ -905,7 +930,7 @@ describe('Bridge', () => {
   it('marks the turn card error and still delivers the final text', async () => {
     const h = makeHarness();
     await h.bridge.handleMessage(message());
-    await h.bridge.handleEvent('feishu-session-1', chunkEvent('oops'));
+    await h.emitStream('feishu-session-1', chunkEvent('oops'));
     await h.bridge.handleEvent(
       'feishu-session-1',
       turnEndEvent({ kind: 'error', error: { code: 'MOCK', message: 'boom' } }) as SessionEvent,
@@ -971,7 +996,7 @@ describe('Bridge', () => {
   it('copy action resends the last output as text', async () => {
     const h = makeHarness();
     await h.bridge.handleMessage(message());
-    await h.bridge.handleEvent('feishu-session-1', chunkEvent('the answer'));
+    await h.emitStream('feishu-session-1', chunkEvent('the answer'));
     await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
     h.transport.sentTexts = [];
     await h.bridge.handleCardAction({
@@ -1176,7 +1201,7 @@ describe('Bridge', () => {
       // aborted turn must read 'Stopped' (DSH web: message.stopped).
       const h = makeHarness({ throttleMs: 0 });
       await h.bridge.handleMessage(message());
-      await h.bridge.handleEvent('feishu-session-1', chunkEvent('partial output'));
+      await h.emitStream('feishu-session-1', chunkEvent('partial output'));
       h.agentStore.setStatus('feishu-session-1', 'running');
       await h.bridge.handleCardAction({
         messageId: 'mem-1',
@@ -1240,7 +1265,7 @@ describe('Bridge', () => {
     it('retry after a stopped turn starts a fresh turn with the same prompt', async () => {
       const h = makeHarness({ throttleMs: 0 });
       await h.bridge.handleMessage(message({ text: 'retry me after stop' }));
-      await h.bridge.handleEvent('feishu-session-1', chunkEvent('partial output'));
+      await h.emitStream('feishu-session-1', chunkEvent('partial output'));
       h.agentStore.setStatus('feishu-session-1', 'running');
       await h.bridge.handleCardAction({
         messageId: 'mem-1',
@@ -1272,7 +1297,7 @@ describe('Bridge', () => {
       // path must keep re-rendering from the authoritative done state.
       const h = makeHarness({ throttleMs: 0 });
       await h.bridge.handleMessage(message());
-      await h.bridge.handleEvent('feishu-session-1', chunkEvent('answer'));
+      await h.emitStream('feishu-session-1', chunkEvent('answer'));
       await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
       await new Promise((resolve) => setTimeout(resolve, 0));
       const doneCard = h.transport.updatedCards.at(-1);
@@ -1342,7 +1367,7 @@ describe('Bridge', () => {
     it('a second message during a running turn opens a fresh card (lifecycle)', async () => {
       const h = makeHarness({ throttleMs: 0 });
       await h.bridge.handleMessage(message());
-      await h.bridge.handleEvent('feishu-session-1', chunkEvent('partial'));
+      await h.emitStream('feishu-session-1', chunkEvent('partial'));
       // Second message → new turn card; the old one is finalized as done.
       await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: 'second' }));
       const cards = h.transport.sentCards;
@@ -1510,7 +1535,7 @@ describe('Bridge', () => {
     it('working × copy → nothing to copy (turn not finished); × retry → new turn', async () => {
       const h = makeHarness({ throttleMs: 0 });
       await h.bridge.handleMessage(message());
-      await h.bridge.handleEvent('feishu-session-1', chunkEvent('partial'));
+      await h.emitStream('feishu-session-1', chunkEvent('partial'));
       await h.bridge.handleCardAction({
         messageId: 'mem-1',
         chatId: 'oc_chat',
@@ -1532,7 +1557,7 @@ describe('Bridge', () => {
     it('done × stop → idle explanation; × copy → last output; × retry → new turn', async () => {
       const h = makeHarness({ throttleMs: 0 });
       await h.bridge.handleMessage(message());
-      await h.bridge.handleEvent('feishu-session-1', chunkEvent('the answer'));
+      await h.emitStream('feishu-session-1', chunkEvent('the answer'));
       await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
       await new Promise((resolve) => setTimeout(resolve, 0));
       h.agentStore.setStatus('feishu-session-1', 'idle');
@@ -1562,7 +1587,7 @@ describe('Bridge', () => {
     it('error × stop/copy/retry/panel/toggle/row-details — all safe, card stays error', async () => {
       const h = makeHarness({ throttleMs: 0 });
       await h.bridge.handleMessage(message());
-      await h.bridge.handleEvent('feishu-session-1', chunkEvent('oops'));
+      await h.emitStream('feishu-session-1', chunkEvent('oops'));
       await h.bridge.handleEvent(
         'feishu-session-1',
         turnEndEvent({ kind: 'error', error: { code: 'MOCK', message: 'boom' } }) as SessionEvent,
@@ -1629,14 +1654,14 @@ describe('Bridge', () => {
     it('done → new message → working (fresh card) → second done: cross-turn integrity', async () => {
       const h = makeHarness({ throttleMs: 0 });
       await h.bridge.handleMessage(message());
-      await h.bridge.handleEvent('feishu-session-1', chunkEvent('first answer'));
+      await h.emitStream('feishu-session-1', chunkEvent('first answer'));
       await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
       await new Promise((resolve) => setTimeout(resolve, 0));
       // Second message: new turn/card, collapsed again, new content.
       await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: 'second question' }));
       const second = h.transport.sentCards.at(-1);
       expect(second?.header?.title.content).toBe('second question');
-      await h.bridge.handleEvent('feishu-session-1', chunkEvent('second answer'));
+      await h.emitStream('feishu-session-1', chunkEvent('second answer'));
       await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(h.transport.updatedCards.at(-1)?.header?.template).toBe('green');
@@ -1653,7 +1678,7 @@ describe('Bridge', () => {
     it('error → retry → working → done: full recovery cycle', async () => {
       const h = makeHarness({ throttleMs: 0 });
       await h.bridge.handleMessage(message());
-      await h.bridge.handleEvent('feishu-session-1', chunkEvent('partial'));
+      await h.emitStream('feishu-session-1', chunkEvent('partial'));
       await h.bridge.handleEvent(
         'feishu-session-1',
         turnEndEvent({ kind: 'error', error: { code: 'MOCK', message: 'boom' } }) as SessionEvent,
@@ -1667,7 +1692,7 @@ describe('Bridge', () => {
         operatorOpenId: 'ou_user',
         value: { kind: 'retry' },
       });
-      await h.bridge.handleEvent('feishu-session-1', chunkEvent('recovered'));
+      await h.emitStream('feishu-session-1', chunkEvent('recovered'));
       await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(h.transport.updatedCards.at(-1)?.header?.template).toBe('green');
@@ -4357,7 +4382,7 @@ describe('two-stage reaction ack', () => {
   it('swaps to DONE when the turn completes', async () => {
     const h = makeHarness({ throttleMs: 0 });
     await h.bridge.handleMessage(message());
-    await h.bridge.handleEvent('feishu-session-1', chunkEvent('answer'));
+    await h.emitStream('feishu-session-1', chunkEvent('answer'));
     await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
     await new Promise((resolve) => setTimeout(resolve, 0));
     const actions = h.transport.reactions.filter(
@@ -4402,7 +4427,7 @@ describe('two-stage reaction ack', () => {
       throw new Error('reaction api down');
     };
     await h.bridge.handleMessage(message());
-    await h.bridge.handleEvent('feishu-session-1', chunkEvent('answer'));
+    await h.emitStream('feishu-session-1', chunkEvent('answer'));
     await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(h.transport.updatedCards.at(-1)?.header?.template).toBe('green');
@@ -4543,7 +4568,7 @@ describe('agent-initiated turns (schedule reminders)', () => {
     const h = makeHarness({ throttleMs: 0 });
     h.sessionMap.set('oc_chat', 'feishu-session-1');
     await h.bridge.handleEvent('feishu-session-1', pluginUserMessage());
-    await h.bridge.handleEvent('feishu-session-1', chunkEvent('reminder answer'));
+    await h.emitStream('feishu-session-1', chunkEvent('reminder answer'));
     await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
     const opened = h.transport.sentCards.at(-1);
     expect(opened?.header?.title.content).toBe('⏰ Reminder');
@@ -4557,7 +4582,7 @@ describe('agent-initiated turns (schedule reminders)', () => {
     const h = makeHarness({ throttleMs: 0 });
     h.sessionMap.set('oc_chat', 'feishu-session-1');
     await h.bridge.handleEvent('feishu-session-1', userUserMessage());
-    await h.bridge.handleEvent('feishu-session-1', chunkEvent('stale output'));
+    await h.emitStream('feishu-session-1', chunkEvent('stale output'));
     expect(h.transport.sentCards).toHaveLength(0);
   });
 
