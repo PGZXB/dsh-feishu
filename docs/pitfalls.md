@@ -387,3 +387,26 @@ The harness sandbox (and this checkout's environment) has specific rules:
   frozen final render retained per message id). If the id is unretained
   (e.g. after a restart), log and ignore — silently re-rendering the current
   card is exactly the bug. See `StreamingCardController.toggle-rows`.
+
+## Live model output is not a session event
+
+- The session event log is the **durable settlement** record. dsh used to
+  publish in-flight model output into it as `assistant/chunk`; since 0.1.5
+  that event is gone. Streaming text now arrives as a separate, agent-scoped
+  process-local publication — `agent/assistant-stream` frames (`start` /
+  `chunk` / `end`, each attempt carrying an id and a monotone `revision`) —
+  while the log commits only `assistant/message` (assembled message + its
+  `stream` records + usage) or `assistant/attempt` (an attempt that
+  committed no surface message: failed, retried, cancelled).
+- A surface that only rewires the removed event to a no-op still typechecks
+  and still passes settle-based tests, but shows **nothing until the turn
+  settles** — the live card silently becomes a blank card that fills in at
+  the end. Verify live streaming through a stop-mid-turn case (stop while
+  the model is streaming, then read the partial output back), not just the
+  final render.
+- Rule: the live channel and the durable log are two subscriptions with two
+  shapes. Keep the live path keyed by the agent's live session
+  (`agent.session.id`), drop frames whose `revision` is older than the
+  latest seen for the same attempt (a replaced/reattached lifecycle replays
+  them), and treat `assistant/attempt` as "streamed but not committed" —
+  it must not overwrite what the user already saw.

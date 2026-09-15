@@ -71,11 +71,13 @@ done|stopped|error --any action--->  same (state unchanged; card re-synced)
 | 事件 | 卡片行为 |
 | --- | --- |
 | `turn/start`（经由 message） | 打开卡片，状态 working |
-| `assistant/chunk` 文本增量 | 追加到答案，patch |
-| `assistant/chunk` 推理增量 | 追加到打开的思考行，patch |
+| `agent/assistant-stream` chunk 帧 · 文本增量 | 追加到答案，patch |
+| `agent/assistant-stream` chunk 帧 · 推理增量 | 追加到打开的思考行，patch |
+| `agent/assistant-stream` end 帧 | 稳定打开的思考行（推理属于单次 attempt） |
 | `tool/call` | 稳定打开的思考行；添加工具行（running） |
 | `tool/result` | 将匹配的工具行标记为 done/error，存储结果 |
 | `assistant/message` | 用组装好的文本替换答案 |
+| `assistant/attempt` | 稳定打开的思考行；被放弃/重试的 attempt 未提交任何对外消息，故已流出的文本保持原样 |
 | `turn/end` | 稳定思考行；状态 done/error；定稿卡片；保留 snapshot + rows 供重新断言和 ⋯ 按钮使用 |
 | `compaction/start` | 打开 🧹 Compacting 卡，状态 working（compaction 事务不是回合） |
 | `compaction/summary` | 用压缩摘要替换卡片答案 |

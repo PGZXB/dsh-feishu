@@ -37,6 +37,7 @@ import {
   type QueueItemStatus,
 } from './cards/render.js';
 import {
+  type AssistantStreamFrameLike,
   StreamingCardController,
   type StreamingCardHost,
 } from './cards/StreamingCardController.js';
@@ -291,6 +292,15 @@ export interface BridgeOptions {
    */
   readonly onSessionEvent: (
     listener: (sessionId: string, event: SessionEvent) => void,
+  ) => () => void;
+  /**
+   * Subscribe to the live assistant-stream firehose (`agent/assistant-stream`
+   * — the in-flight model output, which dsh 0.1.5 moved off the session
+   * event log). The listener receives the owning session id and one frame.
+   * Returns a disposer.
+   */
+  readonly onAssistantStream: (
+    listener: (sessionId: string, frame: AssistantStreamFrameLike) => void,
   ) => () => void;
   readonly cards: StreamingCardManager;
   readonly defaultCwd: string;
@@ -589,6 +599,7 @@ export class Bridge {
     return sessionId === undefined ? undefined : this.options.agentStore.get(sessionId);
   }
   private readonly disposeEvents: () => void;
+  private readonly disposeStream: () => void;
   private readonly commands = new CommandRegistry();
 
   constructor(private readonly options: BridgeOptions) {
@@ -609,6 +620,16 @@ export class Bridge {
       void this.handleEvent(sessionId, event).catch((error: unknown) => {
         options.logger.error(`session event handling failed: ${String(error)}`);
       });
+    });
+    // Live model output arrives on its own channel since dsh 0.1.5: the
+    // `assistant/chunk` session event is gone, and the in-flight stream is
+    // published as agent-scoped frames instead.
+    this.disposeStream = options.onAssistantStream((sessionId, frame) => {
+      try {
+        this.streaming.handleAssistantStream(sessionId, frame);
+      } catch (error: unknown) {
+        options.logger.error(`assistant stream handling failed: ${String(error)}`);
+      }
     });
     registerSurfaceCommands(this.commands, this.commandHost());
   }
@@ -739,9 +760,10 @@ export class Bridge {
     };
   }
 
-  /** Detach the session-event subscription. */
+  /** Detach the session-event and assistant-stream subscriptions. */
   dispose(): void {
     this.disposeEvents();
+    this.disposeStream();
     this.interactions.dispose();
   }
 

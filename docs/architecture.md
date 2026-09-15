@@ -42,6 +42,8 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
                                                                     │
                                                                     ▼
                                                               dsh session/event stream
+                                                              + live
+                                                              agent/assistant-stream
 ```
 
 ## Modules
@@ -146,7 +148,8 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
   persisted it creates fresh; if the mapped id collides with an on-disk log
   it rebinds a fresh id. History survives daemon restarts.
 - **One card per turn.** The card is posted when a message arrives and
-  patched as chunks/tools stream in. The **final answer stays in the card**
+  patched as the live stream (`agent/assistant-stream`) and the durable
+  session events arrive. The **final answer stays in the card**
   (it finalizes green in place — no second bubble); failures add a ⚠️
   notice so a broken turn never goes unnoticed. Patches are silent (no
   unread), which is why the first card send is the notification.

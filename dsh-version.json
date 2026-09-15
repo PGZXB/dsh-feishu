@@ -1,15 +1,15 @@
 {
   "schema": "dsh-feishu-version-track/v1",
   "dsh": {
-    "stable": "0.1.2-rc.1",
-    "next": "0.1.2-rc.1"
+    "stable": "0.1.5-rc.1",
+    "next": "0.1.5-rc.2"
   },
   "dshFeishu": {
     "npmLatest": "0.3.2"
   },
   "lastAdapted": {
     "track": "stable",
-    "by": "dsh-version-track (0.1.2-rc.1 stable release)",
-    "at": "2026-09-05T22:40:00Z"
+    "by": "dsh-version-track (0.1.5-rc.1 @latest: live stream moved to agent/assistant-stream)",
+    "at": "2026-09-14T21:20:00Z"
   }
 }

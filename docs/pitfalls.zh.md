@@ -338,3 +338,20 @@ harness 沙箱（以及本 checkout 的环境）有一些特定规则：
   （id 与当前卡一致即为活卡，否则查按消息 id 保留的冻结终态渲染）。若该 id
   未保留（例如重启后），记日志并忽略 —— 静默重渲染当前卡正是这个 bug 本身。
   见 `StreamingCardController.toggle-rows`。
+
+## 实时模型输出不是 session 事件
+
+- session 事件日志是**已结算**的记录。dsh 曾把飞行中的模型输出以
+  `assistant/chunk` 写进日志；0.1.5 起该事件已被移除。流式文本改为独立的、
+  agent 作用域的进程内发布——`agent/assistant-stream` 的 `start` / `chunk` /
+  `end` 帧（每个 attempt 带 id 与单调递增的 `revision`）——而日志只提交
+  `assistant/message`（组装好的消息 + 其 `stream` 记录 + usage）或
+  `assistant/attempt`（未提交任何对外消息的 attempt：失败、重试、取消）。
+- 只把被删事件改成空操作的适配**依然能通过类型检查，也能通过以结算为准的
+  测试**，但**在结算前什么都不显示**——实时卡片会静默变成空卡片，直到回合结束
+  才一次性填满。实时流必须用"回合中途停止"的用例验证（模型仍在流式传输时停止，
+  再读回已产出的部分文本），而不能只看最终渲染。
+- 规则：实时通道与持久日志是两条订阅、两种形状。实时路径以 agent 的活跃
+  session（`agent.session.id`）为键；同一 attempt 中 `revision` 小于已见值的帧
+  必须丢弃（被替换/重连的生命周期会重放它们）；`assistant/attempt` 表示
+  "已流出但未提交"，它不得覆盖用户已经看到的内容。

@@ -172,6 +172,7 @@ function makeHarness(options: { noInbox?: boolean } = {}): Harness {
     sessionMap,
     agentStore,
     onSessionEvent: () => () => {},
+    onAssistantStream: () => () => {},
     cards,
     defaultCwd: '/work',
     dataDir: '/work',
