@@ -153,7 +153,6 @@ src/                  # plugin source (ESM, TypeScript, NodeNext)
   index.ts            # cordis entry: name / Config / apply
 tests/                # unit + integration tests (vitest)
 docs/                 # English documentation (development, setup, architecture)
-examples/             # runnable examples (profiles, configs)
 scripts/              # repo tooling (release, verification)
 ```
 
