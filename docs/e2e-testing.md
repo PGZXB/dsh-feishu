@@ -166,11 +166,16 @@ FEISHU_DEBUG=1           # the plugin's own debug tracing (visible now that
 No chat name is needed: every case creates its own group chat
 (`<caseId>-<runId>`) through the backend and opens it.
 
-The suite doubles as the **release acceptance gate**: the `prepare` phase of
-`scripts/release.mjs` runs `e2e:ui` before the release PR opens and refuses
-to prepare the release when the environment is not prepared (run
-`e2e:setup` once per machine first) or the run fails — see
+The suite is designed to double as the **release acceptance gate**: the
+`prepare` phase of `scripts/release.mjs` runs `e2e:ui` before the release PR
+opens and refuses to prepare the release when the environment is not prepared
+(run `e2e:setup` once per machine first) or the run fails — see
 `docs/development.md` → "Releasing".
+
+It is **not wired into releases yet**: the suite is still being worked on and
+its docker image is not provisioned in the release environment, so releases are
+currently prepared with `--skip-e2e`. Treat that as temporary — the flag exists
+so the gate can be switched off knowingly, not so it can be forgotten.
 
 ## Report
 

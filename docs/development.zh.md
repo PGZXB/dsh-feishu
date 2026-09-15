@@ -365,6 +365,10 @@ node scripts/release.mjs prepare <major|minor|patch>
 提交 `chore: release vX.Y.Z`，推送分支，并向 `main` 发起 release PR（装了
 `gh` 就直接创建，否则打印 compare URL）。**本阶段不打 tag、不发布。**
 
+**E2E 验收目前还没接进发版。** 真实客户端套件（`docs/e2e-testing.md`）仍在开发
+中，其 docker 镜像也尚未在发版环境就位，因此当前发版都以 `--skip-e2e` 准备。
+这道门禁仍然留在驱动脚本里：等套件稳定后去掉该参数，它就重新成为硬性要求。
+
 **阶段 2 —— review、合并、打 tag**（release PR 合并之后）：
 
 ```sh

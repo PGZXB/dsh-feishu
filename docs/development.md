@@ -518,6 +518,12 @@ commits `chore: release vX.Y.Z`, pushes the branch, and opens the release PR
 against `main` (`gh pr create` when `gh` is installed, else it prints the
 compare URL). **No tag, no publish happens in this phase.**
 
+**The E2E acceptance is not part of releases yet.** The real-client suite
+(`docs/e2e-testing.md`) is still being worked on and its docker image is not
+provisioned in the release environment, so releases are currently prepared with
+`--skip-e2e`. The gate stays wired into the driver: once the suite is reliable,
+drop the flag and it becomes a hard requirement again.
+
 **Phase 2 — review, merge, tag** (after the release PR merges):
 
 ```sh
