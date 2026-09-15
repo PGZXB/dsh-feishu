@@ -382,8 +382,9 @@ registry-token 认证）并创建带生成 notes 的 GitHub Release。workflow �
 workflow 变绿之后：
 
 1. 核对 Actions 运行与 npm dist-tag；
-2. 在 main 上把 `dsh-version.json` 的 `dshFeishu.npmLatest` 更新为该版本
-   （一行 `chore:` 提交）——它记录的是已发布的事实，跟着发布走；
+2. 通过一行 PR 把已发布版本记录进 `dsh-version.json` 的
+   `dshFeishu.npmLatest`——它记录的是已发布的事实，跟着发布走，而 main 的改动
+   仍然只经 review 合入；
 3. 过一眼 release 的 What's Changed——祖先链完整时它恰好列出上一个 tag
    以来的 PR；万一必须从 release 分支打热修 tag，用显式基线重新生成 notes
    （`POST /repos/…/releases/generate-notes` 带 `previous_tag_name`）并修正
