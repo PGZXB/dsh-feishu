@@ -284,6 +284,46 @@ describe('StreamingCardController', () => {
     expect(h.controller.state('oc_chat')?.openThinkId).toBeUndefined();
   });
 
+  it('a start frame resets the attempt revision baseline (replacement)', async () => {
+    const h = makeController();
+    await h.controller.beginTurn('oc_chat', 'om-1', 'T');
+    await h.controller.handleAssistantStream('feishu-session-1', {
+      ...chunkEvent('first'),
+      revision: 3,
+    });
+    expect(h.controller.state('oc_chat')?.content).toBe('first');
+    // A replacement restarts `revision` at 1: its start frame opens the new
+    // publication and resets the baseline, so its deltas still land rather
+    // than being dropped as "older than 3".
+    await h.controller.handleAssistantStream('feishu-session-1', {
+      type: 'start',
+      attemptId: 'attempt-1',
+      revision: 1,
+      turn: 0,
+      step: 1,
+    });
+    await h.controller.handleAssistantStream('feishu-session-1', {
+      ...chunkEvent(' again'),
+      revision: 1,
+    });
+    expect(h.controller.state('oc_chat')?.content).toBe('first again');
+  });
+
+  it('a new turn forgets the previous attempt baseline', async () => {
+    const h = makeController();
+    await h.controller.beginTurn('oc_chat', 'om-1', 'T');
+    await h.controller.handleAssistantStream('feishu-session-1', {
+      ...chunkEvent('one'),
+      revision: 5,
+    });
+    await h.controller.handleEvent('feishu-session-1', turnEndEvent({ kind: 'completed' }));
+    // The next turn's stream starts its own revision sequence; nothing from
+    // the finished turn may suppress it.
+    await h.controller.beginTurn('oc_chat', 'om-2', 'T2');
+    await h.controller.handleAssistantStream('feishu-session-1', chunkEvent('two'));
+    expect(h.controller.state('oc_chat')?.content).toBe('two');
+  });
+
   it('turn/end with an error marks the card error and notifies', async () => {
     const h = makeController();
     await h.controller.beginTurn('oc_chat', 'om-1', 'T');

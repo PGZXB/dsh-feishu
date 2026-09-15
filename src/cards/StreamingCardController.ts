@@ -425,6 +425,9 @@ export class StreamingCardController {
    * @param title - the streaming-card title.
    */
   async beginTurn(chatId: string, messageId: string, title: string): Promise<void> {
+    // A new turn starts a new live stream: forget the previous turn's attempt
+    // baseline so a stale high revision can never suppress its frames.
+    this.liveAttempts.delete(chatId);
     this.host.logger.debug(
       `streaming beginTurn ${chatId}: message ${messageId} '${title}' (two-stage ack stage 1)`,
     );
@@ -613,7 +616,8 @@ export class StreamingCardController {
    * the durable settlement (`assistant/message` or `assistant/attempt`)
    * separately. Frames carry the attempt id and a monotone `revision`
    * ("replacement restarts at 1"), so a frame from an older revision of the
-   * current attempt is stale replay and must not be appended again.
+   * current attempt is stale replay and must not be appended again — while a
+   * `start` frame always opens a new publication and resets that baseline.
    *
    * @param sessionId - the session whose agent produced the frame.
    * @param frame - one ordered stream publication (start, chunk, or end).
@@ -628,6 +632,16 @@ export class StreamingCardController {
     }
     const state = this.cardStates.get(chatId);
     if (state === undefined || state.status !== 'working') return;
+    if (frame.type === 'start') {
+      // A start frame opens a new live publication and always resets the
+      // baseline: a replacement restarts `revision`, so comparing it against
+      // the previous stream's revision would drop the whole new attempt.
+      this.liveAttempts.set(chatId, { attempt: frame.attemptId, revision: frame.revision });
+      this.host.logger.debug(
+        `streaming assistant-stream start ${chatId}: attempt ${String(frame.attemptId)} rev ${frame.revision} turn ${frame.turn} step ${frame.step}`,
+      );
+      return;
+    }
     const live = this.liveAttempts.get(chatId);
     if (live !== undefined && frame.attemptId === live.attempt && frame.revision < live.revision) {
       this.host.logger.debug(
@@ -636,16 +650,14 @@ export class StreamingCardController {
       return;
     }
     this.liveAttempts.set(chatId, { attempt: frame.attemptId, revision: frame.revision });
-    if (frame.type === 'start' || frame.type === 'end') {
+    if (frame.type === 'end') {
       // Reasoning belongs to one attempt: close the think row at its end so
       // the next attempt (or the settled message) opens a fresh one.
-      if (frame.type === 'end') settleOpenThink(state);
+      settleOpenThink(state);
       this.host.logger.debug(
-        `streaming assistant-stream ${frame.type} ${chatId}: attempt ${String(frame.attemptId)} rev ${frame.revision}${
-          frame.type === 'start' ? ` turn ${frame.turn} step ${frame.step}` : ''
-        }`,
+        `streaming assistant-stream end ${chatId}: attempt ${String(frame.attemptId)} rev ${frame.revision}`,
       );
-      if (frame.type === 'end') this.syncCard(chatId);
+      this.syncCard(chatId);
       return;
     }
     const chunk = frame.chunk;
