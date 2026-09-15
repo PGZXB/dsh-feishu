@@ -42,7 +42,8 @@
  *   node scripts/release.mjs prepare <major|minor|patch>   # phase 1
  *   node scripts/release.mjs prepare --dry-run <bump>      # print what would happen
  *   node scripts/release.mjs prepare --skip-e2e <bump>     # skip the E2E acceptance
- *                                                          # (explicit escape hatch only)
+ *                                                          # (what releases use today —
+ *                                                          #  the suite is not wired in yet)
  *   node scripts/release.mjs tag                           # phase 2 (after the PR merges)
  *   node scripts/release.mjs tag --dry-run
  */
@@ -116,12 +117,13 @@ if (phase === 'prepare') {
   // no pnpm store dependency — see the header comment).
   run('node scripts/run-gates.mjs');
 
-  // Real-client E2E acceptance before every release: the unit/integration
-  // gates mock the Feishu wire, so the release must also verify the real
-  // long connection + browser client locally (see docs/e2e-testing.md).
-  // Failing the E2E run aborts the release. `--skip-e2e` is an explicit
-  // escape hatch for cases where the E2E environment cannot be provisioned
-  // (e.g. no test account access) — never the default.
+  // Real-client E2E acceptance for every release: the unit/integration gates
+  // mock the Feishu wire, so a release should also verify the real long
+  // connection + browser client locally (see docs/e2e-testing.md).
+  // NOT WIRED IN YET: the suite is still being worked on and its docker image
+  // is not provisioned in the release environment, so releases currently run
+  // with --skip-e2e. Switch it back on (drop the flag) once the suite is
+  // reliable — the escape hatch exists to be used knowingly, not forgotten.
   if (!skipE2E) {
     const { existsSync } = await import('node:fs');
     const { join } = await import('node:path');

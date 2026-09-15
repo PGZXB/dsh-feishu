@@ -106,10 +106,14 @@ FEISHU_DEBUG=1           # 插件自身 debug 追踪（dsh 子进程日志现在
 
 不需要聊天名：每个用例自己通过后台创建群聊（`<caseId>-<runId>`）并打开它。
 
-这套套件同时充当**发版验收门禁**：`scripts/release.mjs` 的 `prepare` 阶段
-会在 release PR 发起前运行 `e2e:ui`，环境未准备（先在本机跑一次
+这套套件的设计目标是同时充当**发版验收门禁**：`scripts/release.mjs` 的
+`prepare` 阶段会在 release PR 发起前运行 `e2e:ui`，环境未准备（先在本机跑一次
 `e2e:setup`）或运行失败时拒绝准备发版——见 `docs/development.zh.md` →
 "发版步骤"。
+
+它**目前还没接进发版**：套件仍在开发中，其 docker 镜像也尚未在发版环境就位，
+因此当前发版都以 `--skip-e2e` 准备。这属于临时状态——该参数的意义是"明确地
+关掉门禁"，而不是让门禁被遗忘。
 
 ## 报告
 
