@@ -166,9 +166,14 @@ feels faster; `/help` lists them all.
 - **Live streaming cards** — tool calls, reasoning, markdown, and tables stream in as the agent works.
 - **One-tap control panel** — `/panel` renders the full command palette as buttons; no command syntax to remember, and each button is the exact equivalent of typing the command.
 - **In-card approvals & questions** — approve a permission escalation or answer the agent's questions in the chat.
-- **Sessions survive restarts** — a chat's session (and its working directory) is persisted across daemon restarts.
+- **Sessions survive restarts** — a chat's session and its working directory are persisted across daemon restarts; `/sessions` lists, resumes, renames, archives, and exports them.
+- **One-QR quick setup** — a single Feishu QR scan creates and configures the app (bot profile, scopes, event subscriptions, credentials) and writes the dsh profile.
+- **Files in both directions** — images, files, videos, and rich-text posts you send land in the workspace as plain files the agent reads by path; the agent can send workspace files and images back to the chat.
+- **Message queue & steering** — messages sent while a turn is running queue visibly; edit, delete, or steer them into the running turn.
+- **Files a turn produced** — appear as chips at the bottom of the card; tap one to receive it in the chat.
+- **Card stats & diagnostics** — turns, tool calls, tokens, and current context-window occupancy on the card; `/feishu-status` shows connection and session diagnostics, and stays usable mid-turn.
 - **Groups & mentions** — @-mention the bot; error notices, approvals, and questions @ the requester.
-- **Reactions, allowlists, reminders, export, diagnostics** — reaction ack, `allowedChats` / `allowedUsers`, scheduled reminders, session-log files, and a status card.
+- **Reactions, allowlists, reminders, export** — reaction ack, `allowedChats` / `allowedUsers`, scheduled reminders, and session-log files.
 
 ## Contributing
 
