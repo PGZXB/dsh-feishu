@@ -1,19 +1,22 @@
 name: Release compat (npm latest vs dsh@latest)
 
-# Daily check that the PUBLISHED npm package (@dsh-feishu/dsh-feishu@latest)
-# stays installable and bootable against the dsh @latest dist-tag — the exact
-# combination an `npm i @dsh-feishu/dsh-feishu` user gets. Both the npm
+# Daily check of the PUBLISHED release against the dsh @latest dist-tag — the
+# exact combination an `npm i @dsh-feishu/dsh-feishu` user gets. Both the npm
 # @latest release and main track dsh @latest (the single compatibility promise
-# this repo makes; see docs/development.md → "Version tracks"), but they are
-# checked differently: main's CODE is exercised end to end by the Canary
-# workflow, while this workflow only proves the SHIPPED artifact still
-# installs and boots beside the current @latest CLI.
+# this repo makes; see docs/development.md → "Version tracks"), and this
+# workflow is the one that checks the SHIPPED release rather than main:
 #
-# NOTE: this installs the PUBLISHED package, not the repo — so a red run here
-# with a green Canary means the npm release is behind main. Only the top-level
-# dsh package is installed from @latest: the npm `latest` tags of the
-# @deepseek-ai/* sub-packages are stale 0.0.1-rc.x lines whose peers were
-# never published, so the family follows the CLI's own resolution.
+#   1. `published-artifact` — installs the published npm package beside the
+#      @latest CLI and boots it (resolution + composition smoke);
+#   2. `released-suite` — checks out the TAG that matches the published
+#      version and runs the full suite against @latest. The npm package ships
+#      no tests (see `files` in package.json), so the tag in this repo is the
+#      only place the released code can actually be exercised. A red run here
+#      with a green Canary means the shipped release — not main — is behind.
+#
+# Only the top-level dsh package is installed from @latest: the npm `latest`
+# tags of the @deepseek-ai/* sub-packages are stale 0.0.1-rc.x lines whose
+# peers were never published, so the family follows the CLI's own resolution.
 #
 # Triggered on a schedule (UTC 04:00, i.e. 12:00 Beijing) and manually via
 # workflow_dispatch.
@@ -24,7 +27,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  release-compat:
+  published-artifact:
     name: published npm package against dsh@latest
     runs-on: ubuntu-latest
     steps:
@@ -58,3 +61,100 @@ jobs:
           ./node_modules/.bin/dsh plugin --profile compat add "link:/tmp/compat/node_modules/@dsh-feishu/dsh-feishu"
           timeout 60 ./node_modules/.bin/dsh --profile compat --dump-config 2>&1 | grep -q "name: '@dsh-feishu/dsh-feishu'" \
             || { echo 'feishu bundle missing from composed config'; exit 1; }
+
+  released-suite:
+    name: released tag's suite against dsh@latest
+    runs-on: ubuntu-latest
+    steps:
+      # Full history: the job checks out the tag matching the published version.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The npm package ships no tests, so the released CODE is exercised from
+      # this repo at the tag that matches the published version.
+      - name: Check out the tag matching npm @latest
+        run: |
+          VERSION="$(npm view @dsh-feishu/dsh-feishu@latest version)"
+          echo "published @dsh-feishu/dsh-feishu@latest = ${VERSION}"
+          git checkout "v${VERSION}"
+
+      # Emulate the user's dsh install: the npm `@latest` CLI plus the caret
+      # resolution that CLI declares for the rest of the family (nothing here
+      # is committed).
+      - name: Pin the dsh family to the npm @latest CLI (not frozen)
+        run: |
+          VERSION="$(npm view @deepseek-ai/dsh@latest version)"
+          echo "dsh @latest = ${VERSION}"
+          V="${VERSION}" node -e "
+            const fs = require('node:fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            const version = process.env.V;
+            for (const section of ['devDependencies', 'peerDependencies']) {
+              for (const name of Object.keys(pkg[section] ?? {})) {
+                if (!name.startsWith('@deepseek-ai/')) continue;
+                // cordis / schemastery are versioned independently (4.x / 3.x).
+                if (name === '@deepseek-ai/cordis' || name === '@deepseek-ai/schemastery') continue;
+                const cli = name === '@deepseek-ai/dsh';
+                pkg[section][name] = cli ? version : '^' + version;
+              }
+            }
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+          pnpm install --no-frozen-lockfile
+          pnpm dedupe
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Build
+        run: pnpm run build
+
+      # Same integration profile preparation as ci.yml / canary.yml; each
+      # suite gets its OWN dsh home (parallel suites racing session-map.json
+      # writes — see ci.yml).
+      - name: Prepare integration-test profiles
+        env:
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-attachments
+        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
+      - name: Prepare integration-test profile (rich-text)
+        env:
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-rich-text
+        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
+      - name: Prepare integration-test profile (wait-instruction)
+        env:
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-wait-instruction
+        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
+      - name: Prepare integration-test profile (real-composition)
+        env:
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-real
+        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
+      - name: Prepare integration-test profile (outbound)
+        env:
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-outbound
+        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
+      - name: Prepare integration-test profile (turn-produced-files)
+        env:
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-turn-produced-files
+        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
+      - name: Prepare scenario integration-test profile
+        env:
+          DSH_HOME: ${{ github.workspace }}/_dev/dsh-home-scenarios
+        run: pnpm exec dsh plugin --profile feishu-dev add "link:${{ github.workspace }}"
+
+      - name: Test (unit + integration, FEISHU_INT_REQUIRED)
+        env:
+          DSH_BIN: ${{ github.workspace }}/node_modules/.bin/dsh
+          FEISHU_INT_REQUIRED: '1'
+        run: pnpm run test
