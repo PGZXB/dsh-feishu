@@ -219,14 +219,19 @@ scripts/              # repo tooling (release, verification)
 
 ## Adapting to a new dsh release
 
-dsh is pre-release (`0.1.0-rc.x`) and can break between releases. The canary
-workflow (`.github/workflows/canary.yml`) runs the suite against
-`@deepseek-ai/*@next` daily — red canary means a compatibility fix is due.
+dsh is pre-release (`0.1.0-rc.x`) and can break between releases. The repo
+tracks ONE dsh version — the npm `@latest` CLI (`dsh.latest` in
+`dsh-version.json`), for both `main` and the npm release; every other dist-tag
+(pre-release, alpha) is ignored on purpose (see docs/development.md → "Version
+tracks"). The
+canary workflow (`.github/workflows/canary.yml`) pins the CLI to `@latest`
+daily and runs the suite — red canary means a compatibility fix is due.
 When adapting:
 
-- Bump versions: `devDependencies.@deepseek-ai/dsh` pinned EXACT, other
-  `@deepseek-ai/*` caret (`^0.1.0-rc.7`); CLI bundles all sub-packages, so
-  lockfile and CLI bumps land together.
+- Bump versions: `devDependencies.@deepseek-ai/dsh` pinned EXACT to the tracked
+  `@latest` version, other `@deepseek-ai/*` caret (`^0.1.5-rc.1`); CLI bundles
+  all sub-packages, so lockfile and CLI bumps land together. `pnpm run check`
+  fails when the CLI pin or a harness peer range drifts from `dsh.latest`.
 - Read upstream release notes first; grep our code for renamed modes/commands
   (rc.7: Code mode → PTC mode) in card labels, snapshots, tests.
 - Check surface shapes against the INSTALLED `.d.ts` (getters vs methods) —

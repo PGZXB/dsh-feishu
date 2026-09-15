@@ -1,118 +1,144 @@
 ---
 name: dsh-version-track
-description: Keep dsh-feishu adapted to the newest DeepSeek Harness releases and keep the A/B version labels honest. Diagnoses whether the stable release track (dsh `@latest`) and the `main` track (dsh `@next`) are still compatible, adapts code when a run is red, and refreshes the labels when a run is green. Use when a `canary` or `release-compat` workflow is red, when a new dsh `@next`/`@latest` landed, or when `dsh-version.json` looks stale.
-when-to-use: A dsh-family version update landed (a new `@deepseek-ai/*@next` or `@latest`), the Canary or Release-compat CI is red, or the maintainer asks to "adapt to the new dsh version" / "bump the version track".
+description: Keep dsh-feishu adapted to the dsh version users install from the npm `@latest` tag, and keep that single version label honest. Diagnoses whether `main` is still compatible with dsh `@latest`, adapts the code when a run is red, and refreshes the label when a run is green. Use when the Canary (main vs dsh@latest) or Release-compat workflow is red, when dsh `@latest` moved, or when `dsh-version.json` looks stale.
+when-to-use: A new dsh `@latest` landed, the Canary or Release-compat CI is red, or the maintainer asks to "adapt to the new dsh version" / "bump the version track".
 ---
 
 # dsh-version-track
 
-The dsh-feishu repository tracks **two** DeepSeek Harness (dsh) versions and keeps a
-single source of truth for them:
+dsh-feishu tracks **one** DeepSeek Harness (dsh) version, recorded in a single
+source of truth:
 
 ```json
 // dsh-version.json  (repo root)
 {
-  "schema": "dsh-feishu-version-track/v1",
-  "dsh": { "stable": "0.1.0-rc.7", "next": "0.1.0-rc.8" },
-  "dshFeishu": { "npmLatest": "0.2.1" },
-  "lastAdapted": { "track": null, "by": null, "at": null }
+  "schema": "dsh-feishu-version-track/v2",
+  "dsh": { "latest": "0.1.5-rc.1" },
+  "dshFeishu": { "npmLatest": "0.3.2" },
+  "lastAdapted": { "by": "…", "at": "…" }
 }
 ```
 
-- **A = `dsh.stable`** — the dsh `@latest` the stable `release/*` track is verified against. Guarded by the `Release compat (npm latest vs dsh@latest)` workflow.
-- **B = `dsh.next`** — the dsh `@next` the `main` branch is verified against. Guarded by the `Canary (main vs dsh@next)` workflow.
-- `dshFeishu.npmLatest` — the dsh-feishu version published as npm `@latest` (the live npm badge shows it; keep this field as the last known value).
+- **`dsh.latest`** — the dsh `@latest` CLI version **both** `main` (installed from
+  git) and the npm `@latest` release are adapted to. Guarded by the
+  `Canary (main vs dsh@latest)` workflow.
+- `dshFeishu.npmLatest` — the dsh-feishu version published as npm `@latest`
+  (the live npm badge shows it; keep this field as the last known value).
 
-README.md / README.zh.md carry a "Note" showing A and B. Do not edit that Note by hand — it is generated from `dsh-version.json` (run `node scripts/render-version-note.mjs`), and `pnpm run check` fails if it drifts.
+Every other dsh dist-tag — the pre-release and alpha lines — is **ignored on
+purpose**. Only the version a user gets from the npm `@latest` tag is a
+compatibility promise. An earlier design also tracked a pre-release line for
+`main`; whenever that line ran ahead of `@latest` it meant adapting the same
+code twice (adapt for `@latest`, release it, then adapt again for the
+pre-release) while telling users two different stories. Do not re-introduce a
+second label.
+
+Note that only the dsh **CLI** carries a meaningful npm `latest` tag: the
+family's sub-packages publish only pre-release tags, and their own `latest`
+still points at ancient `0.0.1-rc.x` lines. "dsh `@latest`" therefore means the CLI
+version from `npm view @deepseek-ai/dsh@latest version`, with the sub-packages
+resolved by the carets that CLI declares — exactly what a user's
+`npm i @deepseek-ai/dsh@latest` resolves to.
+
+README.md / README.zh.md carry a "Note" naming that version. Do not edit the
+Note by hand — it is generated from `dsh-version.json` (run
+`node scripts/render-version-note.mjs`), and `pnpm run check` fails if it
+drifts (it also fails if the CLI pin or a harness peer range stops matching the
+label).
 
 ## The one rule that matters
 
-**Compatibility is empirical, not a number.** The two workflows run the suite against
-the newest dsh and are the truth. The A/B labels are just a record of the last version
-verified green.
+**Compatibility is empirical, not a number.** The Canary workflow runs the
+suite against the npm `@latest` CLI and is the truth. The label is just a
+record of the last version verified green.
 
 - **Red run → adapt the code** (real compatibility break).
-- **Green run on a newer dsh → refresh the label** (bump A or B in `dsh-version.json`; no code change).
-- Neither adapt code nor refresh a label merely because a number in the JSON is "old": a green run already proves compatibility. Do not chase version numbers.
+- **Green run on a newer dsh `@latest` → refresh the label** (bump
+  `dsh.latest` in `dsh-version.json`; no code change).
+- Never adapt code or refresh the label merely because the JSON looks "old" —
+  a green run already proves compatibility. Do not chase version numbers, and
+  never chase a pre-release dist-tag.
 
 ## Steps
 
 ### 1. Read the current state
-- Read `dsh-version.json` (current A, B, `npmLatest`).
-- Read the latest conclusions of the two workflows (GitHub API, no token needed for public read):
-  - `Release compat (npm latest vs dsh@latest)` → the A / stable track.
-  - `Canary (main vs dsh@next)` → the B / `main` track.
-  - Also read the current npm dist-tags for `@deepseek-ai/dsh`: `dsh@next` and `dsh@latest`
-    (via `npm view @deepseek-ai/dsh dist-tags`, or the registry HTTP API).
-- Note whether each tracked label (A, B) equals the corresponding current dist-tag.
+- Read `dsh-version.json` (current `dsh.latest`, `npmLatest`).
+- Read the latest conclusions of the two workflows (GitHub API; public read):
+  - `Canary (main vs dsh@latest)` → is `main` compatible with the current
+    `@latest`?
+  - `Release compat (npm latest vs dsh@latest)` → does the published artifact
+    still install/boot beside it?
+- Read the current npm dist-tag: `npm view @deepseek-ai/dsh@latest version`.
+- Note whether `dsh.latest` equals that dist-tag.
 
 ### 2. Decide the needed work (green/red)
-Build a table: per track (stable for A, `main` for B), is the latest run **green** or **red**,
-and is the tracked label behind the current dist-tag?
 
-| Track | Run | Label vs dist-tag | Action |
-| --- | --- | --- | --- |
-| stable (A) | green | behind | refresh A label |
-| stable (A) | red | any | adapt the release branch code |
-| main (B) | green | behind | refresh B label |
-| main (B) | red | any | adapt `main` code |
+| Canary (main vs @latest) | Label vs dist-tag | Action |
+| --- | --- | --- |
+| green | behind | refresh the label (`dsh.latest`) |
+| red | any | adapt the code |
 
-**Ordering** — when **both** tracks need a real code adaptation, do the **stable (A)
-track first**, then `main` (B): npm stable users must never get a package that is
-incompatible with dsh `@latest`; `main` is not shipped on npm, so it can trail.
+A red **Release-compat** with a green Canary means the npm release is simply
+older than `main` — that resolves with the next release, not with a code change.
 
-### 3. Adapt a track (code change, red run)
-Do this in a worktree (never on `main`; release work never on `main` either) and land it as a PR.
+### 3. Adapt (code change, red run)
+Do this in a worktree (never on `main`) and land it as a PR. A release can carry
+the adaptation and the version bump together: prepare it on a `release/vX.Y.Z`
+branch so the release PR is the thing the maintainer reviews (see
+docs/development.md → "Releasing").
 
-For the **B / `main`** track:
-1. `git worktree add -b feat/dsh-adapt-<next> _dev/dsh-feishu-adapt-<next> main`.
-2. Lift the dsh family to the new `@next`: `@deepseek-ai/dsh` pinned EXACT to the new
-   pre-release, the rest caret, and add any **new peer packages** the fresh CLI requires
-   (e.g. `@deepseek-ai/dsh-invariants`, `dsh-scope`, `dsh-timeout`) to dev/peer deps.
-3. Refresh the lockfile against the official registry (`pnpm install`, never frozen).
-4. Read the **installed** `.d.ts` for the services the plugin uses (`ctx.agents`,
-   `sessionPersistence`, `ctx.llm`, `ctx.commands`, …). Getters vs methods and renamed
-   services are the usual breakers; a wrong shape typechecks and explodes at runtime.
-5. Adjust `src/` seams so the real shape matches. Grep for renamed modes / commands
-   (rc line moves, e.g. `commands.execute` gaining a parameter) and update card labels,
-   snapshots, tests accordingly.
-6. Run the gates exactly as CI does and check every exit code: `pnpm run lint`,
-   `pnpm run typecheck`, `pnpm run build`, and `pnpm run test` with
-   `FEISHU_INT_REQUIRED=1`.
-7. If the run still fails, keep adapting; the `canary` workflow is the oracle. Never relax
-   a test to force green.
+1. `git worktree add -b feat/dsh-adapt-<latest> _dev/dsh-feishu-adapt-<latest> main`.
+2. Bump the family to the new `@latest`: `@deepseek-ai/dsh` pinned EXACT to it,
+   the rest caret `^<version>`, and add any **new peer packages** the fresh CLI
+   requires (e.g. `@deepseek-ai/dsh-invariants`, `dsh-scope`, `dsh-timeout`) to
+   dev/peer deps.
+3. Refresh the lockfile against the official registry (`pnpm install`, never
+   frozen), then `pnpm dedupe` and confirm every `@deepseek-ai/*` package
+   resolves to ONE version (`pnpm run check` enforces it).
+4. Read the **installed** `.d.ts` for the services **and the events** the plugin
+   consumes (`ctx.agents`, `sessionQuery`, `ctx.llm`, `ctx.commands`,
+   `session/event`, `agent/assistant-stream`, …). Getters vs methods, renamed
+   services, and moved event channels are the usual breakers; a wrong shape
+   typechecks and explodes (or silently renders nothing) at runtime — see
+   `docs/pitfalls.md`.
+5. Adjust `src/` seams so the real shape matches, and update card labels,
+   snapshots, and tests for renamed modes/commands.
+6. Run the gates exactly as CI does and check every exit code:
+   `node scripts/run-gates.mjs` (lint, typecheck, build, and the test gate with
+   `FEISHU_INT_REQUIRED=1`).
+7. If a run still fails, keep adapting; the Canary workflow is the oracle.
+   Never relax a test to force green.
+8. The publish itself is **human-gated**: present the release PR and stop. Only
+   after the maintainer merges it is `node scripts/release.mjs tag` run on
+   merged `main` to cut the `v*` tag → npm publish.
 
-For the **A / stable** track: cut a `release/*` branch from a commit adapted to the new dsh
-`@latest`, apply the same adaptation, bump the version, and open a "ready to release" PR.
-The publish itself is a **human-gated** two-step action — do not trigger it: the release PR
-must be reviewed and squash-merged first, and only then is `node scripts/release.mjs tag`
-run on merged `main` to cut the `v*` tag → npm publish (see docs/development.md → "Releasing").
+### 4. Refresh the label (green run, no code change)
+Update only `dsh-version.json` (`dsh.latest` = the current
+`npm view @deepseek-ai/dsh@latest version`), run
+`node scripts/render-version-note.mjs` for the README Note, and land it as a
+tiny `chore:` / `docs:` worktree PR.
 
-### 4. Refresh a label (green run, no code change)
-Update only `dsh-version.json`, e.g. set `dsh.next` to the current dsh `@next` / `dsh.stable`
-to the current `@latest`. This is a tiny `chore:` or `docs:` change in a worktree PR.
-
-### 5. Update the source of truth + README (after any adaptation)
-- Set `dsh-version.json`'s A/B to the now-verified versions.
-- Record provenance in `lastAdapted` (`track`, `by`, `at`).
-- Run `node scripts/render-version-note.mjs` to regenerate the README Notes from the JSON.
-- Commit the JSON, the README Notes, and any code/test changes **in the same PR** so the
-  curated README stays human-reviewed and never drifts from the JSON.
+### 5. Record provenance
+`lastAdapted` records who adapted what and when (`by`, `at`) — update it in the
+same PR as the adaptation (label refreshes may leave it alone).
 
 ## Limits and safety
 - Working tree + PR only; never commit to `main`, never push to `main`.
-- **Merge** of the adaptation PR and the **npm publish** (`v*` tag) are human decisions —
-  present the PR and stop. Only the diagnosis and the prepared work are yours.
-- A green canary / release-compat is proof of compatibility; a PR that merely bumps a
-  version is not. Never claim a track is "verified" unless the run is green.
-- If a run is red but looks like a **flake** (a one-off that passes on re-run), re-run it
-  once before treating it as a real break.
+- **Merge** of the adaptation/release PR and the **npm publish** (`v*` tag) are
+  human decisions — present the PR and stop.
+- A green Canary is proof of compatibility; a PR that merely bumps a version is
+  not. Never claim compatibility unless the run is green.
+- If a run looks like a **flake** (fails once, passes on re-run), re-run it once
+  before treating it as a real break.
+- Ignore the pre-release dist-tags: a newer one is NOT a reason to change
+  anything here.
 
 ## Reference
-- `dsh-version.json` — the A/B + provenance source of truth.
+- `dsh-version.json` — the single tracked version + provenance.
 - `scripts/version-track-lib.mjs` — load / validate / README-sync helpers.
-- `scripts/render-version-note.mjs` — regenerate README Notes from the JSON.
-- `scripts/check-conventions.mjs` → `checkVersionTrack()` — fails when the JSON is missing,
-  malformed, or the README Notes drift.
-- `.github/workflows/canary.yml`, `release-compat.yml`, `release.yml` — the verifiers and
-  the publish gate.
+- `scripts/render-version-note.mjs` — regenerate the README Note from the JSON.
+- `scripts/check-conventions.mjs` → `checkVersionTrack()` — fails when the JSON
+  is missing/malformed, the README Note drifts, or the CLI pin / harness peer
+  ranges stop matching the tracked version.
+- `.github/workflows/canary.yml` (main vs `@latest`), `release-compat.yml`
+  (published artifact vs `@latest`), `release.yml` (publish gate).

@@ -1,12 +1,12 @@
-name: Canary (main vs dsh@next)
+name: Canary (main vs dsh@latest)
 
-# Daily check that `main` stays adapted to the NEWEST @deepseek-ai/dsh
-# pre-release (@next dist-tag). main deliberately tracks @next (the npm
-# `latest` tag is reserved for the stable release line) — when upstream
-# publishes a newer @next (rc.9, …), this workflow lifts the whole dsh
-# family to it and runs the full gates against the fresh CLI. A red run
-# means main needs a compatibility fix for the newest dsh (e.g. rc.8's
-# commands.execute gained an images parameter).
+# Daily check that `main` stays adapted to the dsh version users actually get
+# from the npm `@latest` tag — the only compatibility promise this repo makes
+# (see docs/development.md → "Version tracks"). When upstream moves `@latest`,
+# this workflow pins the CLI to it, re-resolves the family exactly the way a
+# user's `npm i @deepseek-ai/dsh@latest` does, and runs the full gates. A red
+# run means main needs a real compatibility fix (0.1.5: the in-flight
+# `assistant/chunk` session event moved to `agent/assistant-stream`).
 #
 # Triggered on a schedule (UTC 02:00, i.e. 10:00 Beijing) and manually via
 # workflow_dispatch.
@@ -18,7 +18,7 @@ on:
 
 jobs:
   canary:
-    name: unit + integration against dsh@next
+    name: unit + integration against dsh@latest
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,21 +32,34 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      # Lift EVERY dsh-family dependency to the newest @next pre-release
-      # (not the lockfile-pinned one — main's lockfile may be a release
-      # behind @next when upstream publishes faster than we adapt). The dsh
-      # CLI bundles its sub-packages, but our direct dev/peer/runtime deps
-      # must be lifted too.
-      - name: Install with newest dsh (@next, not frozen)
+      # Emulate the user's install: the npm `@latest` CLI plus the caret
+      # resolution that CLI declares for the rest of the family. Only the dsh
+      # CLI carries a meaningful npm `latest` tag — the sub-packages still
+      # publish `latest` on ancient 0.0.1-rc.x lines — so every harness
+      # dependency is set to the caret of the CLI's `@latest` version instead
+      # of being pointed at a dist-tag. Nothing here is committed; the point is
+      # to test the combination a user gets.
+      - name: Pin the dsh family to the npm @latest CLI (not frozen)
         run: |
-          pnpm add -D @deepseek-ai/dsh@next \
-            @deepseek-ai/dsh-agent@next @deepseek-ai/dsh-llm@next \
-            @deepseek-ai/dsh-session@next \
-            @deepseek-ai/dsh-user-approval@next \
-            @deepseek-ai/dsh-user-questions@next \
-            @deepseek-ai/dsh-credentials@next \
-            @deepseek-ai/dsh-commands@next @deepseek-ai/dsh-schedule@next
+          VERSION="$(npm view @deepseek-ai/dsh@latest version)"
+          echo "dsh @latest = ${VERSION}"
+          V="${VERSION}" node -e "
+            const fs = require('node:fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            const version = process.env.V;
+            for (const section of ['devDependencies', 'peerDependencies']) {
+              for (const name of Object.keys(pkg[section] ?? {})) {
+                if (!name.startsWith('@deepseek-ai/')) continue;
+                // cordis / schemastery are versioned independently (4.x / 3.x).
+                if (name === '@deepseek-ai/cordis' || name === '@deepseek-ai/schemastery') continue;
+                const cli = name === '@deepseek-ai/dsh';
+                pkg[section][name] = cli ? version : '^' + version;
+              }
+            }
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
           pnpm install --no-frozen-lockfile
+          pnpm dedupe
 
       - name: Lint
         run: pnpm run lint

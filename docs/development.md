@@ -118,13 +118,14 @@ instead of silently skipping. The dsh CLI is a devDependency
 allowed in `pnpm-workspace.yaml` — no credentials are involved; the Feishu
 and LLM mocks above are what make the suite runnable without secrets.
 
-A separate **canary workflow** (`.github/workflows/canary.yml`) runs the
-same suite daily (UTC 02:00) and on demand against the NEWEST
-`@deepseek-ai/*` release via the `@next` dist-tag (not the lockfile-pinned
-version, and not `@latest` — for most harness packages npm `latest` still
-points at the old `0.0.1-rc.x` line). A red canary means an upstream
-breaking change reached our code; see AGENTS.md → "Adapting to a new dsh
-release".
+A separate **canary workflow** (`.github/workflows/canary.yml`) runs the same
+suite daily (UTC 02:00) and on demand against the **npm `@latest` CLI** — the
+version users actually install, not the lockfile-pinned one. It pins
+`@deepseek-ai/dsh` to `@latest` and sets the rest of the family to the caret of
+that version (pointing the sub-packages at a dist-tag would install ancient
+`0.0.1-rc.x` lines — only the CLI's `latest` tag is current). A red canary means
+an upstream breaking change reached our code; see AGENTS.md → "Adapting to a
+new dsh release".
 
 ```sh
 pnpm run build        # ensure lib/ is current (the profile links the checkout)
@@ -454,33 +455,48 @@ main (`release.yml` → "Guard").
 
 ### Version tracks
 
-dsh-feishu tracks two DSH versions, one per consumer track (they differ —
-never assume they match):
+dsh-feishu tracks **one** dsh version: **dsh `@latest`**. Both `main` (installed
+from git) and the npm `@latest` release are adapted to it, so the repo makes a
+single compatibility promise:
 
 | dsh-feishu track | Ships | Adapted for DSH | How users install (README sections) |
 |---|---|---|---|
-| `main` branch | next release's work | **dsh `@next`** (latest pre-release) | "Install from source" |
+| `main` branch | next release's work | **dsh `@latest`** | "Install from source" |
 | npm `@latest` (GitHub latest release) | the current stable release | **dsh `@latest`** | "Install from npm" |
 
-We publish only the `@latest` npm tag — there is no npm `@next` for
-dsh-feishu; users who want the newest code install from `main`. README
-carries both compatibility badges (`main` → dsh `@next`, latest release →
-dsh `@latest`), and the two tracks are verified separately:
-- `ci.yml` and the `Canary (main vs dsh@next)` workflow exercise `main`
-  against dsh `@next` (main's lockfile pins it; canary lifts to the newest
-  @next when upstream publishes faster);
-- the `Release compat (npm latest vs dsh@latest)` workflow lifts the repo
-  to dsh `@latest` — the combination the next release must ship against.
+Other dsh dist-tags — the pre-release and alpha lines — are ignored on
+purpose. Only the version a user gets from the npm `@latest` tag is a promise;
+maintaining a second promise for a pre-release line meant adapting the same
+code twice whenever that line ran ahead of `@latest` (adapt for `@latest`,
+release it, then adapt again for the pre-release) while telling users two
+different stories. A newer pre-release is not by itself a reason to change
+anything.
 
-The two adapted-for-DSH versions (the `@next` for `main`, the `@latest` for
-the npm release) are recorded declaratively in `dsh-version.json` at the repo
-root (`dsh.stable` = A, `dsh.next` = B). It is the single source of truth:
-the README Note is regenerated from it (`node scripts/render-version-note.mjs`)
-and `pnpm run check` (`checkVersionTrack()`) fails if the README Notes drift
-from it. The `dsh-version-track` skill (`.dsh/skills/dsh-version-track/`)
-diagnoses the canary / release-compat runs and adapts the code on a red run or
-refreshes a label on a green one, landing as a worktree PR (merge and npm
-publish stay human-gated).
+Only the dsh **CLI** carries a meaningful npm `latest` tag: the family's
+sub-packages publish only pre-release tags, and their own `latest` still points
+at ancient `0.0.1-rc.x` lines. "dsh `@latest`" therefore means
+`npm view @deepseek-ai/dsh@latest version`, with the sub-packages resolved by
+the carets that CLI declares — exactly what a user's
+`npm i @deepseek-ai/dsh@latest` resolves to.
+
+Verification:
+- `ci.yml` runs the gates on every push against the lockfile-pinned set;
+- the `Canary (main vs dsh@latest)` workflow pins the CLI to the npm `@latest`
+  version daily and runs the suite against that fresh combination — the oracle
+  for this track (a red run means `main` needs a compatibility fix);
+- the `Release compat (npm latest vs dsh@latest)` workflow installs the
+  PUBLISHED npm package beside `@latest` and boots it, proving the shipped
+  artifact still installs (a red run with a green Canary just means the release
+  is older than `main`).
+
+The tracked version is recorded declaratively in `dsh-version.json` at the repo
+root (`dsh.latest`), the single source of truth: the README Note is regenerated
+from it (`node scripts/render-version-note.mjs`) and `pnpm run check`
+(`checkVersionTrack()`) fails if the Note, the CLI pin in `package.json`, or a
+harness peer range drifts from it. The `dsh-version-track` skill
+(`.dsh/skills/dsh-version-track/`) diagnoses the canary / release-compat runs
+and adapts the code on a red run or refreshes the label on a green one, landing
+as a worktree PR (merge and npm publish stay human-gated).
 
 ### Releasing
 

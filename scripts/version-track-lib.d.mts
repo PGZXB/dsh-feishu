@@ -11,13 +11,12 @@
 export const VERSION_TRACK_FILE: string;
 export const VERSION_TRACK_SCHEMA: string;
 
-export function setNoteVersions(text: string, stable: string, next: string): string;
+export function setNoteVersions(text: string, latest: string): string;
+
+export function noteNamesTrackedVersion(text: string): boolean;
 
 export function loadTrack(
   root: string,
-): { error?: string; stable?: string; next?: string; raw?: Record<string, unknown> };
+): { error?: string; latest?: string; raw?: Record<string, unknown> };
 
-export function checkReadmeSync(
-  root: string,
-  track: { stable: string; next: string },
-): string[];
+export function checkReadmeSync(root: string, track: { latest: string }): string[];

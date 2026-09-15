@@ -11,11 +11,10 @@ The Feishu UI for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-har
 
 > **Note:** [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) is
 > still pre-release (`0.1.0-rc.x`) and may break between releases. dsh-feishu
-> tracks **two** dsh versions:
-> - the `main` branch (installed from git) tracks **dsh `@next`** — currently
->   **`0.1.5-rc.2`**;
-> - the npm `@latest` release tracks **dsh `@latest`** — currently
->   **`0.1.5-rc.1`**.
+> tracks **one** dsh version — **dsh `@latest`**, currently **`0.1.5-rc.1`** —
+> and verifies both the `main` branch (installed from git) and the npm
+> `@latest` release against it. Other dsh tags (including `@next`) are ignored:
+> they are not a compatibility promise.
 
 https://github.com/user-attachments/assets/e9163793-52f2-4e2c-a08a-22b27372be61
 

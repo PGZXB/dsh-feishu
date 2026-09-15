@@ -1,17 +1,19 @@
 name: Release compat (npm latest vs dsh@latest)
 
 # Daily check that the PUBLISHED npm package (@dsh-feishu/dsh-feishu@latest)
-# stays installable and bootable against the dsh @latest dist-tag — the
-# exact combination an `npm i @dsh-feishu/dsh-feishu` user gets. dsh-feishu's
-# npm @latest release tracks dsh @latest (rc.7), while main tracks dsh @next
-# (rc.8; see docs/development.md → "Publishing" → "Version tracks"); the two
-# tracks are verified separately by this workflow and the Canary workflow.
+# stays installable and bootable against the dsh @latest dist-tag — the exact
+# combination an `npm i @dsh-feishu/dsh-feishu` user gets. Both the npm
+# @latest release and main track dsh @latest (the single compatibility promise
+# this repo makes; see docs/development.md → "Version tracks"), but they are
+# checked differently: main's CODE is exercised end to end by the Canary
+# workflow, while this workflow only proves the SHIPPED artifact still
+# installs and boots beside the current @latest CLI.
 #
-# NOTE: this installs the PUBLISHED package, not the repo — main's code
-# targets dsh @next and is not expected to compile against @latest. The dsh
-# CLI bundles its own sub-packages, so only the top-level dsh package is
-# installed by @latest (the npm `latest` tags of the @deepseek-ai/* sub-
-# packages are stale 0.0.1-rc.x lines whose peers were never published).
+# NOTE: this installs the PUBLISHED package, not the repo — so a red run here
+# with a green Canary means the npm release is behind main. Only the top-level
+# dsh package is installed from @latest: the npm `latest` tags of the
+# @deepseek-ai/* sub-packages are stale 0.0.1-rc.x lines whose peers were
+# never published, so the family follows the CLI's own resolution.
 #
 # Triggered on a schedule (UTC 04:00, i.e. 12:00 Beijing) and manually via
 # workflow_dispatch.

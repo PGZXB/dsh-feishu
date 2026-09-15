@@ -11,9 +11,9 @@
 
 > **注意：** [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
 > 目前仍是预发布版本（`0.1.0-rc.x`），版本之间可能有破坏性变更。dsh-feishu
-> 跟踪**两个** dsh 版本：
-> - `main` 分支（git 安装）跟踪 **dsh `@next`**——当前为 **`0.1.5-rc.2`**；
-> - npm `@latest` release 跟踪 **dsh `@latest`**——当前为 **`0.1.5-rc.1`**。
+> 只跟踪**一个** dsh 版本——**dsh `@latest`**，当前为 **`0.1.5-rc.1`**——
+> `main` 分支（git 安装）与 npm `@latest` release 都以它为准验证；其余 dsh
+> tag（含 `@next`）一律忽略，它们不构成兼容性承诺。
 
 https://github.com/user-attachments/assets/e9163793-52f2-4e2c-a08a-22b27372be61
 
