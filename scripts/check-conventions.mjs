@@ -195,9 +195,32 @@ function checkVersionTrack() {
     return;
   }
   const errors = checkReadmeSync(ROOT, track);
+  // The label must describe what we actually ship against: the CLI
+  // devDependency is pinned to exactly the tracked version, and every harness
+  // peer range is the caret of it, so a user whose `@latest` install equals
+  // the label satisfies the published package. (@deepseek-ai/cordis and
+  // schemastery are versioned independently — 4.x / 3.x — and are skipped.)
+  const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+  const cli = pkg.devDependencies?.['@deepseek-ai/dsh'];
+  if (cli !== track.latest) {
+    errors.push(
+      `package.json devDependencies['@deepseek-ai/dsh'] is ${String(cli)} but the tracked dsh @latest is ${track.latest} — pin the CLI to the tracked version`,
+    );
+  }
+  for (const [name, range] of Object.entries(pkg.peerDependencies ?? {})) {
+    if (!name.startsWith('@deepseek-ai/')) continue;
+    if (name === '@deepseek-ai/cordis' || name === '@deepseek-ai/schemastery') continue;
+    if (range !== `^${track.latest}` && range !== track.latest) {
+      errors.push(
+        `package.json peerDependencies['${name}'] is ${range} but the tracked dsh @latest is ${track.latest} — keep the harness peer ranges on ^${track.latest}`,
+      );
+    }
+  }
   for (const error of errors) fail(error);
   if (errors.length === 0) {
-    pass(`dsh-version.json tracks dsh @latest=${track.stable} / @next=${track.next} and the README Notes match`);
+    pass(
+      `dsh-version.json tracks dsh @latest=${track.latest}; the CLI pin, the harness peer ranges and the README Notes all match`,
+    );
   }
 }
 

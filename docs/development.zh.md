@@ -76,7 +76,7 @@ scripts/              # repo tooling
 
 CI 在每次 push 时都运行该套件（两个 node 版本分支都跑）：workflow 构建 checkout、准备 profile，并以 `FEISHU_INT_REQUIRED=1` 运行测试——这样缺少前置条件会响亮地让任务失败，而不是静默跳过。dsh CLI 是 devDependency（`@deepseek-ai/dsh`），原生构建脚本（node-pty 及其同类）在 `pnpm-workspace.yaml` 中获准——不涉及任何凭据；正是上面这些 Feishu 和 LLM mock 让套件在无需密钥的情况下也能运行。
 
-另有独立的 **canary workflow**（`.github/workflows/canary.yml`）每天（UTC 02:00）及按需对最新的 `@deepseek-ai/*` 发布运行同一套件，通过 `@next` dist-tag 安装（不是 lockfile 锁定的版本，也不是 `@latest`——对多数 harness 包，npm `latest` 仍指向旧的 `0.0.1-rc.x` 线）。canary 变红意味着上游破坏性变更波及我们的代码；见 AGENTS.md → "Adapting to a new dsh release"。
+另有独立的 **canary workflow**（`.github/workflows/canary.yml`）每天（UTC 02:00）及按需对 **npm `@latest` 的 CLI**（用户真正会装的版本，不是 lockfile 锁定的那个）运行同一套件：它把 `@deepseek-ai/dsh` 钉到 `@latest`，其余家族成员设为该版本的 caret（把子包指向 dist-tag 会装到远古的 `0.0.1-rc.x` 线——只有 CLI 的 `latest` 是当前的）。canary 变红意味着上游破坏性变更波及我们的代码；见 AGENTS.md → "Adapting to a new dsh release"。
 
 ```sh
 pnpm run build        # ensure lib/ is current (the profile links the checkout)
@@ -312,21 +312,41 @@ release 分支上，它永远不会成为后续提交的祖先，于是下一次
 
 ### 版本轨道
 
-dsh-feishu 追踪两个 DSH 版本，一个消费轨道一个（两者可能不同——不要假设
-它们一致）：
+dsh-feishu 只跟踪**一个** dsh 版本：**dsh `@latest`**。`main` 分支（从 git
+安装）与 npm `@latest` release 都适配它，因此仓库只做**一个**兼容性承诺：
 
 | dsh-feishu 轨道 | 发布内容 | 适配的 DSH | 用户怎么装（README 小节） |
 |---|---|---|---|
-| `main` 分支 | 下一个 release 的工作 | **dsh `@next`**（最新预发布） | "从源码安装" |
+| `main` 分支 | 下一个 release 的工作 | **dsh `@latest`** | "从源码安装" |
 | npm `@latest`（GitHub latest release） | 当前稳定 release | **dsh `@latest`** | "从 npm 安装" |
 
-我们只发布 npm `@latest` tag——dsh-feishu 没有 npm `@next`；想要最新代码的
-用户从 `main` 安装。README 同时标注两个兼容版本（`main` → dsh `@next`，
-latest release → dsh `@latest`），两条轨道分别验证：
-- `ci.yml` 和 `Canary (main vs dsh@next)` workflow 用 dsh `@next` 验证 `main`
-  （main 的 lockfile 锁定它；canary 在上游发布更快时提升到最新的 @next）；
-- `Release compat (npm latest vs dsh@latest)` workflow 把仓库提升到
-  dsh `@latest`——下一个 release 必须适配的组合。
+其余 dsh dist-tag——预发布线与 alpha 线——**一律故意忽略**。只有用户从 npm
+`@latest` 装到的那个版本才是承诺；为预发布线再维护一个承诺，意味着只要它跑到
+`@latest` 前面，同一份代码就要适配两遍（先适配 `@latest` 并发版，再适配预发布
+线），同时还要给用户讲两套兼容故事。更新的预发布版本本身不是改动任何东西的
+理由。
+
+只有 dsh **CLI** 有真正有意义的 npm `latest` tag：家族里的子包只发布预发布
+tag，它们自己的 `latest` 仍停在远古的 `0.0.1-rc.x` 线上。所以
+"dsh `@latest`"指的是 `npm view @deepseek-ai/dsh@latest version`，子包按该
+CLI 自己声明的 caret 解析——这正是用户 `npm i @deepseek-ai/dsh@latest` 得到的
+组合。
+
+验证方式：
+- `ci.yml` 每次 push 都用 lockfile 锁定的组合跑门禁；
+- `Canary (main vs dsh@latest)` workflow 每天把 CLI 钉到 npm `@latest` 版本并
+  用这个新组合跑套件——它是该轨道的唯一裁决者（变红即 `main` 需要兼容性修复）；
+- `Release compat (npm latest vs dsh@latest)` workflow 把**已发布**的 npm 包
+  与 `@latest` 装在一起并引导，证明发布的产物仍可安装（它变红而 canary 绿，
+  只说明 release 落后于 `main`）。
+
+被跟踪的版本声明在仓库根部的 `dsh-version.json`（`dsh.latest`），它是唯一
+事实来源：README Note 由它生成（`node scripts/render-version-note.mjs`），
+`pnpm run check`（`checkVersionTrack()`）会在 Note、`package.json` 里的 CLI
+pin 或任一 harness peer 范围与它不一致时失败。`dsh-version-track` skill
+（`.dsh/skills/dsh-version-track/`）负责诊断 canary / release-compat 的结果，
+红灯时适配代码、绿灯时刷新标签，并以 worktree PR 落地（merge 与 npm 发布仍是
+人工闸门）。
 
 ### 发版步骤
 

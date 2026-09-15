@@ -10,12 +10,9 @@ English | [中文](README.zh.md)
 The Feishu UI for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) — a dsh-native plugin with a **panel-driven control console**: every slash command is a button on the ⚙️ control-panel card, approvals and questions resolve inside the chat, and one QR scan sets the whole app up.
 
 > **Note:** [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) is
-> still pre-release (`0.1.0-rc.x`) and may break between releases. dsh-feishu
-> tracks **two** dsh versions:
-> - the `main` branch (installed from git) tracks **dsh `@next`** — currently
->   **`0.1.5-rc.2`**;
-> - the npm `@latest` release tracks **dsh `@latest`** — currently
->   **`0.1.5-rc.1`**.
+> still pre-release and may break between releases. dsh-feishu is built and
+> verified against **dsh `@latest`** — currently **`0.1.5-rc.1`** — both when
+> installed from npm and from git.
 
 https://github.com/user-attachments/assets/e9163793-52f2-4e2c-a08a-22b27372be61
 

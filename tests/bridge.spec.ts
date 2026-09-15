@@ -205,7 +205,7 @@ class FakeAgentStore {
     return {
       followup,
       cancel,
-      // dsh@next Session exposes `snapshotEvents()` (an event-sourced log),
+      // The current Session exposes `snapshotEvents()` (an event-sourced log),
       // not a public `events` field. Keep `events` for older paths too.
       session: { id: sessionId, events: [], snapshotEvents: () => [] },
       // A stable scoped ctx with a minimal `on` so the real
