@@ -4,7 +4,7 @@
     "latest": "0.1.5-rc.1"
   },
   "dshFeishu": {
-    "npmLatest": "0.3.2"
+    "npmLatest": "0.3.3"
   },
   "lastAdapted": {
     "by": "dsh-version-track (dsh @latest 0.1.5-rc.1: live stream moved to agent/assistant-stream)",

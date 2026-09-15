@@ -211,7 +211,7 @@ if (phase === 'prepare') {
     `\ntag ${tag} pushed — the Release workflow publishes to npm and creates the GitHub Release.\n` +
       `after the workflow goes green:\n` +
       `  1. verify https://github.com/PGZXB/dsh-feishu/actions and the npm dist-tag;\n` +
-      `  2. bump \`dshFeishu.npmLatest\` to ${version} in dsh-version.json on main (one-line commit);\n` +
+      `  2. record \`dshFeishu.npmLatest\` = ${version} in dsh-version.json via a one-line PR (never push to main);\n` +
       `  3. skim the release's What's Changed — it must list exactly the PRs since the previous tag.`,
   );
 }
