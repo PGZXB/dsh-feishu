@@ -54,7 +54,6 @@ pnpm run build       # tsc emit to lib/ (declaration + source maps)
 src/                  # plugin source; one module per concern, each with tests
 tests/                # vitest suites (never under src/)
 docs/                 # documentation (EN + .zh.md)
-examples/             # runnable examples (profiles, configs)
 scripts/              # repo tooling
 ```
 

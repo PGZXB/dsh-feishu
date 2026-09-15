@@ -65,7 +65,6 @@ All four must pass before committing; CI runs the same four.
 src/                  # plugin source; one module per concern, each with tests
 tests/                # vitest suites (never under src/)
 docs/                 # documentation (EN + .zh.md)
-examples/             # runnable examples (profiles, configs)
 scripts/              # repo tooling
 ```
 
