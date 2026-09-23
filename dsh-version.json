@@ -4,7 +4,7 @@
     "latest": "0.1.5-rc.2"
   },
   "dshFeishu": {
-    "npmLatest": "0.3.3"
+    "npmLatest": "0.3.4"
   },
   "lastAdapted": {
     "by": "dsh-version-track (dsh @latest 0.1.5-rc.2: label + peer ranges refreshed; canary green)",
