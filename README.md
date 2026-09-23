@@ -11,7 +11,7 @@ The Feishu UI for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-har
 
 > **Note:** [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) is
 > still pre-release and may break between releases. dsh-feishu is built and
-> verified against **dsh `@latest`** — currently **`0.1.5-rc.1`** — both when
+> verified against **dsh `@latest`** — currently **`0.1.5-rc.2`** — both when
 > installed from npm and from git.
 
 https://github.com/user-attachments/assets/e9163793-52f2-4e2c-a08a-22b27372be61
