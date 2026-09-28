@@ -4,7 +4,7 @@
     "latest": "0.1.7-rc.2"
   },
   "dshFeishu": {
-    "npmLatest": "0.3.4"
+    "npmLatest": "0.3.5"
   },
   "lastAdapted": {
     "by": "dsh-version-track (dsh @latest 0.1.7-rc.2: per-producer message source kinds, flat tool/result, schedule service + provider chain, Messages-API test mock)",
