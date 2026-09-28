@@ -1,13 +1,13 @@
 {
   "schema": "dsh-feishu-version-track/v2",
   "dsh": {
-    "latest": "0.1.5-rc.2"
+    "latest": "0.1.7-rc.2"
   },
   "dshFeishu": {
     "npmLatest": "0.3.4"
   },
   "lastAdapted": {
-    "by": "dsh-version-track (dsh @latest 0.1.5-rc.2: label + peer ranges refreshed; canary green)",
-    "at": "2026-09-24T00:00:00Z"
+    "by": "dsh-version-track (dsh @latest 0.1.7-rc.2: per-producer message source kinds, flat tool/result, schedule titles, Messages-API test mock)",
+    "at": "2026-09-28T10:00:00Z"
   }
 }
