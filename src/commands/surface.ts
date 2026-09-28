@@ -429,7 +429,12 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
         }
         const now = Date.now();
         const lines = folded.active.map((record) => {
-          const view = scheduleView(record, now);
+          // dsh 0.1.7 made a stored `title` required and kept pre-title rows
+          // readable as legacy records; the view needs one, so label those
+          // explicitly instead of deriving a name from the instruction
+          // (upstream deliberately does not).
+          const titled = { ...record, title: record.title ?? t('command.schedule.untitled') };
+          const view = scheduleView(titled, now);
           const prompt = record.prompt === '' ? t('status.noPrompt') : record.prompt;
           const rule =
             record.kind === 'after'

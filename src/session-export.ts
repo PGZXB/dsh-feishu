@@ -65,8 +65,8 @@ export function sessionExportLine(event: SessionExportEvent): string {
       return `## tool\n\n${summary}`;
     }
     case 'tool/result': {
-      // The tool-result block nests its text: content[0].content; fall
-      // back to the flat content list when the block is a plain text.
+      // Older logs nest the result text (content[0].content); dsh 0.1.7
+      // writes it flat on the message. blockText handles whichever is there.
       const content = event.data?.message?.content;
       const nested = content?.[0]?.content;
       const text = blockText(nested ?? content);

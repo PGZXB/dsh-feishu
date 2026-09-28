@@ -711,27 +711,28 @@ export class StreamingCardController {
     }
     let state = this.cardStates.get(chatId);
     if (state === undefined || state.status !== 'working') {
-      // Agent-initiated turn (e.g. a fired schedule reminder): the agent
-      // injected a user message whose source is a plugin. User-initiated
-      // turns always carry a working card state already (set by beginTurn
-      // before any event), so a card-less chat receiving a plugin-sourced
-      // user message is the surface's cue to open a fresh card — otherwise
-      // the reminder's response would render nowhere.
-      if (
-        event.type === 'user/message' &&
-        event.data.source?.kind === 'plugin' &&
-        typeof event.data.source.plugin === 'string'
-      ) {
-        const plugin = event.data.source.plugin;
+      // Agent-initiated turn (e.g. a fired schedule reminder): a producer
+      // other than the human user injected a user message. dsh 0.1.7 dropped
+      // the shared `plugin` source kind for per-producer kinds (`schedule`,
+      // `compact-checkpoint`, `subagent-settled`, …, merge-extensible), and
+      // the documented consumer rule is to switch on `kind` and fall through
+      // unknowns — so match "not the human" rather than a fixed list. User
+      // initiated turns always carry a working card state already (set by
+      // beginTurn before any event), so a card-less chat receiving a
+      // producer-sourced user message is the surface's cue to open a fresh
+      // card — otherwise the reminder's response would render nowhere.
+      const producer =
+        event.type === 'user/message' ? String(event.data.source?.kind ?? 'user') : undefined;
+      if (producer !== undefined && producer !== 'user' && producer !== 'user-rpc') {
         this.host.logger.debug(
-          `streaming agent-initiated card for chat ${chatId}: plugin '${plugin}'`,
+          `streaming agent-initiated card for chat ${chatId}: source '${producer}'`,
         );
         const title =
-          plugin === 'schedule'
+          producer === 'schedule'
             ? t('controller.reminder.title')
-            : plugin === 'compact'
+            : producer === 'compact-checkpoint'
               ? t('controller.info.compacting')
-              : `⏰ ${plugin} notification`;
+              : `⏰ ${producer} notification`;
         this.cardStates.set(chatId, {
           title,
           content: '',
@@ -840,15 +841,19 @@ export class StreamingCardController {
         break;
       }
       case 'tool/result': {
-        const resultText = assistantText(event.data.message.content[0]?.content ?? []);
+        // dsh 0.1.7 carries the result's blocks and its call id on the
+        // tool-result MESSAGE itself (the old nested `content[0].content` /
+        // `content[0].toolCallId` shape is gone with the merged ContentBlock
+        // map).
+        const callId = event.data.message.toolCallId;
+        const resultText = assistantText(event.data.message.content);
         const status = event.data.error !== undefined ? 'error' : 'done';
         this.host.logger.debug(
-          `streaming tool/result ${chatId}: call ${event.data.message.content[0]?.toolCallId ?? t('panel.view.unknownSession')} -> ${status}`,
+          `streaming tool/result ${chatId}: call ${callId ?? t('panel.view.unknownSession')} -> ${status}`,
         );
         // Find the correlated tool row (also the create-fallback path source).
         const index = state.rows.findIndex(
-          (row): row is ToolRow =>
-            row.kind === 'tool' && row.id === event.data.message.content[0]?.toolCallId,
+          (row): row is ToolRow => row.kind === 'tool' && row.id === callId,
         );
         const target =
           index >= 0
