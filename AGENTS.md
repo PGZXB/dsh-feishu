@@ -240,6 +240,14 @@ When adapting:
   `assistant/chunk` left the session log for the agent-scoped
   `agent/assistant-stream` frames) still passes every settle-based test. See
   `docs/pitfalls.md` → "Live model output is not a session event".
+- Treat the **mocked wire protocol** as part of the adaptation surface. A dsh
+  release can change what a provider adapter speaks (0.1.7: the official
+  DeepSeek adapter moved to the Anthropic-style Messages API at
+  `POST /v1/messages`), and the integration mock is reached over a socket, so
+  nothing fails to compile — every turn just starts 404ing. Read the adapter's
+  own README/`lib` for the endpoint, request fields and SSE event names, and
+  port the mock in the same change. See `docs/pitfalls.md` → "The mocked wire
+  protocol is a seam too".
 - Confirm the session-log reader still parses new logs (zstd frames, `seq`
   continuity).
 - Refresh the lockfile against the official registry (npmmirror misses

@@ -410,3 +410,28 @@ The harness sandbox (and this checkout's environment) has specific rules:
   latest seen for the same attempt (a replaced/reattached lifecycle replays
   them), and treat `assistant/attempt` as "streamed but not committed" —
   it must not overwrite what the user already saw.
+
+## The mocked wire protocol is a seam too
+
+- Vendor adapters move. dsh ships the official DeepSeek adapter, but our
+  integration suites never call the real API — they point `DEEPSEEK_BASE_URL` at
+  a **mock LLM server** that has to speak whatever protocol the adapter speaks.
+  When the adapter migrated from Chat Completions to the Anthropic-style
+  Messages API (`POST /v1/messages`, `message_start` / `content_block_*` /
+  `message_delta` / `message_stop`), every turn started failing with
+  `HTTP_404: DeepSeek Messages request failed` — the mock kept answering
+  `/chat/completions`, and nothing in the type system or the unit suite noticed,
+  because the mock is reached over a socket, not through an imported type.
+- Rule: when a dsh release changes a provider adapter, treat the mock as part of
+  the adaptation surface. Check the adapter's own README/`lib` for the endpoint
+  path, the request fields and the SSE event names it consumes, and port the
+  mock in the same change. A green typecheck plus green unit tests prove nothing
+  about a wire protocol.
+- Same class of trap on the event side: dsh 0.1.7 removed the shared `plugin`
+  message-source kind in favour of per-producer kinds in a merge-extensible
+  `MessageSourceMap` (`schedule`, `compact-checkpoint`, `subagent-settled`,
+  `goal`, …). A consumer that matched the literal `'plugin'` silently stops
+  matching rather than failing to compile — the type only errors because the
+  comparison became impossible, and a cast would have hidden it. The documented
+  rule is to switch on `kind` and **fall through unknown kinds**, never to
+  enumerate the kinds that exist today.

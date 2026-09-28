@@ -355,3 +355,23 @@ harness 沙箱（以及本 checkout 的环境）有一些特定规则：
   session（`agent.session.id`）为键；同一 attempt 中 `revision` 小于已见值的帧
   必须丢弃（被替换/重连的生命周期会重放它们）；`assistant/attempt` 表示
   "已流出但未提交"，它不得覆盖用户已经看到的内容。
+
+## mock 的线上协议本身也是一道接缝
+
+- 厂商适配器会变。dsh 自带官方 DeepSeek 适配器，但我们的集成套件从不打真实
+  API——它们把 `DEEPSEEK_BASE_URL` 指向一个 **mock LLM 服务**，而这个 mock 必须
+  会说适配器所说的那套协议。当适配器从 Chat Completions 迁到 Anthropic 风格的
+  Messages API（`POST /v1/messages`，事件 `message_start` /
+  `content_block_*` / `message_delta` / `message_stop`）后，每个回合都开始以
+  `HTTP_404: DeepSeek Messages request failed` 失败：mock 还在应答
+  `/chat/completions`，而类型系统和单测都发现不了，因为 mock 是通过 socket
+  访问的，不经过导入的类型。
+- 规则：dsh 发版改动某个 provider 适配器时，把 mock 当作适配面的一部分。去读该
+  适配器自己的 README/`lib`，确认端点路径、请求字段与它消费的 SSE 事件名，并在
+  同一次改动里移植 mock。类型检查绿 + 单测绿，完全不能证明线上协议正确。
+- 事件侧同类陷阱：dsh 0.1.7 取消了通用的 `plugin` 消息来源 kind，改成各生产者
+  在可合并扩展的 `MessageSourceMap` 里各自声明（`schedule`、
+  `compact-checkpoint`、`subagent-settled`、`goal`……）。此前按字面量
+  `'plugin'` 匹配的消费方不会编译失败，而是**静默不再匹配**——类型之所以报错，
+  只是因为那个比较变得不可能，而一个 cast 就能把它藏起来。上游的规则是：对
+  `kind` 做分支并对**未知 kind 走 fallthrough**，绝不要枚举"今天存在的那些"。
