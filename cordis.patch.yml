@@ -20,6 +20,15 @@
     - id: tool-ask-user
       name: '@deepseek-ai/dsh-tool-ask-user'
 
+    # The next three rows exist for one reason: reminders are a shipped
+    # feature, and dsh 0.1.7 re-parented `dsh-schedule` onto the session
+    # business API — schedule needs `sessionController` (row 3), which needs
+    # `fileUploads` (row 2), which needs `connection` (row 1). dsh-base mounts
+    # neither of the three, and a missing link leaves the whole chain
+    # `pending`: the reminder tools never register and the agent's calls fail
+    # with `unknown tool "schedule_create"`. Do not prune them as unrelated to
+    # a Feishu surface — with them gone, reminders are gone.
+    #
     # Client-connection service (`connection`), which the upload bundle below
     # injects; part of the same 0.1.7 chain that `dsh-schedule` now needs.
     - id: client-connection
