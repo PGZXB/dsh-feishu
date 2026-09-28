@@ -119,8 +119,10 @@ function toolResultEvent(diffs?: { path: string }[], callId = 'c1'): SessionEven
       turn: 1,
       step: 1,
       message: {
-        content: [{ text: 'ok', type: 'tool-result', toolCallId: callId }],
-        source: { callId },
+        role: 'tool',
+        toolCallId: callId,
+        content: [{ type: 'text', text: 'ok' }],
+        source: { kind: 'tool', callId },
       },
       ...(diffs !== undefined ? { meta: { diffs } } : {}),
     },

@@ -120,6 +120,17 @@ export function planModeResultText(
   }
 }
 
+/** Structural subset of dsh's `ScheduleRecord`: the fields `/schedule` reads.
+ *  `kind` is one of `after` / `at` / `every` / `daily` / `weekly` / `cron`
+ *  today, but the record map stays open upstream, so it is a plain string. */
+export interface ScheduleRecordLike {
+  readonly prompt: string;
+  readonly kind: string;
+  readonly afterSeconds?: number;
+  readonly scheduledAt?: string;
+  readonly everySeconds?: number;
+}
+
 /**
  * What the surface command set needs from the rest of the surface. The
  * Bridge implements this; the command module never touches Bridge internals
@@ -138,6 +149,13 @@ export interface SurfaceCommandHost {
         readonly session: { readonly id: string };
         readonly events: readonly SessionExportEvent[];
       }>)
+    | undefined;
+  /** Durable reminder service (`@deepseek-ai/dsh-schedule`'s
+   *  `ScheduleService.list`), or `undefined` when the bundle is not mounted.
+   *  dsh 0.1.7 owns reminder storage here — folding session events by hand is
+   *  obsolete (and empty on a V4 log). */
+  readonly schedule:
+    | { list(sessionId: string): Promise<readonly ScheduleRecordLike[]> }
     | undefined;
   readonly permissionPresets: PermissionPresetService | undefined;
   readonly planMode: PlanModeService | undefined;
@@ -411,32 +429,37 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
       if (sessionId === undefined) {
         return { kind: 'error', text: t('command.error.noSession') };
       }
-      if (options.readSession === undefined) {
+      if (options.schedule === undefined) {
         return {
           kind: 'error',
           text: t('command.error.scheduleUnavailable'),
         };
       }
       try {
-        const { foldScheduleEvents, scheduleView } = await import('@deepseek-ai/dsh-schedule');
-        const log = await options.readSession(sessionId);
-        const folded = foldScheduleEvents(log.events as never);
-        if (folded.active.length === 0) {
+        const { scheduleView } = await import('@deepseek-ai/dsh-schedule');
+        const records = await options.schedule.list(sessionId);
+        if (records.length === 0) {
           return {
             kind: 'success',
             text: t('command.info.noReminders'),
           };
         }
         const now = Date.now();
-        const lines = folded.active.map((record) => {
-          const view = scheduleView(record, now);
+        const lines = records.map((record) => {
+          // The service returns full records; the seam declares only what the
+          // listing reads, so re-assert the view's own parameter type.
+          const view = scheduleView(record as Parameters<typeof scheduleView>[0], now);
           const prompt = record.prompt === '' ? t('status.noPrompt') : record.prompt;
+          // Each rule kind carries exactly one of these fields; the service is
+          // the source of truth, so render the one it filled in.
           const rule =
-            record.kind === 'after'
+            record.kind === 'after' && record.afterSeconds !== undefined
               ? t('command.schedule.rule.after', { seconds: record.afterSeconds })
-              : record.kind === 'at'
+              : record.kind === 'at' && record.scheduledAt !== undefined
                 ? t('command.schedule.rule.at', { at: record.scheduledAt })
-                : t('command.schedule.rule.every', { seconds: record.everySeconds });
+                : record.kind === 'every' && record.everySeconds !== undefined
+                  ? t('command.schedule.rule.every', { seconds: record.everySeconds })
+                  : t('command.schedule.rule.recurring');
           return `${rule} · ${prompt} (${view.state})`;
         });
         return { kind: 'success', text: `${t('command.schedule.title')}\n${lines.join('\n')}` };

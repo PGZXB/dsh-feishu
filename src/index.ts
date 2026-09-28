@@ -46,6 +46,7 @@ import {
 } from './bridge.js';
 import type { AssistantStreamFrameLike } from './cards/StreamingCardController.js';
 import { StreamingCardManager } from './cards/streaming.js';
+import type { ScheduleRecordLike } from './commands/surface.js';
 import type { CommandResult } from './commands.js';
 import { consoleExporter } from './console-exporter.js';
 import type { FeishuTransport } from './feishu/types.js';
@@ -226,6 +227,11 @@ type WorkspaceRegistryLike = {
  * compiles without a dependency on the query package; `ctx.get('sessionQuery')`
  * returns the full engine at runtime.
  */
+/** Structural subset of dsh's `ScheduleService` (`ctx.schedule`). */
+type ScheduleServiceLike = {
+  list(request: { sessionId: unknown }): Promise<unknown>;
+};
+
 type SessionQueryLike = {
   listSessions(signal?: AbortSignal): Promise<
     readonly {
@@ -574,6 +580,19 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
         readonly session: { readonly id: string };
         readonly events: readonly SessionExportEvent[];
       }>;
+    },
+    // Durable reminder seam: dsh 0.1.7 owns reminder storage in the
+    // `schedule` service, so `/schedule` lists through it (folding session
+    // events by hand is obsolete and comes back empty on a V4 log). Resolved
+    // lazily — the bundle may mount after this bridge is constructed.
+    schedule: {
+      list: async (sessionId) => {
+        const service = ctx.get('schedule') as ScheduleServiceLike | undefined;
+        if (service === undefined || typeof service.list !== 'function') {
+          throw new Error('schedule service unavailable');
+        }
+        return (await service.list({ sessionId })) as readonly ScheduleRecordLike[];
+      },
     },
     // Host session-management seam (dsh web parity for rename/archive). The
     // Session rename/archive seams: `sessionTitle` is mounted by dsh-base;

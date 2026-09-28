@@ -1821,14 +1821,14 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
           : undefined;
       expect(
         pickerSelect && 'options' in pickerSelect ? pickerSelect.options.map((o) => o.value) : [],
-      ).toContain('deepseek-official/deepseek-v4-flash');
+      ).toContain('deepseek-official/deepseek-flash');
       // The preselected current is whatever the persisted default is — it
       // must be a catalog member (the picker never preselects an unknown).
       const initialOption =
         pickerSelect && 'initial_option' in pickerSelect ? pickerSelect.initial_option : undefined;
       const optionValues =
         pickerSelect && 'options' in pickerSelect ? pickerSelect.options.map((o) => o.value) : [];
-      expect(optionValues).toContain('deepseek-official/deepseek-v4-flash');
+      expect(optionValues).toContain('deepseek-official/deepseek-flash');
       expect(optionValues).toContain(initialOption ?? 'no-initial');
 
       // Pick another model through the dropdown option → default saved.
@@ -1856,15 +1856,13 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         chatId,
         operatorOpenId: 'ou_mock',
         value: { kind: 'model-pick' },
-        option: 'deepseek-official/deepseek-v4-flash',
+        option: 'deepseek-official/deepseek-flash',
       });
       await waitFor(
         'the model-restore result card',
         () =>
           resultCardTexts().some((t) =>
-            t.includes(
-              'Model set to deepseek-official · deepseek-v4-flash (this session + default)',
-            ),
+            t.includes('Model set to deepseek-official · deepseek-flash (this session + default)'),
           ),
         30_000,
       );
@@ -2494,10 +2492,13 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
       await expectText(`chat: ${chatId}`, 'the /status text');
       sendMessage(chatId, '/nope');
       await expectText('Unknown command /nope', 'the unknown-command text');
-      // Typed /model sets the default directly (no picker needed).
-      sendMessage(chatId, '/model deepseek-official/deepseek-v4-flash');
+      // Typed /model sets the default directly (no picker needed). Use the
+      // catalog's flash id: dsh persists the default into the shared profile,
+      // so leaving an out-of-catalog id here would break the NEXT run's picker
+      // assertion that the deployment default is a catalog member.
+      sendMessage(chatId, '/model deepseek-official/deepseek-flash');
       await expectText(
-        'Model set to deepseek-official · deepseek-v4-flash (this session + default)',
+        'Model set to deepseek-official · deepseek-flash (this session + default)',
         'the /model text',
       );
       // The real harness /goal: create then view.

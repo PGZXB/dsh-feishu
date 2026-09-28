@@ -974,8 +974,17 @@ describe.skipIf(!integrationReady)('scenario integration (real process)', () => 
    *  turn renders as a fresh '⏰ Reminder' card; /schedule lists the
    *  still-active `every`. The first-turn scripts are duplicated because the
    *  per-session title-generation completion consumes one script at an
-   *  unpredictable point — the duplicated tool calls guarantee the creates. */
+   *  unpredictable point — the duplicated tool calls guarantee the creates.
+   *  dsh 0.1.7 made `title` a required `schedule_create` argument, so every
+   *  scripted call must carry one or the tool rejects the call. */
   it('schedule reminders: agent-created, fires to a Reminder card, /schedule lists', async () => {
+    // dsh 0.1.7 keeps reminders as durable HOST state in the shared profile
+    // home (0.1.5 kept them in the session log). A leftover `every` reminder
+    // from an earlier run therefore keeps firing into unrelated tests — wipe
+    // the store before and after this case (test-side state is part of the
+    // test; see AGENTS.md).
+    const scheduleStore = join(DSH_HOME, 'storages', 'schedule.json');
+    rmSync(scheduleStore, { force: true });
     try {
       mock?.setScripts([
         [
@@ -984,7 +993,7 @@ describe.skipIf(!integrationReady)('scenario integration (real process)', () => 
               index: 0,
               id: 'call-sched-every-1',
               name: 'schedule_create',
-              arguments: '{"prompt":"status ping","every_seconds":300}',
+              arguments: '{"title":"Status ping","prompt":"status ping","every_seconds":300}',
             },
           },
         ],
@@ -994,7 +1003,7 @@ describe.skipIf(!integrationReady)('scenario integration (real process)', () => 
               index: 0,
               id: 'call-sched-every-2',
               name: 'schedule_create',
-              arguments: '{"prompt":"status ping","every_seconds":300}',
+              arguments: '{"title":"Status ping","prompt":"status ping","every_seconds":300}',
             },
           },
         ],
@@ -1005,7 +1014,7 @@ describe.skipIf(!integrationReady)('scenario integration (real process)', () => 
               index: 0,
               id: 'call-sched-after-1',
               name: 'schedule_create',
-              arguments: '{"prompt":"quick check","after_seconds":2}',
+              arguments: '{"title":"Quick check","prompt":"quick check","after_seconds":2}',
             },
           },
         ],
@@ -1062,7 +1071,9 @@ describe.skipIf(!integrationReady)('scenario integration (real process)', () => 
           ),
         30_000,
       );
+      rmSync(scheduleStore, { force: true });
     } catch (error) {
+      rmSync(scheduleStore, { force: true });
       failWithLogs(error);
     }
   }, 240_000);

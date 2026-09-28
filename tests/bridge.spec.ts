@@ -245,6 +245,7 @@ function makeHarness(
     unknownCommand?: 'error' | 'passthrough';
     repoRoots?: readonly string[];
     listSessions?: () => Promise<readonly SessionListRow[] | undefined>;
+    schedule?: { list(sessionId: string): Promise<readonly { prompt: string; kind: string }[]> };
     permissionPresets?: PermissionPresetService;
     planMode?: PlanModeService;
     agentDefaultModel?: AgentDefaultModelService;
@@ -305,6 +306,7 @@ function makeHarness(
     ...(options.unknownCommand !== undefined ? { unknownCommand: options.unknownCommand } : {}),
     ...(options.repoRoots !== undefined ? { repoRoots: options.repoRoots } : {}),
     ...(options.listSessions !== undefined ? { listSessions: options.listSessions } : {}),
+    ...(options.schedule !== undefined ? { schedule: options.schedule } : {}),
     ...(options.permissionPresets !== undefined
       ? { permissionPresets: options.permissionPresets }
       : {}),
@@ -753,10 +755,10 @@ describe('Bridge', () => {
         turn: 0,
         step: 0,
         message: {
-          role: 'user',
-          content: [
-            { type: 'tool-result', toolCallId: 'call-1', content: [{ type: 'text', text: 'ok' }] },
-          ],
+          role: 'tool',
+          toolCallId: 'call-1',
+          content: [{ type: 'text', text: 'ok' }],
+          source: { kind: 'tool', callId: 'call-1' },
         },
       },
     } as unknown as SessionEvent);
@@ -865,10 +867,10 @@ describe('Bridge', () => {
         turn: 0,
         step: 0,
         message: {
-          role: 'user',
-          content: [
-            { type: 'tool-result', toolCallId: 'call-1', content: [{ type: 'text', text: 'ok' }] },
-          ],
+          role: 'tool',
+          toolCallId: 'call-1',
+          content: [{ type: 'text', text: 'ok' }],
+          source: { kind: 'tool', callId: 'call-1' },
         },
       },
     } as unknown as SessionEvent);
@@ -4536,7 +4538,7 @@ describe('/feishu-status diagnostic card', () => {
 });
 
 describe('agent-initiated turns (schedule reminders)', () => {
-  function pluginUserMessage(plugin = 'schedule'): SessionEvent {
+  function producerUserMessage(sourceKind = 'schedule'): SessionEvent {
     return {
       type: 'user/message',
       seq: 1,
@@ -4545,7 +4547,7 @@ describe('agent-initiated turns (schedule reminders)', () => {
         id: 'reminder-1',
         role: 'user',
         content: [{ type: 'text', text: 'reminder_prompt_json: {"prompt":"check the build"}' }],
-        source: { kind: 'plugin', plugin },
+        source: { kind: sourceKind },
       },
     } as unknown as SessionEvent;
   }
@@ -4564,10 +4566,10 @@ describe('agent-initiated turns (schedule reminders)', () => {
     } as unknown as SessionEvent;
   }
 
-  it('renders a plugin-sourced (reminder) turn on a fresh card', async () => {
+  it('renders a producer-sourced (schedule reminder) turn on a fresh card', async () => {
     const h = makeHarness({ throttleMs: 0 });
     h.sessionMap.set('oc_chat', 'feishu-session-1');
-    await h.bridge.handleEvent('feishu-session-1', pluginUserMessage());
+    await h.bridge.handleEvent('feishu-session-1', producerUserMessage());
     await h.emitStream('feishu-session-1', chunkEvent('reminder answer'));
     await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
     const opened = h.transport.sentCards.at(-1);
@@ -4586,10 +4588,57 @@ describe('agent-initiated turns (schedule reminders)', () => {
     expect(h.transport.sentCards).toHaveLength(0);
   });
 
-  it('a non-schedule plugin still opens a card with a generic title', async () => {
+  it('does not open a card for a user-rpc (web client) message either', async () => {
     const h = makeHarness({ throttleMs: 0 });
     h.sessionMap.set('oc_chat', 'feishu-session-1');
-    await h.bridge.handleEvent('feishu-session-1', pluginUserMessage('some-other-plugin'));
+    await h.bridge.handleEvent('feishu-session-1', {
+      type: 'user/message',
+      seq: 1,
+      time: 0,
+      data: {
+        id: 'rpc-1',
+        role: 'user',
+        content: [{ type: 'text', text: 'typed in the web UI' }],
+        source: { kind: 'user-rpc' },
+      },
+    } as unknown as SessionEvent);
+    expect(h.transport.sentCards).toHaveLength(0);
+  });
+
+  it('falls through an unknown producer kind (the source map is merge-extensible)', async () => {
+    // dsh 0.1.7 replaced the shared `plugin` kind with per-producer kinds and
+    // documents that consumers switch on `kind` and fall through unknowns; a
+    // producer this surface has never heard of must still get a card.
+    const h = makeHarness({ throttleMs: 0 });
+    h.sessionMap.set('oc_chat', 'feishu-session-1');
+    await h.bridge.handleEvent('feishu-session-1', producerUserMessage('subagent-settled'));
+    await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
+    expect(h.transport.sentCards.at(-1)?.header?.title.content).toBe(
+      '⏰ subagent-settled notification',
+    );
+  });
+
+  it('a compact-checkpoint source opens the Compacting card', async () => {
+    const h = makeHarness({ throttleMs: 0 });
+    h.sessionMap.set('oc_chat', 'feishu-session-1');
+    await h.bridge.handleEvent('feishu-session-1', {
+      type: 'user/message',
+      seq: 1,
+      time: 0,
+      data: {
+        id: 'checkpoint-1',
+        role: 'user',
+        content: [{ type: 'text', text: 'compact checkpoint' }],
+        source: { kind: 'compact-checkpoint' },
+      },
+    } as unknown as SessionEvent);
+    expect(h.transport.sentCards.at(-1)?.header?.title.content).toBe('🧹 Compacting…');
+  });
+
+  it('an unknown producer kind still opens a card with a generic title', async () => {
+    const h = makeHarness({ throttleMs: 0 });
+    h.sessionMap.set('oc_chat', 'feishu-session-1');
+    await h.bridge.handleEvent('feishu-session-1', producerUserMessage('some-other-plugin'));
     await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
     expect(h.transport.sentCards.at(-1)?.header?.title.content).toBe(
       '⏰ some-other-plugin notification',
@@ -4599,9 +4648,9 @@ describe('agent-initiated turns (schedule reminders)', () => {
 
 describe('/schedule reminder listing', () => {
   it('reports no reminders when the session has none', async () => {
-    const h = makeHarness({
-      readSession: async () => ({ session: { id: 'feishu-session-1' }, events: [] }),
-    });
+    // dsh 0.1.7 keeps reminders in the `schedule` service, so the listing asks
+    // it rather than folding session events.
+    const h = makeHarness({ schedule: { list: async () => [] } });
     await h.bridge.handleMessage(message());
     await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: '/schedule' }));
     expect(h.transport.sentTexts.some((t) => t.text.includes('No active reminders'))).toBe(true);
@@ -4660,7 +4709,7 @@ describe('compaction lifecycle (user report regression)', () => {
         id: 'checkpoint-1',
         role: 'user',
         content: [{ type: 'text', text: 'compact checkpoint' }],
-        source: { kind: 'plugin', plugin: 'compact' },
+        source: { kind: 'compact-checkpoint' },
       },
     } as unknown as SessionEvent;
   }
