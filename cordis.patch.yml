@@ -20,6 +20,19 @@
     - id: tool-ask-user
       name: '@deepseek-ai/dsh-tool-ask-user'
 
+    # Client-connection service (`connection`), which the upload bundle below
+    # injects; part of the same 0.1.7 chain that `dsh-schedule` now needs.
+    - id: client-connection
+      name: '@deepseek-ai/dsh-client-connection'
+
+    # Host storage/staged-receipt service for uploads. dsh 0.1.7's
+    # `api-session-controller` below injects `fileUploads`, which only this
+    # bundle provides; without it the controller stays pending and the
+    # reminder scheduler never activates (`unknown tool "schedule_create"`).
+    # It injects nothing itself, so it is the root of this chain.
+    - id: client-file-upload
+      name: '@deepseek-ai/dsh-client-file-upload'
+
     # The Session business API owner. dsh 0.1.7's `dsh-schedule` injects
     # `sessionController`, which only this bundle provides — without it the
     # schedule row below stays `pending (waiting for service:
