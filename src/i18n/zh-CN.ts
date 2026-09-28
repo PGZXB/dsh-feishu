@@ -301,7 +301,6 @@ export const zhMessages: Record<MessageKey, string> = {
   'command.schedule.title': '活跃提醒：',
   'command.schedule.rule.after': '{seconds} 秒后',
   'command.schedule.rule.at': '于 {at}',
-  'command.schedule.untitled': '（未命名）',
   'command.schedule.rule.recurring': '循环',
   'command.schedule.rule.every': '每 {seconds} 秒',
 
