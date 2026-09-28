@@ -47,6 +47,35 @@ function resolveDshBin(): string | undefined {
 }
 
 /** Read every outbox record, oldest first. */
+/**
+ * Models carried by the mock's requests once the set has STOPPED growing.
+ *
+ * A turn's completion and the new-session title generation are separate
+ * requests, and a wait for the finished card can be satisfied before the
+ * second one arrives — reading the models mid-flight made the #62 assertion
+ * below flaky (green locally, red on slower CI runners). Waiting for the
+ * count to hold still keeps the assertion's intent (EVERY completion of this
+ * process carries the saved model) without racing it.
+ *
+ * @param server - the mock LLM server under test.
+ * @returns the requested model ids, oldest first.
+ */
+async function settledRequestModels(server: MockLlmServer): Promise<string[]> {
+  const modelsOf = (): string[] =>
+    server
+      .requestBodies()
+      .map((body) => (body as { model?: unknown }).model)
+      .filter((model): model is string => typeof model === 'string');
+  let previous = -1;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const count = server.completionRequests();
+    if (count > 0 && count === previous) return modelsOf();
+    previous = count;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return modelsOf();
+}
+
 function readOutbox(): MemoryOutboxRecord[] {
   let files: string[];
   try {
@@ -1934,15 +1963,15 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
       );
       // Every completion this agent issues — the turn's request(s) and the
       // new-session title generation — must carry the SAVED model, never the
-      // dsh-base entry default. Assert on ANY request, not just the last:
-      // request ordering vs the title-generation completion is not stable.
-      expect(server.completionRequests()).toBeGreaterThanOrEqual(1);
-      const models = server
-        .requestBodies()
-        .map((body) => (body as { model?: unknown }).model)
-        .filter((model): model is string => typeof model === 'string');
+      // dsh-base entry default. Assert on the SETTLED request set: request
+      // ordering vs the title-generation completion is not stable, and
+      // reading it mid-flight is what made this case flaky.
+      const models = await settledRequestModels(server);
       expect(models.length).toBeGreaterThanOrEqual(1);
-      expect(models.every((model) => model === 'deepseek-v4-pro')).toBe(true);
+      expect(
+        models.every((model) => model === 'deepseek-v4-pro'),
+        `requested models: ${JSON.stringify(models)}`,
+      ).toBe(true);
     } catch (error) {
       throw new Error(
         `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
