@@ -46,6 +46,7 @@ import {
 } from './bridge.js';
 import type { AssistantStreamFrameLike } from './cards/StreamingCardController.js';
 import { StreamingCardManager } from './cards/streaming.js';
+import type { ScheduleRecordLike } from './commands/surface.js';
 import type { CommandResult } from './commands.js';
 import { consoleExporter } from './console-exporter.js';
 import type { FeishuTransport } from './feishu/types.js';
@@ -590,14 +591,7 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
         if (service === undefined || typeof service.list !== 'function') {
           throw new Error('schedule service unavailable');
         }
-        return (await service.list({ sessionId })) as readonly {
-          readonly title?: string;
-          readonly prompt: string;
-          readonly kind: string;
-          readonly afterSeconds?: number;
-          readonly scheduledAt?: string;
-          readonly everySeconds?: number;
-        }[];
+        return (await service.list({ sessionId })) as readonly ScheduleRecordLike[];
       },
     },
     // Host session-management seam (dsh web parity for rename/archive). The

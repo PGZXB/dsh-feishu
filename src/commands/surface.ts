@@ -120,21 +120,22 @@ export function planModeResultText(
   }
 }
 
-/**
- * What the surface command set needs from the rest of the surface. The
- * Bridge implements this; the command module never touches Bridge internals
- * directly (structural types avoid a circular import).
- */
-/** Structural subset of dsh's `ScheduleRecord`: the fields `/schedule` lists. */
+/** Structural subset of dsh's `ScheduleRecord`: the fields `/schedule` reads.
+ *  `kind` is one of `after` / `at` / `every` / `daily` / `weekly` / `cron`
+ *  today, but the record map stays open upstream, so it is a plain string. */
 export interface ScheduleRecordLike {
-  readonly title?: string;
   readonly prompt: string;
-  readonly kind: 'after' | 'at' | 'every' | 'daily' | 'weekly' | 'cron' | string;
+  readonly kind: string;
   readonly afterSeconds?: number;
   readonly scheduledAt?: string;
   readonly everySeconds?: number;
 }
 
+/**
+ * What the surface command set needs from the rest of the surface. The
+ * Bridge implements this; the command module never touches Bridge internals
+ * directly (structural types avoid a circular import).
+ */
 export interface SurfaceCommandHost {
   readonly transport: FeishuTransport;
   readonly sessionMap: SessionMap;
@@ -445,7 +446,9 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
         }
         const now = Date.now();
         const lines = records.map((record) => {
-          const view = scheduleView(record as never, now);
+          // The service returns full records; the seam declares only what the
+          // listing reads, so re-assert the view's own parameter type.
+          const view = scheduleView(record as Parameters<typeof scheduleView>[0], now);
           const prompt = record.prompt === '' ? t('status.noPrompt') : record.prompt;
           // Each rule kind carries exactly one of these fields; the service is
           // the source of truth, so render the one it filled in.

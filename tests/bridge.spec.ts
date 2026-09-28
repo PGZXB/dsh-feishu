@@ -4538,7 +4538,7 @@ describe('/feishu-status diagnostic card', () => {
 });
 
 describe('agent-initiated turns (schedule reminders)', () => {
-  function pluginUserMessage(plugin = 'schedule'): SessionEvent {
+  function producerUserMessage(sourceKind = 'schedule'): SessionEvent {
     return {
       type: 'user/message',
       seq: 1,
@@ -4547,7 +4547,7 @@ describe('agent-initiated turns (schedule reminders)', () => {
         id: 'reminder-1',
         role: 'user',
         content: [{ type: 'text', text: 'reminder_prompt_json: {"prompt":"check the build"}' }],
-        source: { kind: plugin },
+        source: { kind: sourceKind },
       },
     } as unknown as SessionEvent;
   }
@@ -4566,10 +4566,10 @@ describe('agent-initiated turns (schedule reminders)', () => {
     } as unknown as SessionEvent;
   }
 
-  it('renders a plugin-sourced (reminder) turn on a fresh card', async () => {
+  it('renders a producer-sourced (schedule reminder) turn on a fresh card', async () => {
     const h = makeHarness({ throttleMs: 0 });
     h.sessionMap.set('oc_chat', 'feishu-session-1');
-    await h.bridge.handleEvent('feishu-session-1', pluginUserMessage());
+    await h.bridge.handleEvent('feishu-session-1', producerUserMessage());
     await h.emitStream('feishu-session-1', chunkEvent('reminder answer'));
     await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
     const opened = h.transport.sentCards.at(-1);
@@ -4611,7 +4611,7 @@ describe('agent-initiated turns (schedule reminders)', () => {
     // producer this surface has never heard of must still get a card.
     const h = makeHarness({ throttleMs: 0 });
     h.sessionMap.set('oc_chat', 'feishu-session-1');
-    await h.bridge.handleEvent('feishu-session-1', pluginUserMessage('subagent-settled'));
+    await h.bridge.handleEvent('feishu-session-1', producerUserMessage('subagent-settled'));
     await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
     expect(h.transport.sentCards.at(-1)?.header?.title.content).toBe(
       '⏰ subagent-settled notification',
@@ -4635,10 +4635,10 @@ describe('agent-initiated turns (schedule reminders)', () => {
     expect(h.transport.sentCards.at(-1)?.header?.title.content).toBe('🧹 Compacting…');
   });
 
-  it('a non-schedule plugin still opens a card with a generic title', async () => {
+  it('an unknown producer kind still opens a card with a generic title', async () => {
     const h = makeHarness({ throttleMs: 0 });
     h.sessionMap.set('oc_chat', 'feishu-session-1');
-    await h.bridge.handleEvent('feishu-session-1', pluginUserMessage('some-other-plugin'));
+    await h.bridge.handleEvent('feishu-session-1', producerUserMessage('some-other-plugin'));
     await h.bridge.handleEvent('feishu-session-1', turnEndEvent());
     expect(h.transport.sentCards.at(-1)?.header?.title.content).toBe(
       '⏰ some-other-plugin notification',

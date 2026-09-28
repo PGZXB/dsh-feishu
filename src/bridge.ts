@@ -363,7 +363,6 @@ export interface BridgeOptions {
   readonly schedule?: {
     list(sessionId: string): Promise<
       readonly {
-        readonly title?: string;
         readonly prompt: string;
         readonly kind: string;
         readonly afterSeconds?: number;
@@ -371,11 +370,12 @@ export interface BridgeOptions {
         readonly everySeconds?: number;
       }[]
     >;
-  } /**
+  };
+  /**
    * Session-title seam (`ctx.sessionTitle`, mounted by dsh-base): renames a
    * live session durably (`session/title` event, web-visible). Absent, the
    * detail view hides the Rename button.
-   */;
+   */
   readonly sessionTitle?: {
     rename(session: unknown, title: string): unknown;
   };
