@@ -7,7 +7,7 @@
     "npmLatest": "0.3.4"
   },
   "lastAdapted": {
-    "by": "dsh-version-track (dsh @latest 0.1.7-rc.2: per-producer message source kinds, flat tool/result, schedule titles, Messages-API test mock)",
+    "by": "dsh-version-track (dsh @latest 0.1.7-rc.2: per-producer message source kinds, flat tool/result, schedule service + provider chain, Messages-API test mock)",
     "at": "2026-09-28T10:00:00Z"
   }
 }
