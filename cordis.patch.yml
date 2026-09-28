@@ -20,6 +20,15 @@
     - id: tool-ask-user
       name: '@deepseek-ai/dsh-tool-ask-user'
 
+    # The Session business API owner. dsh 0.1.7's `dsh-schedule` injects
+    # `sessionController`, which only this bundle provides — without it the
+    # schedule row below stays `pending (waiting for service:
+    # sessionController)` and registers no tools (the agent's create/list
+    # calls fail with an unknown tool). dsh-base mounts `api-gateway` but
+    # not this controller.
+    - id: api-session-controller
+      name: '@deepseek-ai/dsh-api-session-controller'
+
     # Agent-scoped durable reminders (after / at / every): the model creates
     # them in chat ("remind me in 5 minutes"), and a fired reminder wakes the
     # agent, whose response the surface renders as an '⏰ Reminder' card
