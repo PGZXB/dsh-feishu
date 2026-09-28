@@ -314,6 +314,7 @@ export const enMessages = {
   'command.schedule.rule.after': 'after {seconds}s',
   'command.schedule.rule.at': 'at {at}',
   'command.schedule.untitled': '(untitled)',
+  'command.schedule.rule.recurring': 'recurring',
   'command.schedule.rule.every': 'every {seconds}s',
 
   // ── Command / panel-action feedback ─────────────────────────────────────

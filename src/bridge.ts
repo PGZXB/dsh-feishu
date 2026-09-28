@@ -357,11 +357,25 @@ export interface BridgeOptions {
     readonly session: { readonly id: string };
     readonly events: readonly SessionExportEvent[];
   }>;
-  /**
+
+  /** Durable reminder service (`ctx.schedule.list`) for `/schedule`, or
+   *  `undefined` when the schedule bundle is not mounted. */
+  readonly schedule?: {
+    list(sessionId: string): Promise<
+      readonly {
+        readonly title?: string;
+        readonly prompt: string;
+        readonly kind: string;
+        readonly afterSeconds?: number;
+        readonly scheduledAt?: string;
+        readonly everySeconds?: number;
+      }[]
+    >;
+  } /**
    * Session-title seam (`ctx.sessionTitle`, mounted by dsh-base): renames a
    * live session durably (`session/title` event, web-visible). Absent, the
    * detail view hides the Rename button.
-   */
+   */;
   readonly sessionTitle?: {
     rename(session: unknown, title: string): unknown;
   };
@@ -2305,6 +2319,9 @@ export class Bridge {
       },
       get readSession() {
         return bridge.options.readSession;
+      },
+      get schedule() {
+        return bridge.options.schedule;
       },
       get permissionPresets() {
         return bridge.options.permissionPresets;
