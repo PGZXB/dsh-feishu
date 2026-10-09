@@ -74,6 +74,32 @@ async function waitFor(
   }
 }
 
+/**
+ * Wait until `file` exists AND holds `expected` text.
+ *
+ * Waiting for existence alone races the writer: the surface creates the
+ * destination before it streams the bytes, so a read straight after
+ * `existsSync` can come back empty (CI caught exactly that in the
+ * repeated-name case). Waiting for the contents waits for the state the
+ * assertions below describe, which keeps them honest.
+ *
+ * @param file - absolute path to watch.
+ * @param expected - exact text the file must hold.
+ */
+async function waitForFileContents(file: string, expected: string): Promise<void> {
+  await waitFor(
+    `${file} to hold ${JSON.stringify(expected)}`,
+    () => {
+      try {
+        return readFileSync(file, 'utf8') === expected;
+      } catch {
+        return false;
+      }
+    },
+    10_000,
+  );
+}
+
 const dshBin = resolveDshBin();
 const profileReady = existsSync(join(PROFILE_DIR, 'package.json'));
 const built = existsSync(join(REPO_ROOT, 'lib', 'index.js'));
@@ -331,7 +357,7 @@ describe.skipIf(!integrationReady)('integration > inbound-attachments', () => {
       'file-1.txt',
     );
     try {
-      await waitFor('the saved attachment file on disk', () => existsSync(savedFile), 10_000);
+      await waitForFileContents(savedFile, content);
     } catch (error) {
       throw new Error(`${String(error)}\n--- dsh stderr ---\n${stderr}`);
     }
@@ -392,11 +418,7 @@ describe.skipIf(!integrationReady)('integration > inbound-attachments', () => {
     const dir = join(INT_CWD, '.dsh_feishu', 'attachments', 'cli_mock_app', chatId);
     sendMessage(chatId, '', [{ kind: 'file', key: 'file-a', name: 'report.txt' }], 'om-dedupe-1');
     try {
-      await waitFor(
-        'the first named file on disk',
-        () => existsSync(join(dir, 'report.txt')),
-        10_000,
-      );
+      await waitForFileContents(join(dir, 'report.txt'), contentA);
     } catch (error) {
       throw new Error(`${String(error)}\n--- dsh stderr ---\n${stderr}`);
     }
@@ -404,11 +426,7 @@ describe.skipIf(!integrationReady)('integration > inbound-attachments', () => {
     // Now the second, same-named file in the same chat → deduped.
     sendMessage(chatId, '', [{ kind: 'file', key: 'file-b', name: 'report.txt' }], 'om-dedupe-2');
     try {
-      await waitFor(
-        'the deduped second file on disk',
-        () => existsSync(join(dir, 'report(1).txt')),
-        10_000,
-      );
+      await waitForFileContents(join(dir, 'report(1).txt'), contentB);
     } catch (error) {
       throw new Error(`${String(error)}\n--- dsh stderr ---\n${stderr}`);
     }

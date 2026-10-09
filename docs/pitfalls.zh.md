@@ -375,3 +375,18 @@ harness 沙箱（以及本 checkout 的环境）有一些特定规则：
   `'plugin'` 匹配的消费方不会编译失败，而是**静默不再匹配**——类型之所以报错，
   只是因为那个比较变得不可能，而一个 cast 就能把它藏起来。上游的规则是：对
   `kind` 做分支并对**未知 kind 走 fallthrough**，绝不要枚举"今天存在的那些"。
+
+## dsh 发版可能按 peer 范围卡住安装
+
+dsh 0.2.0 增加了安装期兼容闸门：`dsh plugin add` 会拒绝 `peerDependencies`
+不接受当前 dsh 版本的 bundle，并明确报错（`installation rejected: Plugin
+@dsh-feishu/dsh-feishu@0.3.5 is incompatible with dsh 0.2.0-rc.2`）。npm 本身
+能正常装上——拒绝发生在 dsh 装载 bundle 时——所以只有 release-compat
+workflow（已发布产物 vs dsh `@latest`）能看到它。
+
+- 症状：canary 是绿的（源码树仍然可用），但已发布的包根本装不上，于是所有用
+  dsh `@latest` 的用户都被卡住，直到发一个新版本。
+- 规则：dsh `@latest` 前进时，版本轨道刷新（label + CLI pin + harness peer
+  范围）是一份**安装期契约**，不是徽章。刷新后要看 release-compat
+  workflow；若因这个原因变红，就必须发版——已发布的 peer 范围只能通过新版本
+  改变。

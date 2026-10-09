@@ -542,9 +542,11 @@ point at merged main, so an accidental side-branch tag cannot ship.
 After the workflow goes green:
 
 1. verify the Actions run and the npm dist-tag;
-2. record the published version in `dshFeishu.npmLatest` (`dsh-version.json`)
-   through a one-line PR — it records a published fact, so it follows the
-   publish, and main still takes changes through review only;
+2. make sure `dshFeishu.npmLatest` (`dsh-version.json`) names the version this
+   release publishes. It can travel inside the release PR itself (as v0.3.6
+   did) or follow as a one-line PR after the publish; either way it records a
+   published fact, so if the workflow fails, correct the field before the next
+   release. Nothing but review may touch `main`;
 3. skim the release's What's Changed — with the ancestry intact it lists
    exactly the PRs since the previous tag; if you ever must tag off main
    for a hotfix from a release branch instead, regenerate the notes with an
