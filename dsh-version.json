@@ -4,7 +4,7 @@
     "latest": "0.2.0-rc.2"
   },
   "dshFeishu": {
-    "npmLatest": "0.3.5"
+    "npmLatest": "0.3.6"
   },
   "lastAdapted": {
     "by": "dsh-version-track (dsh @latest 0.2.0-rc.2: label + peer ranges refreshed; canary green on main, published 0.3.5 was refused by dsh 0.2.0-rc.2's peer-compatibility gate)",
