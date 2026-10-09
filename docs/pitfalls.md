@@ -435,3 +435,20 @@ The harness sandbox (and this checkout's environment) has specific rules:
   comparison became impossible, and a cast would have hidden it. The documented
   rule is to switch on `kind` and **fall through unknown kinds**, never to
   enumerate the kinds that exist today.
+
+## A dsh release can gate installation on our peer ranges
+
+dsh 0.2.0 added an install-time compatibility gate: `dsh plugin add` refuses a
+bundle whose `peerDependencies` do not accept the running dsh version, and says
+so (`installation rejected: Plugin @dsh-feishu/dsh-feishu@0.3.5 is incompatible
+with dsh 0.2.0-rc.2`). npm itself installed the package happily — the rejection
+happens when dsh loads the bundle — so the release-compat workflow (published
+artifact vs dsh `@latest`) is the only run that sees it.
+
+- Symptom: the canary is green (the source tree still works) while the
+  published package cannot be installed at all, so every user on dsh `@latest`
+  is blocked until a new release ships.
+- Rule: when dsh `@latest` moves, the version-track refresh (label + CLI pin +
+  harness peer ranges) is an **install-time contract**, not a badge. Check the
+  release-compat workflow after refreshing, and cut a release when it is red
+  for this reason — the published peer ranges only change in a new version.

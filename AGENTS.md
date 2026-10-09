@@ -261,6 +261,11 @@ When adapting:
 - Re-verify all gates (`FEISHU_INT_REQUIRED=1`) with a profile installed from
   the NEW CLI; never touch `~/.dsh` — only `_dev/` test homes.
 - Update the compat badge + Note in `README.md` / `README.zh.md`.
+- Check the **release-compat** workflow too (published artifact vs `@latest`).
+  dsh 0.2.0 gates installation on our peer ranges, so a green canary plus stale
+  peer ranges means every user on `@latest` is blocked until a new release
+  ships — the ranges only change in a published version. See
+  `docs/pitfalls.md` → "A dsh release can gate installation on our peer ranges".
 
 ## Worktree + PR workflow
 
