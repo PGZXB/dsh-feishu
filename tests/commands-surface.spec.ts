@@ -106,6 +106,12 @@ function makeCommands(overrides: Partial<SurfaceCommandHost> = {}): {
     transportMode: undefined,
     unknownCommand: undefined,
     lastInboundAt: undefined,
+    sessionContextStatus: async (chatId) => ({
+      sessionId: sessionMap.get(chatId),
+      sessionTitle: undefined,
+      cwd: '/work',
+      workspace: 'work',
+    }),
     openPanel: async () => 'msg-panel',
     pushPanel: async () => {},
     ensureAgent: async () => agent,
@@ -364,6 +370,7 @@ describe('surface command copy is locale-aware', () => {
     expect(result?.kind).toBe('success');
     if (result?.kind === 'success') {
       expect(result.text).toContain('聊天：oc_chat');
+      expect(result.text).toContain('工作区：work（`/work`）');
       expect(result.text).toContain('会话：feishu-session-1');
       expect(result.text).toContain('代理：运行中');
       expect(result.text).toContain('最后输出：（无）');
@@ -379,8 +386,30 @@ describe('surface command copy is locale-aware', () => {
     expect(enResult?.kind).toBe('success');
     if (enResult?.kind === 'success') {
       expect(enResult.text).toBe(
-        'chat: oc_chat\nsession: feishu-session-1\nagent: live\nlast output: (none)\nmention mode: always',
+        'chat: oc_chat\nworkspace: work (`/work`)\nsession: feishu-session-1\nagent: live\nlast output: (none)\nmention mode: always',
       );
+    }
+  });
+
+  it('/status prefers the human session title and workspace label', async () => {
+    setActiveLocale('en-US');
+    const { commands } = makeCommands({
+      sessionContextStatus: async () => ({
+        sessionId: 'feishu-session-1',
+        sessionTitle: 'Release plan',
+        cwd: '/repo/app',
+        workspace: 'Repo',
+      }),
+    });
+    const result = await commands.find('status')?.handler({
+      chatId: 'oc_chat',
+      senderOpenId: 'ou_user',
+      rawInput: '',
+    });
+    expect(result?.kind).toBe('success');
+    if (result?.kind === 'success') {
+      expect(result.text).toContain('workspace: Repo (`/repo/app`)');
+      expect(result.text).toContain('session: Release plan (`feishu-session-1`)');
     }
   });
 });

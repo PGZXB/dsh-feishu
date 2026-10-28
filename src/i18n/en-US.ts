@@ -174,6 +174,7 @@ export const enMessages = {
   'panel.context.noCwd': 'No working directory — pick one with /repo or /cd first',
   'panel.context.noSession': 'No session yet · `{cwd}`',
   'panel.context.session': 'session `{session}` · `{cwd}`',
+  'panel.context.sessionWithTitle': 'session **{title}** (`{session}`) · `{cwd}`',
   'panel.planMode.plan': '🗺️ Plan mode',
   'panel.planMode.leave': '🗺️ Leave plan mode',
   'panel.renderFailedView': '⚠️ The panel view could not be rendered — see the bot log.',
@@ -295,7 +296,10 @@ export const enMessages = {
 
   // ── /status text report (the `status` command's text output) ────────────
   'command.status.chat': 'chat: {id}',
+  'command.status.workspace': 'workspace: {workspace} (`{cwd}`)',
+  'command.status.workspaceNone': 'workspace: (not set)',
   'command.status.session': 'session: {id}',
+  'command.status.sessionWithTitle': 'session: {title} (`{id}`)',
   'command.status.sessionNone': '(none yet)',
   'command.status.agent': 'agent: {state}',
   'command.status.agentLive': 'live',

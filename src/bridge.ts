@@ -14,6 +14,7 @@
  * @module @dsh-feishu/dsh-feishu/bridge
  */
 
+import { basename } from 'node:path';
 import { Readable } from 'node:stream';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import {
@@ -168,6 +169,15 @@ export interface SessionListRow {
   readonly live: boolean;
   /** Whether the session has a persisted log. */
   readonly persisted: boolean;
+}
+
+/** Session/workspace context rendered by `/status` and the panel. */
+export interface SurfaceSessionContext {
+  readonly sessionId: string | undefined;
+  readonly sessionTitle: string | undefined;
+  readonly cwd: string | undefined;
+  /** Display label for the workspace owning `cwd` (fallback: basename). */
+  readonly workspace: string | undefined;
 }
 
 /** Structural subset of `ctx.permissionPresets` (`@deepseek-ai/dsh-permission-presets`,
@@ -378,6 +388,8 @@ export interface BridgeOptions {
    */
   readonly sessionTitle?: {
     rename(session: unknown, title: string): unknown;
+    /** Latest logged title snapshot for a live session, if mounted. */
+    get?(session: unknown): { title: string } | undefined;
   };
   /**
    * Workspace-registry seam (`ctx.workspaceRegistry`, mounted by the
@@ -390,6 +402,12 @@ export interface BridgeOptions {
     | {
         archiveSession(sessionId: string): Promise<unknown>;
         readonly archivedSessionIds: readonly string[];
+        /** Ordered workspace entities, used for display labels. */
+        list?(): readonly {
+          readonly id: string;
+          readonly path: string;
+          readonly title: string;
+        }[];
       }
     | undefined;
   /**
@@ -556,6 +574,8 @@ export class Bridge {
   private readonly requesterOpenIds = new Map<string, string>();
   /** Chat type of the last accepted message per chat (`p2p` needs no @). */
   private readonly chatTypes = new Map<string, 'p2p' | 'group'>();
+  /** Latest known human title per session (event cache + live title service). */
+  private readonly sessionTitles = new Map<string, string>();
   /**
    * Pending inbound attachments per chat (inbound-wait-instruction): bare
    * attachment messages (file/image/video — no text) register here instead
@@ -1229,6 +1249,96 @@ export class Bridge {
     return this.panel.panelViewFor(chatId, messageId);
   }
 
+  /**
+   * Human session title for a chat, from the live title service or the
+   * event/listing cache. Used by `/panel` and `/status`.
+   * @param chatId - the Feishu chat.
+   * @returns the title, or undefined before one exists.
+   */
+  private sessionTitleFor(chatId: string): string | undefined {
+    const sessionId = this.options.sessionMap.get(chatId);
+    if (sessionId === undefined) return undefined;
+    let title = this.sessionTitles.get(sessionId);
+    const agent = this.options.agentStore.get(sessionId);
+    if (agent !== undefined && this.options.sessionTitle?.get !== undefined) {
+      try {
+        const live = this.options.sessionTitle.get(agent.session)?.title;
+        if (live !== undefined && live !== '') {
+          title = live;
+          this.sessionTitles.set(sessionId, live);
+        }
+      } catch (error: unknown) {
+        this.options.logger.debug(`session title lookup failed: ${String(error)}`);
+      }
+    }
+    return title === '' ? undefined : title;
+  }
+
+  /**
+   * Display label for a working directory: the workspace title when the cwd
+   * belongs to a registered workspace, else the directory basename.
+   * @param cwd - the pinned working directory.
+   * @returns the label, or undefined when no cwd is pinned.
+   */
+  private workspaceLabelFor(cwd: string | undefined): string | undefined {
+    if (cwd === undefined) return undefined;
+    let workspaces: readonly {
+      readonly path: string;
+      readonly title: string;
+    }[] = [];
+    try {
+      const registry = this.options.getWorkspaceRegistry?.();
+      workspaces = registry?.list?.() ?? [];
+    } catch (error: unknown) {
+      this.options.logger.warn(`workspace label lookup failed: ${String(error)}`);
+    }
+    let best: { readonly path: string; readonly title: string } | undefined;
+    for (const workspace of workspaces) {
+      if (typeof workspace.path !== 'string' || typeof workspace.title !== 'string') continue;
+      const root = workspace.path.replace(/[\\/]+$/, '');
+      if (root === '') continue;
+      if (cwd !== root && !cwd.startsWith(`${root}/`) && !cwd.startsWith(`${root}\\`)) continue;
+      if (best === undefined || root.length > best.path.length) best = workspace;
+    }
+    return best?.title ?? basename(cwd);
+  }
+
+  /**
+   * Async status context: unlike the panel's synchronous context, this can
+   * load the session corpus to recover a COLD session's title/cwd. Falls back
+   * to the deployment default cwd so `/status` always names the effective
+   * workspace.
+   * @param chatId - the Feishu chat.
+   * @returns session id/title, effective cwd, and workspace label.
+   */
+  async sessionContextForStatus(chatId: string): Promise<SurfaceSessionContext> {
+    const sessionId = this.options.sessionMap.get(chatId);
+    let cwd = this.options.sessionMap.cwdFor(chatId);
+    let title = this.sessionTitleFor(chatId);
+    if (
+      sessionId !== undefined &&
+      (cwd === undefined || title === undefined) &&
+      this.options.listSessions !== undefined
+    ) {
+      try {
+        const rows = await this.loadSessions(chatId);
+        const row = rows?.find((entry) => entry.sessionId === sessionId);
+        cwd ??= row?.cwd;
+        title ??= row?.title;
+        if (title !== undefined && title !== '') this.sessionTitles.set(sessionId, title);
+      } catch (error: unknown) {
+        this.options.logger.warn(`status session lookup failed: ${String(error)}`);
+      }
+    }
+    cwd ??= this.options.defaultCwd;
+    return {
+      sessionId,
+      sessionTitle: title === '' ? undefined : title,
+      cwd,
+      workspace: this.workspaceLabelFor(cwd),
+    };
+  }
+
   /** Construct the panel card for a chat at the given command page. */
   private buildPanelCardFor(chatId: string, page: number): CardJson {
     const agent = this.liveAgent(chatId);
@@ -1248,12 +1358,20 @@ export class Bridge {
     const sessionId = this.options.sessionMap.get(chatId);
     const pinned = this.options.sessionMap.cwdFor(chatId);
     const cwd = pinned ?? this.options.defaultCwd;
+    const title = this.sessionTitleFor(chatId);
+    const safeTitle = title?.replace(/[<>`]/g, '');
     const contextLine =
       pinned === undefined && this.options.requireWorkingDir !== false
         ? t('panel.context.noCwd')
         : sessionId === undefined
-          ? `No session yet · \`${cwd}\``
-          : `session \`${sessionId}\` · \`${cwd}\``;
+          ? t('panel.context.noSession', { cwd })
+          : safeTitle === undefined || safeTitle === ''
+            ? t('panel.context.session', { session: sessionId, cwd })
+            : t('panel.context.sessionWithTitle', {
+                title: safeTitle,
+                session: sessionId,
+                cwd,
+              });
     // Toggle commands show their CURRENT state on the button (plan mode is
     // the one today — the label flips instead of staying static, user report).
     const commands = this.panelCommands().map((command) =>
@@ -2172,6 +2290,16 @@ export class Bridge {
    */
   async handleEvent(sessionId: string, event: SessionEvent): Promise<void> {
     this.options.logger.debug(`session event ${event.type} from ${sessionId}`);
+    const maybeTitle = event as {
+      readonly type: string;
+      readonly data?: { readonly title?: unknown };
+    };
+    if (maybeTitle.type === 'session/title') {
+      const title = maybeTitle.data?.title;
+      if (typeof title === 'string' && title !== '') {
+        this.sessionTitles.set(String(sessionId), title);
+      }
+    }
     await this.streaming.handleEvent(sessionId, event);
     // message-queue: reconcile the per-item queue cards after the event — on
     // `turn/end` the surface drains its own queue (delivering each queued
@@ -2352,6 +2480,9 @@ export class Bridge {
       },
       get lastInboundAt() {
         return bridge.lastInboundAtValue;
+      },
+      get sessionContextStatus() {
+        return (chatId: string) => bridge.sessionContextForStatus(chatId);
       },
       openPanel: (chatId) => bridge.openPanel(chatId),
       // Typed slash commands open a FRESH, INDEPENDENT card seeded with the

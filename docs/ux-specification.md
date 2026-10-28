@@ -296,7 +296,7 @@ palette idea). `category` groups the panel palette.
 | Command | Category | Behavior |
 |---|---|---|
 | `/help` | system | list all surface commands + passthrough note |
-| `/status` | system | chat/session/agent/last-output/mention line |
+| `/status` | system | chat/workspace/session title/agent/last-output/mention line |
 | `/cancel` | session | stop the current turn |
 | `/cd <path>` | session | set the chat's working directory, rebind a fresh session |
 | `/repo [<path>]` | session | project picker card (dropdown ≤ 50, buttons + pages above) |
@@ -465,7 +465,8 @@ menu root and reposts the menu card, so page flips and Back never go dead
   buttons per page, a quiet `note` page indicator (`Commands · page 1/2`),
   and ◀️/▶️ nav hidden at the bounds. Each button stamps `{kind:'command',
   name}` and executes the same handler as the slash line. The status line
-  carries the chat's session context (`session `id` · `cwd``).
+  carries the chat's session context: `session **title** (`id`) · `cwd`` when
+  a title is known, else `session `id` · `cwd``.
 - **Input sub-view** (`📁 Change working directory`, `👥 Create group`,
   `🎯 Goal`, `💬 Feedback`, `✏️ Rename session`): a root-level `form` with
   one `input` and a `form_submit` button that carries a `name` (Feishu

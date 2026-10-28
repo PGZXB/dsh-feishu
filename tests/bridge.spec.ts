@@ -3819,6 +3819,21 @@ describe('/model picker', () => {
 });
 
 describe('/panel command', () => {
+  it('shows the human session title in the panel context', async () => {
+    const h = makeHarness();
+    h.sessionMap.set('oc_chat', 'feishu-session-1');
+    h.emit('feishu-session-1', {
+      type: 'session/title',
+      seq: 1,
+      time: 0,
+      data: { title: 'Release plan' },
+    } as unknown as SessionEvent);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await h.bridge.handleMessage(message({ text: '/panel' }));
+    const panel = h.transport.sentCards.at(-1);
+    expect(JSON.stringify(panel?.elements)).toContain('Release plan');
+  });
+
   it('opens the control panel card from a fresh chat (no prior message)', async () => {
     const h = makeHarness();
     await h.bridge.handleMessage(message({ text: '/panel' }));
@@ -3849,6 +3864,31 @@ describe('/panel command', () => {
         ? core.actions.filter((a) => a.tag === 'button').map((a) => a.text.content)
         : [];
     expect(coreLabels).toEqual(['⏹ Stop current turn', '🔁 Retry last', '📋 Copy last']);
+  });
+});
+
+describe('/status command', () => {
+  it('shows the workspace label and human session title', async () => {
+    const h = makeHarness({
+      getWorkspaceRegistry: () => ({
+        archiveSession: async () => undefined,
+        archivedSessionIds: [],
+        list: () => [{ id: 'ws-1', path: '/work', title: 'Work' }],
+      }),
+    });
+    h.sessionMap.set('oc_chat', 'feishu-session-1');
+    h.sessionMap.setCwd('oc_chat', '/work/app');
+    h.emit('feishu-session-1', {
+      type: 'session/title',
+      seq: 1,
+      time: 0,
+      data: { title: 'Release plan' },
+    } as unknown as SessionEvent);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await h.bridge.handleMessage(message({ text: '/status' }));
+    const text = h.transport.sentTexts.at(-1)?.text ?? '';
+    expect(text).toContain('workspace: Work (`/work/app`)');
+    expect(text).toContain('session: Release plan (`feishu-session-1`)');
   });
 });
 

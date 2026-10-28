@@ -21,6 +21,7 @@ import type {
   PermissionPresetService,
   PlanModeService,
   SessionListRow,
+  SurfaceSessionContext,
 } from '../bridge.js';
 import type { StatusView } from '../cards/render.js';
 import { buildStatusCard } from '../cards/render.js';
@@ -168,6 +169,8 @@ export interface SurfaceCommandHost {
   readonly unknownCommand: 'error' | 'passthrough' | undefined;
   /** Epoch ms of the last accepted inbound message (for /feishu-status). */
   readonly lastInboundAt: number | undefined;
+  /** Session/workspace context for `/status` (may load a cold session). */
+  readonly sessionContextStatus: (chatId: string) => Promise<SurfaceSessionContext>;
   /** Open the control panel (the /panel command). */
   openPanel(chatId: string): Promise<string>;
   /** PUSH a panel sub-view (pickers / sessions list). */
@@ -370,15 +373,31 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
     description: 'Show this chat’s session status',
     category: 'system',
     buttonLabel: t('command.cmd.status.label'),
-    handler: (invocation) => {
-      const sessionId = options.sessionMap.get(invocation.chatId);
-      const agent = sessionId === undefined ? undefined : options.agentStore.get(sessionId);
+    handler: async (invocation) => {
+      const context = await options.sessionContextStatus(invocation.chatId);
+      const agent =
+        context.sessionId === undefined ? undefined : options.agentStore.get(context.sessionId);
       const output = options.lastOutput(invocation.chatId);
+      const workspaceLine =
+        context.cwd === undefined
+          ? t('command.status.workspaceNone')
+          : t('command.status.workspace', {
+              workspace: context.workspace ?? context.cwd,
+              cwd: context.cwd,
+            });
+      const sessionLine =
+        context.sessionId === undefined
+          ? t('command.status.session', { id: t('command.status.sessionNone') })
+          : context.sessionTitle === undefined || context.sessionTitle === ''
+            ? t('command.status.session', { id: context.sessionId })
+            : t('command.status.sessionWithTitle', {
+                title: context.sessionTitle,
+                id: context.sessionId,
+              });
       const lines = [
         t('command.status.chat', { id: invocation.chatId }),
-        t('command.status.session', {
-          id: sessionId === undefined ? t('command.status.sessionNone') : sessionId,
-        }),
+        workspaceLine,
+        sessionLine,
         t('command.status.agent', {
           state:
             agent !== undefined ? t('command.status.agentLive') : t('command.status.agentIdle'),
