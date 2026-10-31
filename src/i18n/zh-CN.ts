@@ -168,6 +168,7 @@ export const zhMessages: Record<MessageKey, string> = {
   'panel.context.noCwd': '尚未选择工作目录 —— 请先通过 /repo 或 /cd 选择',
   'panel.context.noSession': '还没有会话 · `{cwd}`',
   'panel.context.session': '会话 `{session}` · `{cwd}`',
+  'panel.context.sessionWithTitle': '会话 **{title}**（`{session}`） · `{cwd}`',
   'panel.planMode.plan': '🗺️ 计划模式',
   'panel.planMode.leave': '🗺️ 退出计划模式',
   'panel.renderFailedView': '⚠️ 面板视图渲染失败 —— 请查看机器人日志。',
@@ -283,7 +284,10 @@ export const zhMessages: Record<MessageKey, string> = {
 
   // ── /status 文本报告（status 命令的文本输出）──────────────────────────
   'command.status.chat': '聊天：{id}',
+  'command.status.workspace': '工作区：{workspace}（`{cwd}`）',
+  'command.status.workspaceNone': '工作区：（未设置）',
   'command.status.session': '会话：{id}',
+  'command.status.sessionWithTitle': '会话：{title}（`{id}`）',
   'command.status.sessionNone': '（还没有）',
   'command.status.agent': '代理：{state}',
   'command.status.agentLive': '运行中',
