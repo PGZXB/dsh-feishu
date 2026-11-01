@@ -452,3 +452,39 @@ artifact vs dsh `@latest`) is the only run that sees it.
   harness peer ranges) is an **install-time contract**, not a badge. Check the
   release-compat workflow after refreshing, and cut a release when it is red
   for this reason — the published peer ranges only change in a new version.
+
+## A long connection can die without a single error
+
+The Feishu long connection is an outbound WebSocket held open by the SDK. It
+can stop delivering events while every local signal still says "connected", so
+the surface looks healthy and simply never answers.
+
+- Symptom: users say the bot ignores them; `getConnectionStatus()` says
+  connected; no error is logged. The reconnect loop may also run for hours
+  without making progress (every attempt timing out), and nothing reports it.
+- Root cause, in layers:
+  1. `wsConfig.pingTimeout` defaults to **0**, which disables the SDK's
+     `armLiveness()` — the only code that notices a half-open socket (the peer
+     vanished without a FIN/RST: NAT timeout, VPN drop, Wi-Fi roam, idle LB
+     reaping). `readyState` stays `OPEN` forever.
+  2. Nothing rebuilds a `WSClient` whose reconnect loop has wedged, and nothing
+     escalates a long outage.
+  3. Feishu does not replay events that were pushed while the connection was
+     down: a message sent during the outage is **never delivered**, even after
+     the reconnect.
+- Fix:
+  - pass `wsConfig: { pingTimeout: 30 }` to `WSClient` (`transport.ts`);
+  - run `ws-supervisor.ts`, which samples `health()` and rebuilds the client
+    after a stale window (it also compares a monotonic connection generation, so
+    a reconnect between two samples is not missed);
+  - run `catchup.ts` after every reconnect: walk `im/v1/messages` from a
+    persisted per-chat boundary and replay missed **text** messages. The
+    boundary only advances on an explicit `has_more: false`; a live message
+    records its id but never moves it; ids are evicted only strictly behind it.
+- Regression tests: `tests/ws-supervisor.spec.ts`, `tests/catchup.spec.ts`,
+  `tests/transport-history.spec.ts`.
+
+The operational lesson: `readyState === OPEN` is a statement about a local
+object, not about the link. Treat "connected" as something that must be proven
+by inbound traffic, and treat event delivery as at-most-once unless a durable
+catch-up exists.

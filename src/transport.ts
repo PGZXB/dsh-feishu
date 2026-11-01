@@ -22,6 +22,7 @@ import {
   type HttpInstance,
   type RawCardActionEvent,
   type RawMessageEvent,
+  type Logger as SdkLogger,
   WSClient,
 } from '@larksuiteoapi/node-sdk';
 import axios from 'axios';
@@ -32,7 +33,9 @@ import type {
   ChatStats,
   FeishuMessage,
   FeishuTransport,
+  HistoryPage,
   InboundAttachment,
+  RawHistoryItem,
   SentCard,
 } from './feishu/types.js';
 import { serializePost } from './rich-text.js';
@@ -80,6 +83,44 @@ export interface TransportLogger {
 }
 
 /**
+ * Default liveness budget (seconds) handed to the SDK's `wsConfig.pingTimeout`.
+ *
+ * The SDK defaults the budget to 0, which disables `armLiveness()` — the only
+ * code that can notice a half-open socket (the peer vanished without a FIN/RST:
+ * NAT timeout, VPN drop, Wi-Fi roam, idle load-balancer reaping). The watchdog
+ * is armed on every ping we send, so a dead link is detected within roughly one
+ * server ping interval plus this budget.
+ */
+export const DEFAULT_PING_TIMEOUT_SEC = 30;
+
+/**
+ * Adapt the surface logger to the SDK's logger shape.
+ *
+ * The SDK calls `logger.error(...msg)` with the whole argument list as ONE
+ * array, so a direct pass-through would log an array instead of words. The
+ * adapter spreads it and maps `trace` onto `debug` (the cordis logger has no
+ * trace).
+ * @param logger - the surface logger, or `undefined`.
+ * @returns an SDK-compatible logger, or `undefined`.
+ */
+function sdkLoggerFrom(logger: TransportLogger | undefined): SdkLogger | undefined {
+  if (logger === undefined) return undefined;
+  const call =
+    (method: 'info' | 'warn' | 'error' | 'debug') =>
+    (...args: unknown[]): void => {
+      const flat = args.length === 1 && Array.isArray(args[0]) ? (args[0] as unknown[]) : args;
+      logger[method](flat.map((arg) => (typeof arg === 'string' ? arg : String(arg))).join(' '));
+    };
+  return {
+    error: call('error'),
+    warn: call('warn'),
+    info: call('info'),
+    debug: call('debug'),
+    trace: call('debug'),
+  };
+}
+
+/**
  * The SDK's `Client.request` payload type, plus the `$return_headers` flag
  * the SDK's own generated download code passes (its public types omit it).
  */
@@ -95,6 +136,16 @@ export interface LarkCredentials {
 export interface LarkTransportOptions {
   readonly credentials: LarkCredentials;
   readonly logger?: TransportLogger;
+  /**
+   * Liveness budget in seconds; `0` restores the SDK default (disabled) and is
+   * not recommended. Defaults to {@link DEFAULT_PING_TIMEOUT_SEC}.
+   */
+  readonly pingTimeoutSec?: number;
+  /**
+   * OpenAPI base URL override (Lark, a private gateway, or a test double).
+   * Absent → the SDK's Feishu domain.
+   */
+  readonly domain?: string;
 }
 
 /** A failed Feishu API call (non-zero `code`). */
@@ -298,8 +349,11 @@ export function cardActionNeedsAck(action: CardAction): boolean {
  */
 export class LarkTransport implements FeishuTransport {
   private readonly client: Client;
-  private readonly ws: WSClient;
-  private readonly dispatcher = new EventDispatcher({});
+  private ws: WSClient;
+  private readonly dispatcher: EventDispatcher;
+  private readonly credentials: LarkCredentials;
+  private readonly domain: string | undefined;
+  private readonly pingTimeoutSec: number;
   private handler: ((message: FeishuMessage) => void) | undefined;
   private actionHandler: CardActionHandler | undefined;
   private readonly logger: TransportLogger | undefined;
@@ -307,28 +361,67 @@ export class LarkTransport implements FeishuTransport {
   private readonly statsCache = new Map<string, { stats: ChatStats; at: number }>();
   /** Live long-connection state, maintained by the WSClient callbacks. */
   private connectionStateValue: 'ready' | 'reconnecting' | 'error' = 'reconnecting';
+  /** When the surface last became ready (epoch ms), for the watchdog. */
+  private readyAtValue: number | undefined;
+  /** Last transport-level error message, surfaced by `health()`. */
+  private lastErrorValue: string | undefined;
+  /** Monotonic counter bumped on every ready transition (watchdog signal). */
+  private readyGeneration = 0;
+  /** True once the dispatcher handlers are registered (start/restart). */
+  private handlersRegistered = false;
 
   constructor(options: LarkTransportOptions) {
-    const { appId, appSecret } = options.credentials;
+    this.credentials = options.credentials;
     this.logger = options.logger;
+    this.domain = options.domain;
+    this.pingTimeoutSec = options.pingTimeoutSec ?? DEFAULT_PING_TIMEOUT_SEC;
+    const sdkLogger = sdkLoggerFrom(options.logger);
+    this.dispatcher = new EventDispatcher(sdkLogger === undefined ? {} : { logger: sdkLogger });
     // axios's overloaded `request` doesn't satisfy the SDK's structural
     // `HttpInstance` statically (the SDK's own default is an AxiosInstance,
     // so the cast is safe at runtime).
     const httpInstance = FEISHU_HTTP as unknown as HttpInstance;
-    this.client = new Client({ appId, appSecret, httpInstance });
-    this.ws = new WSClient({
-      appId,
-      appSecret,
+    this.client = new Client({
+      appId: this.credentials.appId,
+      appSecret: this.credentials.appSecret,
+      httpInstance,
+      ...(this.domain === undefined ? {} : { domain: this.domain }),
+      ...(sdkLogger === undefined ? {} : { logger: sdkLogger }),
+    });
+    this.ws = this.createWsClient();
+  }
+
+  /**
+   * Build one `WSClient`. Extracted from the constructor so the watchdog can
+   * rebuild a wedged client from scratch without touching the rest of the
+   * transport state.
+   * @returns a fresh, not-yet-started client.
+   */
+  private createWsClient(): WSClient {
+    const sdkLogger = sdkLoggerFrom(this.logger);
+    return new WSClient({
+      appId: this.credentials.appId,
+      appSecret: this.credentials.appSecret,
       autoReconnect: true,
       handshakeTimeoutMs: 15_000,
-      httpInstance,
+      httpInstance: FEISHU_HTTP as unknown as HttpInstance,
+      ...(this.domain === undefined ? {} : { domain: this.domain }),
+      ...(sdkLogger === undefined ? {} : { logger: sdkLogger }),
+      // Without this the SDK's liveness watchdog is a no-op
+      // (`pingTimeoutSec = 0` → `armLiveness()` returns immediately) and a
+      // half-open socket stays "connected" forever.
+      wsConfig: { pingTimeout: this.pingTimeoutSec },
       onReady: () => {
         this.connectionStateValue = 'ready';
+        this.readyGeneration += 1;
+        this.readyAtValue = Date.now();
+        this.lastErrorValue = undefined;
         this.logger?.info('feishu long connection ready');
-        this.logger?.debug('transport ws state -> ready');
+        this.logger?.debug(`transport ws state -> ready (generation ${this.readyGeneration})`);
       },
       onError: (error) => {
         this.connectionStateValue = 'error';
+        this.lastErrorValue = error.message;
         this.logger?.error(`feishu long connection failed: ${error.message}`);
         this.logger?.debug(`transport ws state -> error: ${error.message}`);
       },
@@ -339,10 +432,98 @@ export class LarkTransport implements FeishuTransport {
       },
       onReconnected: () => {
         this.connectionStateValue = 'ready';
+        this.readyGeneration += 1;
+        this.readyAtValue = Date.now();
+        this.lastErrorValue = undefined;
         this.logger?.info('feishu long connection reconnected');
-        this.logger?.debug('transport ws state -> ready (reconnected)');
+        this.logger?.debug(
+          `transport ws state -> ready (reconnected, generation ${this.readyGeneration})`,
+        );
       },
     });
+  }
+
+  /**
+   * Snapshot for the watchdog: current state, when it became ready, the last
+   * error, the monotonic connection generation, and the liveness budget.
+   * @returns the health snapshot.
+   */
+  health(): {
+    state: 'ready' | 'reconnecting' | 'error';
+    readyAt: number | null;
+    generation: number;
+    lastError: string | null;
+    pingTimeoutSec: number;
+  } {
+    return {
+      state: this.connectionStateValue,
+      readyAt: this.readyAtValue ?? null,
+      generation: this.readyGeneration,
+      lastError: this.lastErrorValue ?? null,
+      pingTimeoutSec: this.pingTimeoutSec,
+    };
+  }
+
+  /**
+   * Replace the `WSClient` with a fresh one and start it. The watchdog uses
+   * this when the internal reconnect loop stops making progress; rebuilding
+   * (rather than calling `reConnect()`) discards any wedged in-flight state.
+   * @param reason - why the rebuild happened (logged).
+   */
+  async restartLongConnection(reason: string): Promise<void> {
+    this.logger?.warn(`feishu long connection restart: ${reason}`);
+    const previous = this.ws;
+    this.ws = this.createWsClient();
+    try {
+      previous.close();
+    } catch (error: unknown) {
+      this.logger?.debug(`closing previous WSClient failed (ignored): ${String(error)}`);
+    }
+    this.connectionStateValue = 'reconnecting';
+    this.readyAtValue = undefined;
+    await this.ws.start({ eventDispatcher: this.dispatcher });
+  }
+
+  /**
+   * List a chat's messages in ascending create-time order (catch-up source).
+   * @param chatId - the chat id.
+   * @param range - epoch-second bounds (the list API takes seconds).
+   * @returns the validated page.
+   */
+  async listMessages(
+    chatId: string,
+    range: {
+      startTimeSec: number;
+      endTimeSec: number;
+      pageSize?: number;
+      pageToken?: string;
+    },
+  ): Promise<HistoryPage> {
+    const response = await this.client.im.v1.message.list({
+      params: {
+        container_id_type: 'chat',
+        container_id: chatId,
+        start_time: String(range.startTimeSec),
+        end_time: String(range.endTimeSec),
+        sort_type: 'ByCreateTimeAsc',
+        page_size: range.pageSize ?? 50,
+        ...(range.pageToken === undefined ? {} : { page_token: range.pageToken }),
+      },
+    });
+    this.assertOk(response, 'im.v1.message.list');
+    return parseMessageListResponse(response);
+  }
+
+  /**
+   * The chat's mode (`p2p` | `group`), used by the catch-up to preserve the
+   * group mention gate for replayed messages.
+   * @param chatId - the chat id.
+   * @returns `chat_mode`, or `undefined` when the API returned none.
+   */
+  async chatMode(chatId: string): Promise<string | undefined> {
+    const response = await this.client.im.v1.chat.get({ path: { chat_id: chatId } });
+    this.assertOk(response, 'im.v1.chat.get');
+    return response.data?.chat_mode;
   }
 
   /** The live long-connection state for the `/feishu-status` diagnostic. */
@@ -352,33 +533,36 @@ export class LarkTransport implements FeishuTransport {
 
   /** Connect the long connection and begin delivering messages. */
   async start(): Promise<void> {
-    this.dispatcher.register({
-      'im.message.receive_v1': (data) => {
-        const message = normalizeMessageEvent(data as RawMessageEvent);
-        if (message !== undefined) this.handler?.(message);
-        return undefined;
-      },
-      'card.action.trigger': async (data: RawCardActionEvent) => {
-        const action = normalizeCardAction(data);
-        if (action === undefined) return {};
-        if (!cardActionNeedsAck(action)) {
-          // Fire-and-forget: these actions may take longer than Feishu's
-          // 3-second callback deadline. Their card updates go through
-          // `message.patch` as before.
-          void this.actionHandler?.(action);
-          return {};
-        }
-        // Return the updated card as the callback ACK. Feishu applies it
-        // before stopping the click spinner; an empty ACK can make the
-        // client restore the pre-click card and hide the decision.
-        try {
-          return (await this.actionHandler?.(action)) ?? {};
-        } catch (error: unknown) {
-          this.logger?.warn(`card action ACK failed: ${String(error)}`);
-          return {};
-        }
-      },
-    });
+    if (!this.handlersRegistered) {
+      this.dispatcher.register({
+        'im.message.receive_v1': (data) => {
+          const message = normalizeMessageEvent(data as RawMessageEvent);
+          if (message !== undefined) this.handler?.(message);
+          return undefined;
+        },
+        'card.action.trigger': async (data: RawCardActionEvent) => {
+          const action = normalizeCardAction(data);
+          if (action === undefined) return {};
+          if (!cardActionNeedsAck(action)) {
+            // Fire-and-forget: these actions may take longer than Feishu's
+            // 3-second callback deadline. Their card updates go through
+            // `message.patch` as before.
+            void this.actionHandler?.(action);
+            return {};
+          }
+          // Return the updated card as the callback ACK. Feishu applies it
+          // before stopping the click spinner; an empty ACK can make the
+          // client restore the pre-click card and hide the decision.
+          try {
+            return (await this.actionHandler?.(action)) ?? {};
+          } catch (error: unknown) {
+            this.logger?.warn(`card action ACK failed: ${String(error)}`);
+            return {};
+          }
+        },
+      });
+      this.handlersRegistered = true;
+    }
     await this.ws.start({ eventDispatcher: this.dispatcher });
     // Resolve the bot's own open id once the connection is up; the group
     // mention gate needs it to tell "the bot was mentioned" apart from
@@ -734,12 +918,56 @@ export class LarkTransport implements FeishuTransport {
   }
 }
 
+/**
+ * Validate and unwrap one `im.v1.message.list` body.
+ *
+ * A success envelope with no `data`, a non-array `items`, a non-boolean
+ * `has_more` or a non-string `page_token` is a protocol error, not an empty
+ * terminal page: wrapping it as `{items: []}` would let the catch-up commit a
+ * scan boundary that was never enumerated. A **valid** empty page
+ * (`data: { has_more: false }`) is still returned normally.
+ * @param response - the unwrapped body (`{code, msg, data}`).
+ * @returns the validated page.
+ * @throws {FeishuApiError} when the response structure is invalid.
+ */
+export function parseMessageListResponse(response: unknown): HistoryPage {
+  const body = response as { data?: unknown } | undefined;
+  const data = body?.data;
+  if (data === undefined || data === null || typeof data !== 'object') {
+    throw new FeishuApiError('im.v1.message.list', -1, 'response carried no data object');
+  }
+  const record = data as { items?: unknown; has_more?: unknown; page_token?: unknown };
+  if (record.items !== undefined && !Array.isArray(record.items)) {
+    throw new FeishuApiError('im.v1.message.list', -1, 'data.items is not an array');
+  }
+  if (record.has_more !== undefined && typeof record.has_more !== 'boolean') {
+    throw new FeishuApiError(
+      'im.v1.message.list',
+      -1,
+      `data.has_more is not a boolean: ${String(record.has_more)}`,
+    );
+  }
+  if (record.page_token !== undefined && typeof record.page_token !== 'string') {
+    throw new FeishuApiError('im.v1.message.list', -1, 'data.page_token is not a string');
+  }
+  return {
+    items: (record.items as readonly RawHistoryItem[] | undefined) ?? [],
+    hasMore: record.has_more as boolean | undefined,
+    pageToken: record.page_token as string | undefined,
+  };
+}
+
 /** Create a transport for the given credentials. */
 export function createLarkTransport(
   credentials: LarkCredentials,
   logger?: TransportLogger,
+  options: Pick<LarkTransportOptions, 'pingTimeoutSec' | 'domain'> = {},
 ): FeishuTransport {
-  return new LarkTransport({ credentials, ...(logger === undefined ? {} : { logger }) });
+  return new LarkTransport({
+    credentials,
+    ...(logger === undefined ? {} : { logger }),
+    ...options,
+  });
 }
 
 /**

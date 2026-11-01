@@ -390,3 +390,32 @@ workflow（已发布产物 vs dsh `@latest`）能看到它。
   范围）是一份**安装期契约**，不是徽章。刷新后要看 release-compat
   workflow；若因这个原因变红，就必须发版——已发布的 peer 范围只能通过新版本
   改变。
+
+## 长连接可以在没有任何报错的情况下死掉
+
+飞书长连接是 SDK 维持的一条出站 WebSocket。它可能已经收不到任何事件，而本地
+所有信号仍显示"已连接"——surface 看起来健康，只是永远不再回应。
+
+- 症状：用户说机器人不理人；`getConnectionStatus()` 显示 connected；没有任何
+  错误日志。重连循环也可能空转数小时（每次尝试都超时），而没有任何人知道。
+- 根因分层：
+  1. `wsConfig.pingTimeout` 默认是 **0**，等于关闭 SDK 的 `armLiveness()`——这是
+     唯一能发现半开连接的机制（对端消失但没有 FIN/RST：NAT 超时、VPN 掉线、
+     Wi-Fi 漫游、负载均衡空闲回收）。`readyState` 会永远停在 `OPEN`。
+  2. 没有任何机制重建"重连循环已经卡死"的 `WSClient`，也没有人对长时间中断
+     升级告警。
+  3. 飞书不会补发断连期间推送的事件：中断时发送的消息**永远不会送达**，即使
+     连接后来恢复了。
+- 修复：
+  - 给 `WSClient` 传 `wsConfig: { pingTimeout: 30 }`（`transport.ts`）；
+  - 运行 `ws-supervisor.ts`：采样 `health()`，超过阈值就整体重建客户端；它比较
+    单调递增的连接代次，所以两次采样之间的快速重连也不会漏；
+  - 每次重连后运行 `catchup.ts`：从持久化的 per-chat 边界开始遍历
+    `im/v1/messages`，补投漏掉的**文本**消息。边界只在显式 `has_more: false`
+    时前进；实时消息只记录 id，绝不推进边界；id 只在严格落后于边界时才回收。
+- 回归测试：`tests/ws-supervisor.spec.ts`、`tests/catchup.spec.ts`、
+  `tests/transport-history.spec.ts`。
+
+运维层面的教训：`readyState === OPEN` 描述的是本地对象，不是链路。要把"已连接"
+当作必须由入站流量证明的状态；并且在没有持久化补课之前，事件投递只能算
+at-most-once。

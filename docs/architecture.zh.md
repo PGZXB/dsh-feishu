@@ -43,6 +43,8 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 |---|---|
 | `src/feishu/types.ts` | Transport seam 类型：归一化后的 `FeishuMessage`、`FeishuTransport`、卡片 JSON。 |
 | `src/transport.ts` | lark-oapi 实现：`WSClient` 长连接 + `Client` API 调用；纯函数 `normalizeMessageEvent`；`FeishuApiError`。 |
+| `src/ws-supervisor.ts` | 长连接看门狗：采样 `health()`，非 ready 超过阈值就整体重建 `WSClient`；比较单调递增的连接代次，两次采样之间完成的快速重连也能触发补课。 |
+| `src/catchup.ts` | 重连补投：持久化的 per-chat 扫描边界 + 有界 id 去重，分页遍历 `im/v1/messages`，只投递文本消息。边界只在显式 `has_more: false` 时前进。 |
 | `src/memory-transport.ts` | 文件通道的内存 transport（`FEISHU_TRANSPORT=memory`）：集成测试/调试用的 seam——`inbox/` 投递消息，`outbox/` 记录每一次发送。 |
 | `src/message-dedup.ts` | 有界的内存消息 id 去重（平台重投）。 |
 | `src/session-map.ts` | 持久的 chat ↔ session 映射（原子 JSON 写入），供事件反向查找。 |
@@ -63,6 +65,11 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 | `src/index.ts` | 插件入口：配置、凭据解析、agent 选项（配置或 `agentDefaultModel`，在**每次 create/resume 时惰性解析**——绝不在激活时快照一次，见 `docs/pitfalls.md` → “宿主服务的激活期快照”）、接线、`feishu-status` 命令。 |
 
 ## 关键行为
+
+- **长连接静默 = 故障，不是状态。** transport 开启 SDK 的存活预算
+  （`wsConfig.pingTimeout`），supervisor 重建"重连循环失去进展"的客户端，
+  每次重连都跑一次有界的历史补投。`readyState === OPEN` 从不被当作链路可用
+  的证据（见 `docs/pitfalls.zh.md`）。
 
 - **带按钮对等的斜杠命令。** 所有 surface 命令（`/help /status /cancel /cd /repo /group /sessions /resume /clear /new /export /model /feishu-status /schedule`，外加五个 dsh web 包装 `/plan /goal /compact /feedback /permission`，以及 `/panel`——仅斜杠，其调色板按钮隐藏）在斜杠行和面板调色板按钮之间共享同一个处理器。`ctx.commands.execute` 透传处理其余任何命令。`/export` 以文件消息发送会话日志，`/model` 是 surface 原生的（web 的 `/model` 是一个没有宿主命令的客户端弹窗）。
 - **Session 生命周期。** `/sessions` 打开持久化语料的**下拉选择器**（`ctx.sessionQuery.listSessions()` + 批量 `readTitleSnapshots()`，服务缺失时退化为 bound-sessions 兜底）；选择选项后在面板状态机栈上推入**会话详情子视图**。当没有 live agent 时，`/resume <id>` 和详情的 Resume 按钮会重绑该聊天（`SessionMap.set`——1:1 模型）并 `agents.resume`；正在运行的目标会被拒绝；resume 会重置卡片状态（不重放历史）。Rename/Archive 经由宿主 `apiProxy` seam（`sessions.rename`、`workspace.archiveSession`——可逆）。`/clear`/`/new` 非破坏性地重新铸造一个新 session（旧 session 保持已保存且可恢复）。

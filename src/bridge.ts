@@ -288,6 +288,12 @@ export interface BridgeOptions {
   readonly sessionMap: SessionMap;
   readonly agentStore: AgentStore;
   /**
+   * Called for every message that passes dedup, before the gate/command/turn
+   * logic. The reconnect catch-up uses it to record the message id (dedup
+   * only); it must never be treated as proof that processing succeeded.
+   */
+  readonly onAccepted?: (message: FeishuMessage) => void;
+  /**
    * Subscribe to the session event firehose; the listener receives every
    * event with its owning session id. Returns a disposer.
    */
@@ -790,6 +796,10 @@ export class Bridge {
    */
   async handleMessage(message: FeishuMessage): Promise<void> {
     if (!this.dedup.claim(message.messageId)) return;
+    // Record the id for the catch-up cursor. This says "handed to the bridge",
+    // not "processed successfully": the gate or a later turn error can still
+    // drop it, which is why the delivery guarantee is bounded, not exactly-once.
+    this.options.onAccepted?.(message);
     if (!(await this.shouldRespond(message))) return;
     // A known-but-unhandled Feishu message type (folder, sticker, …) gets a
     // loud notice instead of vanishing — the user must learn the bot cannot

@@ -46,6 +46,7 @@ import {
 } from './bridge.js';
 import type { AssistantStreamFrameLike } from './cards/StreamingCardController.js';
 import { StreamingCardManager } from './cards/streaming.js';
+import { Catchup, CatchupStore, DEFAULT_MAX_MESSAGES, DEFAULT_WINDOW_MS } from './catchup.js';
 import type { ScheduleRecordLike } from './commands/surface.js';
 import type { CommandResult } from './commands.js';
 import { consoleExporter } from './console-exporter.js';
@@ -56,7 +57,12 @@ import { createMemoryTransport } from './memory-transport.js';
 import { registerSendFileTool } from './outbound.js';
 import type { SessionExportEvent } from './session-export.js';
 import { SessionMap } from './session-map.js';
-import { createLarkTransport } from './transport.js';
+import {
+  createLarkTransport,
+  DEFAULT_PING_TIMEOUT_SEC,
+  type LarkTransportOptions,
+} from './transport.js';
+import { WsSupervisor } from './ws-supervisor.js';
 
 /** Stable cordis plugin name (also the bundle row id in cordis.patch.yml). */
 export const name = 'feishu';
@@ -77,6 +83,19 @@ export interface Config {
   readonly model?: string;
   /** Streaming-card patch throttle in ms (default 150). */
   readonly cardThrottleMs?: number;
+  /**
+   * Liveness budget in seconds handed to the SDK's `wsConfig.pingTimeout`;
+   * `0` restores the SDK default (disabled) and is not recommended.
+   */
+  readonly pingTimeoutSec?: number;
+  /** Rebuild a wedged WSClient after this long not-ready (default 90000 ms). */
+  readonly wsStaleMs?: number;
+  /** Replay messages missed while the long connection was down (default on). */
+  readonly catchup?: boolean;
+  /** Look-back cap for one catch-up run (default 6 hours). */
+  readonly catchupWindowHours?: number;
+  /** Delivery budget per catch-up run (default 20 messages). */
+  readonly catchupMaxMessages?: number;
   /**
    * Environment variable naming the model API key to promote into the dsh
    * credentials seam at boot (default `DEEPSEEK_API_KEY`). The llm adapter
@@ -148,6 +167,15 @@ export const Config: z<Config> = z.object({
   provider: z.string().required(false),
   model: z.string().required(false),
   cardThrottleMs: z.natural().min(1).required(false),
+  // Long-connection hardening. `pingTimeoutSec` is handed to the SDK's
+  // `wsConfig.pingTimeout`; 0 restores the (unsafe) SDK default.
+  pingTimeoutSec: z.natural().min(0).required(false),
+  // Rebuild a wedged WSClient only after it has been not-ready this long.
+  wsStaleMs: z.natural().min(10_000).required(false),
+  // Replay messages missed while the long connection was down.
+  catchup: z.boolean().required(false),
+  catchupWindowHours: z.natural().min(1).required(false),
+  catchupMaxMessages: z.natural().min(1).required(false),
   apiKeyEnv: z.string().required(false),
   groupMentionMode: z
     .union([z.const('always'), z.const('never'), z.const('ambient'), z.const('topic')])
@@ -324,7 +352,11 @@ export function resolveLocale(config: Config): Locale {
 /** The default transport factory picks this up; see below. */
 function defaultTransportFactory(
   dataDir: string,
-): (credentials: Credentials, logger: BridgeLogger) => FeishuTransport {
+): (
+  credentials: Credentials,
+  logger: BridgeLogger,
+  options?: Pick<LarkTransportOptions, 'pingTimeoutSec' | 'domain'>,
+) => FeishuTransport {
   if (process.env.FEISHU_TRANSPORT === 'memory') {
     const dir = process.env.FEISHU_MEMORY_DIR ?? join(dataDir, 'memory');
     const mockStats = parseMockChatStats();
@@ -426,7 +458,11 @@ async function listSessions(ctx: Context): Promise<readonly SessionListRow[] | u
 /** Injectable dependencies so `apply` is unit-testable without a network. */
 export interface ApplyDeps {
   /** Transport factory; defaults to the lark-oapi implementation. */
-  createTransport?: (credentials: Credentials, logger: BridgeLogger) => FeishuTransport;
+  createTransport?: (
+    credentials: Credentials,
+    logger: BridgeLogger,
+    options?: Pick<LarkTransportOptions, 'pingTimeoutSec' | 'domain'>,
+  ) => FeishuTransport;
 }
 
 /**
@@ -461,6 +497,9 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
   const sessionMap = new SessionMap(join(dataDir, 'session-map.json'), undefined, logger);
   sessionMap.load();
   logger.debug(`[feishu] dataDir=${dataDir}`);
+  // Durable per-chat scan state for the reconnect catch-up.
+  const catchupStore = new CatchupStore(join(dataDir, 'catchup-cursor.json'), logger);
+  catchupStore.load();
   const allowedUsers = resolveAllowedUsers(config);
   const allowedChats = resolveAllowedChats(config);
   const groupMentionMode = resolveGroupMentionMode(config);
@@ -476,7 +515,9 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
       `groupMentionMode=${groupMentionMode ?? 'always'} unknownCommand=${unknownCommand ?? 'reply'}`,
   );
   const transportFactory = deps.createTransport ?? defaultTransportFactory(dataDir);
-  const transport = transportFactory(credentials, logger);
+  const transport = transportFactory(credentials, logger, {
+    pingTimeoutSec: config.pingTimeoutSec ?? DEFAULT_PING_TIMEOUT_SEC,
+  });
   const cards = new StreamingCardManager(transport, {
     throttleMs: config.cardThrottleMs ?? 400,
     logger,
@@ -542,6 +583,11 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
     transport,
     sessionMap,
     agentStore,
+    // Live delivery only records the id (dedup); it must NOT advance the scan
+    // boundary, or a message arriving during an outage would hide the unfilled
+    // history gap before it.
+    onAccepted: (message) =>
+      catchupStore.recordSeen(message.chatId, message.messageId, message.createdAt),
     onSessionEvent: (listener) =>
       ctx.on('session/event', (session, event) => {
         listener(session.id, event);
@@ -684,8 +730,76 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
     ctx.logger.warn('[feishu] userQuestions service unavailable; questions cannot be rendered');
   }
   ctx.effect(() => () => {
+    catchupStore.dispose();
     bridge.dispose();
     sessionMap.persist();
+  });
+  // Reconnect hardening. The memory transport (tests) has no socket to
+  // supervise and no history API, so both features are feature-detected.
+  const supervisable =
+    typeof transport.health === 'function' && typeof transport.restartLongConnection === 'function'
+      ? (transport as FeishuTransport & {
+          health(): {
+            state: 'ready' | 'reconnecting' | 'error';
+            readyAt: number | null;
+            generation: number;
+            lastError: string | null;
+            pingTimeoutSec: number;
+          };
+          restartLongConnection(reason: string): Promise<void>;
+        })
+      : undefined;
+  const catchupTransport =
+    typeof transport.listMessages === 'function' && typeof transport.chatMode === 'function'
+      ? (transport as FeishuTransport & {
+          listMessages(
+            chatId: string,
+            range: {
+              startTimeSec: number;
+              endTimeSec: number;
+              pageSize?: number;
+              pageToken?: string;
+            },
+          ): Promise<import('./feishu/types.js').HistoryPage>;
+          chatMode(chatId: string): Promise<string | undefined>;
+        })
+      : undefined;
+  const catchup =
+    catchupTransport === undefined
+      ? undefined
+      : new Catchup({
+          transport: catchupTransport,
+          store: catchupStore,
+          deliver: (message) => bridge.handleMessage(message),
+          logger,
+          windowMs:
+            config.catchupWindowHours === undefined
+              ? DEFAULT_WINDOW_MS
+              : config.catchupWindowHours * 3_600_000,
+          maxMessages: config.catchupMaxMessages ?? DEFAULT_MAX_MESSAGES,
+          // Throw on an unknown/failed lookup: the runner then skips this chat
+          // instead of guessing 'p2p' and bypassing the group mention gate.
+          resolveChatType: async (chatId) => {
+            const mode = await catchupTransport.chatMode(chatId);
+            if (mode === 'p2p' || mode === 'group') return mode;
+            throw new Error(`unknown chat_mode: ${String(mode)}`);
+          },
+        });
+  const supervisor =
+    supervisable === undefined
+      ? undefined
+      : new WsSupervisor({
+          transport: supervisable,
+          logger,
+          ...(config.wsStaleMs === undefined ? {} : { staleMs: config.wsStaleMs }),
+          onReady: async () => {
+            if (config.catchup === false || catchup === undefined) return;
+            await catchup.run(sessionMap.chatIds());
+          },
+        });
+  ctx.effect(() => () => {
+    catchup?.dispose();
+    supervisor?.stop();
   });
   // Outbound files/images: give the agent a `send_file` tool so it can
   // deliver a workspace file/image to the chat. Feature-detect `tools`
@@ -704,7 +818,17 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
   promoteAmbientApiKey(ctx, config);
   void transport
     .start()
-    .then(() => ctx.logger.info('[feishu] bridge ready'))
+    .then(() => {
+      ctx.logger.info('[feishu] bridge ready');
+      supervisor?.start();
+      if (config.catchup !== false && catchup !== undefined) {
+        // A process restart also loses events: recover the gap from the
+        // persisted state instead of waiting for the first reconnect.
+        void catchup.run(sessionMap.chatIds()).catch((error: unknown) => {
+          logger.warn(`[feishu] initial catch-up failed: ${String(error)}`);
+        });
+      }
+    })
     .catch((error: unknown) => ctx.logger.error(`[feishu] bridge start failed: ${String(error)}`));
 }
 

@@ -52,6 +52,8 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 |---|---|
 | `src/feishu/types.ts` | Transport seam types: normalized `FeishuMessage`, `FeishuTransport`, card JSON. |
 | `src/transport.ts` | lark-oapi implementation: `WSClient` long connection + `Client` API calls; pure `normalizeMessageEvent`; `FeishuApiError`. |
+| `src/ws-supervisor.ts` | Long-connection watchdog: samples `health()`, rebuilds a wedged `WSClient` after a stale window, and compares a monotonic connection generation so a reconnect that starts and ends between samples still triggers the catch-up. |
+| `src/catchup.ts` | Reconnect replay: a durable per-chat scan boundary plus bounded id dedup, a paginated history walk (`im/v1/messages`), and text-only delivery of missed messages. The boundary advances only on an explicit `has_more: false`. |
 | `src/memory-transport.ts` | File-channel in-memory transport (`FEISHU_TRANSPORT=memory`): the integration-test / debugging seam — `inbox/` delivers messages, `outbox/` records every send. |
 | `src/message-dedup.ts` | Bounded in-memory message-id dedup (platform redelivery). |
 | `src/session-map.ts` | Durable chat ↔ session mapping (atomic JSON writes), reverse lookup for events. |
@@ -72,6 +74,13 @@ Feishu user ──message──> Feishu platform ──WS long connection──>
 | `src/index.ts` | Plugin entry: config, credential resolution, agent options (config or `agentDefaultModel`, resolved **lazily at each create/resume** — never snapshotted once at activation, see `docs/pitfalls.md` → "Activation-time snapshots of host services"), wiring, `feishu-status` command. |
 
 ## Key behaviors
+
+- **A silent long connection is a failure, not a state.** The transport enables
+  the SDK's liveness budget (`wsConfig.pingTimeout`), the supervisor rebuilds a
+  client whose reconnect loop stops making progress, and every reconnect runs a
+  bounded history catch-up. `readyState === OPEN` is never treated as proof of a
+  working link (see `docs/pitfalls.md` → "A long connection can die without a
+  single error").
 
 - **Slash commands with button parity.** All surface commands
   (`/help /status /cancel /cd /repo /group /sessions /resume /clear /new

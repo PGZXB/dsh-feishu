@@ -255,6 +255,25 @@ export interface ChatStats {
 }
 
 /** The transport seam the surface renders into. */
+/** The fields the catch-up reads from one `im.v1.message.list` item. */
+export interface RawHistoryItem {
+  readonly message_id?: string;
+  readonly msg_type?: string;
+  readonly create_time?: string;
+  readonly chat_id?: string;
+  readonly body?: { readonly content?: string };
+  readonly sender?: { readonly id?: string; readonly sender_type?: string };
+  readonly mentions?: readonly { readonly id?: string; readonly id_type?: string }[];
+}
+
+/** One validated page of chat history. */
+export interface HistoryPage {
+  readonly items: readonly RawHistoryItem[];
+  /** `undefined` when the server omitted the flag: NOT a terminal signal. */
+  readonly hasMore: boolean | undefined;
+  readonly pageToken: string | undefined;
+}
+
 export interface FeishuTransport {
   /** Connect the long-lived channel and begin delivering messages. */
   start(): Promise<void>;
@@ -264,6 +283,31 @@ export interface FeishuTransport {
   onMessage(handler: (message: FeishuMessage) => void): void;
   /** Register the single card-button handler (last registration wins). */
   onCardAction(handler: CardActionHandler): void;
+  /**
+   * Optional long-connection health snapshot (the lark transport provides it;
+   * the memory transport does not). Used by the watchdog.
+   */
+  health?(): {
+    readonly state: 'ready' | 'reconnecting' | 'error';
+    readonly readyAt: number | null;
+    readonly generation: number;
+    readonly lastError: string | null;
+    readonly pingTimeoutSec: number;
+  };
+  /** Optional: rebuild the long connection from scratch (watchdog recovery). */
+  restartLongConnection?(reason: string): Promise<void>;
+  /** Optional: list a chat's history in ascending order (catch-up source). */
+  listMessages?(
+    chatId: string,
+    range: {
+      startTimeSec: number;
+      endTimeSec: number;
+      pageSize?: number;
+      pageToken?: string;
+    },
+  ): Promise<HistoryPage>;
+  /** Optional: the chat's mode (`p2p` | `group`). */
+  chatMode?(chatId: string): Promise<string | undefined>;
   /** Send a plain text message to a chat. */
   sendText(chatId: string, text: string): Promise<void>;
   /**

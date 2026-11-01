@@ -108,6 +108,14 @@ export class SessionMap {
   }
 
   /**
+   * Every chat with a session binding (the catch-up scan set).
+   * @returns bound chat ids.
+   */
+  chatIds(): string[] {
+    return [...this.byChat.keys()];
+  }
+
+  /**
    * Set (and persist) the working directory a chat's sessions are created
    * in. Applies to sessions created after the change.
    * @param chatId - the Feishu chat id.
