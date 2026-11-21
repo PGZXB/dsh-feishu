@@ -131,7 +131,11 @@ function makeFakeContext(
   };
   const on = vi.fn(() => () => {});
   const effect = vi.fn(() => {});
-  const ctx = { get, on, effect, logger } as unknown as Context;
+  // `ctx.inject` waits for an async service (the surface injects
+  // 'userQuestions'). The fake provides none, so a recording no-op mirrors a
+  // dependency that never arrives — matching the old `ctx.get` fallback path.
+  const inject = vi.fn(() => {});
+  const ctx = { get, on, effect, inject, logger } as unknown as Context;
   return { ctx, registered, logs };
 }
 

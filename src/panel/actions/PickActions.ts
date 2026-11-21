@@ -119,11 +119,7 @@ export class ModelPickAction extends PanelAction {
     if (!parsed.ok) return { kind: 'error', text: parsed.error };
     void service.saveSelection(parsed.selection);
     // (B) switch the current session immediately too (not only the default).
-    applySessionModelSwitch(
-      ctx.liveAgent(action.chatId),
-      parsed.selection,
-      ctx.services.logger,
-    );
+    applySessionModelSwitch(ctx.liveAgent(action.chatId), parsed.selection, ctx.services.logger);
     return {
       kind: 'success',
       text: t('command.info.modelSet', {

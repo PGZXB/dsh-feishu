@@ -32,9 +32,7 @@ export function sessionSelection(
   agent: Agent | undefined,
 ): { provider: string; model: string } | undefined {
   const current = agent?.model.current();
-  return current === undefined
-    ? undefined
-    : { provider: current.provider, model: current.model };
+  return current === undefined ? undefined : { provider: current.provider, model: current.model };
 }
 
 /**

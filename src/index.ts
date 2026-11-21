@@ -232,11 +232,7 @@ type WorkspaceRegistryLike = {
  *  returns a catalog of entries carrying `involvedSessionIds` and `status`;
  *  the host-side `list` below filters that catalog down to one session. */
 type ScheduleServiceLike = {
-  list(request?: {
-    active?: boolean;
-    limit?: number;
-    offset?: number;
-  }): Promise<{
+  list(request?: { active?: boolean; limit?: number; offset?: number }): Promise<{
     items: readonly (ScheduleRecordLike & {
       readonly involvedSessionIds: readonly string[];
     })[];

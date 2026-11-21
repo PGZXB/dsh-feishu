@@ -179,6 +179,8 @@ class FakeAgentStore {
   /** Live agent status (default running; tests flip to idle as needed). */
   private readonly statuses = new Map<string, 'idle' | 'running'>();
   private readonly options = new Map<string, { provider: string; model: string }>();
+  /** Recorded /model switches — mirrors the real agent's `model/selection` log. */
+  private readonly selections = new Map<string, { provider: string; model: string }>();
 
   /** Set the lifecycle status of a created agent (defaults to running). */
   setStatus(sessionId: string, status: 'idle' | 'running'): void {
@@ -193,6 +195,7 @@ class FakeAgentStore {
   private makeAgent(sessionId: string): Agent {
     const statuses = this.statuses;
     const optionMap = this.options;
+    const selectionMap = this.selections;
     statuses.set(sessionId, 'running');
     const followup = vi.fn((message: UserMessage) => {
       const list = this.followups.get(sessionId) ?? [];
@@ -213,6 +216,15 @@ class FakeAgentStore {
       // its waterfall listeners without throwing. The listeners are never
       // invoked in a fake run; the identity is what keys the model-switch ref.
       ctx: { on: () => () => {} },
+      // Mirrors the real Model accessor (dsh 0.2.2-rc.5): a recorded
+      // `model/selection` wins, then the agent's live options. select()
+      // persists the choice the way the session projection would.
+      model: {
+        current: () => selectionMap.get(sessionId) ?? optionMap.get(sessionId),
+        select: (selection: { provider: string; model: string }) => {
+          selectionMap.set(sessionId, selection);
+        },
+      },
       get options() {
         return optionMap.get(sessionId) ?? {};
       },
