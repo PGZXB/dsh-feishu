@@ -96,6 +96,7 @@ function makeCommands(overrides: Partial<SurfaceCommandHost> = {}): {
     executeCommand: undefined,
     readSession: undefined,
     schedule: undefined,
+    selectSessionModel: undefined,
     permissionPresets: undefined,
     planMode: undefined,
     agentDefaultModel: undefined,

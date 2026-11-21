@@ -40,6 +40,7 @@ import type {
   FeishuTransport,
   SentCard,
 } from '../src/feishu/types.js';
+import type { SessionModelSelector } from '../src/model-switch.js';
 import { SessionMap } from '../src/session-map.js';
 
 const SCRATCH = join(process.cwd(), '_dev', 'test-bridge');
@@ -190,9 +191,19 @@ class FakeAgentStore {
     this.options.set(sessionId, options);
   }
 
+  /** Session selections recorded through the `selectSessionModel` seam — the
+   *  fake equivalent of dsh's `agent.model.select()` projection row. */
+  readonly selections = new Map<string, { provider: string; model: string }>();
+
+  /** Apply a selection to one session (the `ctx.sessionController` stand-in). */
+  selectModel(sessionId: string, selection: { provider: string; model: string }): void {
+    this.selections.set(sessionId, selection);
+  }
+
   private makeAgent(sessionId: string): Agent {
     const statuses = this.statuses;
     const optionMap = this.options;
+    const selections = this.selections;
     statuses.set(sessionId, 'running');
     const followup = vi.fn((message: UserMessage) => {
       const list = this.followups.get(sessionId) ?? [];
@@ -213,6 +224,12 @@ class FakeAgentStore {
       // its waterfall listeners without throwing. The listeners are never
       // invoked in a fake run; the identity is what keys the model-switch ref.
       ctx: { on: () => () => {} },
+      // dsh 0.2.2 keeps the model selection on the agent: `current()` answers
+      // a recorded selection (written through the `selectSessionModel` seam)
+      // and never the static `options`, exactly like the real `AgentModel`.
+      model: {
+        current: () => selections.get(sessionId),
+      },
       get options() {
         return optionMap.get(sessionId) ?? {};
       },
@@ -246,6 +263,8 @@ function makeHarness(
     repoRoots?: readonly string[];
     listSessions?: () => Promise<readonly SessionListRow[] | undefined>;
     schedule?: { list(sessionId: string): Promise<readonly { prompt: string; kind: string }[]> };
+    /** Pass `null` to simulate a profile without the session business API. */
+    selectSessionModel?: SessionModelSelector | null;
     permissionPresets?: PermissionPresetService;
     planMode?: PlanModeService;
     agentDefaultModel?: AgentDefaultModelService;
@@ -307,14 +326,22 @@ function makeHarness(
     ...(options.repoRoots !== undefined ? { repoRoots: options.repoRoots } : {}),
     ...(options.listSessions !== undefined ? { listSessions: options.listSessions } : {}),
     ...(options.schedule !== undefined ? { schedule: options.schedule } : {}),
-    ...(options.permissionPresets !== undefined
-      ? { permissionPresets: options.permissionPresets }
-      : {}),
-    ...(options.planMode !== undefined ? { planMode: options.planMode } : {}),
-    ...(options.agentDefaultModel !== undefined
-      ? { agentDefaultModel: options.agentDefaultModel }
-      : {}),
-    ...(options.llm !== undefined ? { llm: options.llm } : {}),
+    ...(options.selectSessionModel === null
+      ? {}
+      : {
+          selectSessionModel:
+            options.selectSessionModel ??
+            (async (sessionId: string, selection: { provider: string; model: string }) => {
+              agentStore.selectModel(sessionId, selection);
+            }),
+        }),
+    // Always present, possibly undefined: the bridge resolves these lazily
+    // (`ctx.get` at use time), and BridgeOptions declares them as
+    // required-but-undefined so a late-mounting service is not a snapshot.
+    permissionPresets: options.permissionPresets,
+    planMode: options.planMode,
+    agentDefaultModel: options.agentDefaultModel,
+    llm: options.llm,
     ...(options.reactions !== undefined ? { reactions: options.reactions } : {}),
     ...(options.readSession !== undefined ? { readSession: options.readSession } : {}),
     ...(options.sessionTitle !== undefined ? { sessionTitle: options.sessionTitle } : {}),
@@ -3586,14 +3613,55 @@ describe('/model command', () => {
     expect(h.transport.sentTexts.some((t) => t.text === 'model: pi-ai · deepseek-r1')).toBe(true);
   });
 
-  it('/model <provider>/<model> sets the default for new sessions', async () => {
+  it('/model <provider>/<model> sets the default AND the current session', async () => {
+    const service = new FakeAgentDefaultModelService();
+    const h = makeHarness({ agentDefaultModel: service });
+    // Establish the chat's session first: the switch needs one to apply to.
+    await h.bridge.handleMessage(message({ text: 'hello' }));
+    await h.bridge.handleMessage(
+      message({ messageId: 'om_msg2', text: '/model pi-ai/deepseek-r1' }),
+    );
+    expect(service.saved).toEqual([{ provider: 'pi-ai', model: 'deepseek-r1' }]);
+    // dsh 0.2.2 applies the switch through the session business API...
+    expect(h.agentStore.selections.get('feishu-session-1')).toEqual({
+      provider: 'pi-ai',
+      model: 'deepseek-r1',
+    });
+    // ...and the confirmation says both took effect.
+    expect(
+      h.transport.sentTexts.some(
+        (t) => t.text === 'Model set to pi-ai · deepseek-r1 (this session + default).',
+      ),
+    ).toBe(true);
+  });
+
+  it('/model before any session saves only the default and says so', async () => {
     const service = new FakeAgentDefaultModelService();
     const h = makeHarness({ agentDefaultModel: service });
     await h.bridge.handleMessage(message({ text: '/model pi-ai/deepseek-r1' }));
     expect(service.saved).toEqual([{ provider: 'pi-ai', model: 'deepseek-r1' }]);
+    expect(h.agentStore.selections.size).toBe(0);
+    // Honest copy: nothing was switched, so it must not claim "this session".
     expect(
       h.transport.sentTexts.some(
-        (t) => t.text === 'Model set to pi-ai · deepseek-r1 (this session + default).',
+        (t) =>
+          t.text ===
+          'Model set to pi-ai · deepseek-r1 (default only — this session kept its model).',
+      ),
+    ).toBe(true);
+  });
+
+  it('/model says the session kept its model when no session API is mounted', async () => {
+    const service = new FakeAgentDefaultModelService();
+    const h = makeHarness({ agentDefaultModel: service, selectSessionModel: null });
+    await h.bridge.handleMessage(message({ text: 'hello' }));
+    await h.bridge.handleMessage(
+      message({ messageId: 'om_msg2', text: '/model pi-ai/deepseek-r1' }),
+    );
+    expect(service.saved).toEqual([{ provider: 'pi-ai', model: 'deepseek-r1' }]);
+    expect(
+      h.transport.sentTexts.some((t) =>
+        t.text.startsWith('Model set to pi-ai · deepseek-r1 (default only'),
       ),
     ).toBe(true);
   });

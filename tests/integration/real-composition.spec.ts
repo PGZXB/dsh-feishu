@@ -2515,16 +2515,31 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
           60_000,
         );
 
+      // Pin the working directory up front: a turn (needed later to give the
+      // chat a live session for the typed /model switch) is refused without
+      // one, and /cd is idempotent so the command checks below are unaffected.
+      await pinWorkingDir(chatId);
       sendMessage(chatId, '/help');
       await expectText('dsh-feishu commands', 'the /help text');
       sendMessage(chatId, '/status');
       await expectText(`chat: ${chatId}`, 'the /status text');
       sendMessage(chatId, '/nope');
       await expectText('Unknown command /nope', 'the unknown-command text');
-      // Typed /model sets the default directly (no picker needed). Use the
-      // catalog's flash id: dsh persists the default into the shared profile,
-      // so leaving an out-of-catalog id here would break the NEXT run's picker
-      // assertion that the deployment default is a catalog member.
+      // Typed /model switches THIS session and saves the default (dsh web
+      // parity) — so the chat needs a session first: dsh 0.2.2 applies the
+      // switch through the session business API and, with no session, only the
+      // default is saved (and the confirmation says exactly that).
+      sendMessage(chatId, 'hello there');
+      // Patch records do not always carry `chatId`, and this case runs a
+      // single chat, so any green final patch is this turn's.
+      await waitFor(
+        'the first green card (a live session)',
+        () => readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'green'),
+        90_000,
+      );
+      // Use the catalog's flash id: dsh persists the default into the shared
+      // profile, so leaving an out-of-catalog id here would break the NEXT
+      // run's picker assertion that the deployment default is a catalog member.
       sendMessage(chatId, '/model deepseek-official/deepseek-flash');
       await expectText(
         'Model set to deepseek-official · deepseek-flash (this session + default)',

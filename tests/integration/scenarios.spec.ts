@@ -980,8 +980,11 @@ describe.skipIf(!integrationReady)('scenario integration (real process)', () => 
    *  still-active `every`. The first-turn scripts are duplicated because the
    *  per-session title-generation completion consumes one script at an
    *  unpredictable point — the duplicated tool calls guarantee the creates.
-   *  dsh 0.1.7 made `title` a required `schedule_create` argument, so every
-   *  scripted call must carry one or the tool rejects the call. */
+   *  `schedule_create` takes `{ title, prompt, rrule, target }` since dsh
+   *  0.2.2 (it replaced the flat `after_seconds` / `every_seconds` timing and
+   *  made `target` explicit), and its RFC 5545 subset has no SECONDLY, so a
+   *  quick one-shot is a MINUTELY rule whose DTSTART sits a few seconds ahead.
+   *  Both tasks target `this_session` so the fired turn lands in THIS chat. */
   it('schedule reminders: agent-created, fires to a Reminder card, /schedule lists', async () => {
     // dsh 0.1.7 keeps reminders as durable HOST state in the shared profile
     // home (0.1.5 kept them in the session log). A leftover `every` reminder
@@ -991,6 +994,25 @@ describe.skipIf(!integrationReady)('scenario integration (real process)', () => 
     const scheduleStore = join(DSH_HOME, 'storages', 'schedule.json');
     rmSync(scheduleStore, { force: true });
     try {
+      // A recurring every-minute rule anchored far in the past (delivery
+      // starts at the first occurrence after creation) and a one-shot whose
+      // only occurrence is ~8s ahead.
+      const recurringArgs = JSON.stringify({
+        title: 'Status ping',
+        prompt: 'status ping',
+        rrule: 'DTSTART:20200101T000000Z\nRRULE:FREQ=MINUTELY;INTERVAL=1',
+        target: 'this_session',
+      });
+      const soon = new Date(Date.now() + 8_000)
+        .toISOString()
+        .replace(/[-:]/g, '')
+        .replace(/\.\d+Z$/, 'Z');
+      const quickArgs = JSON.stringify({
+        title: 'Quick check',
+        prompt: 'quick check',
+        rrule: `DTSTART:${soon}\nRRULE:FREQ=MINUTELY;COUNT=1`,
+        target: 'this_session',
+      });
       mock?.setScripts([
         [
           {
@@ -998,7 +1020,7 @@ describe.skipIf(!integrationReady)('scenario integration (real process)', () => 
               index: 0,
               id: 'call-sched-every-1',
               name: 'schedule_create',
-              arguments: '{"title":"Status ping","prompt":"status ping","every_seconds":300}',
+              arguments: recurringArgs,
             },
           },
         ],
@@ -1008,7 +1030,7 @@ describe.skipIf(!integrationReady)('scenario integration (real process)', () => 
               index: 0,
               id: 'call-sched-every-2',
               name: 'schedule_create',
-              arguments: '{"title":"Status ping","prompt":"status ping","every_seconds":300}',
+              arguments: recurringArgs,
             },
           },
         ],
@@ -1019,7 +1041,7 @@ describe.skipIf(!integrationReady)('scenario integration (real process)', () => 
               index: 0,
               id: 'call-sched-after-1',
               name: 'schedule_create',
-              arguments: '{"title":"Quick check","prompt":"quick check","after_seconds":2}',
+              arguments: quickArgs,
             },
           },
         ],
@@ -1072,7 +1094,7 @@ describe.skipIf(!integrationReady)('scenario integration (real process)', () => 
         'the schedule listing text',
         () =>
           readOutbox().some(
-            (r) => r.kind === 'text' && r.text?.includes('every 300s · status ping (scheduled)'),
+            (r) => r.kind === 'text' && r.text?.includes('recurring · status ping (scheduled)'),
           ),
         30_000,
       );
