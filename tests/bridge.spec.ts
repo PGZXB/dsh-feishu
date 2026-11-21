@@ -1225,6 +1225,65 @@ describe('Bridge', () => {
       expect(idleLabels).toEqual(['🔁 Retry last', '📋 Copy last']);
     });
 
+    it('un-wedges a chat whose turn never ended (stale working state, #85)', async () => {
+      // User report: a model stream died mid-turn, no terminal `turn/end`
+      // arrived, and every later message was rejected with the busy notice.
+      // dsh repairs the persisted LOG on resume, but a live process still
+      // holds the surface's in-memory working card — so the next message must
+      // settle that stale turn instead of queueing behind it forever.
+      const h = makeHarness({ throttleMs: 0 });
+      await h.bridge.handleMessage(message());
+      // dsh has no running agent for the session and no turn/end was emitted.
+      h.agentStore.setStatus('feishu-session-1', 'idle');
+      const before = h.agentStore.followups.get('feishu-session-1')?.length ?? 0;
+      await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: 'still there?' }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      // The stale card is settled (red) and the chat is told, once.
+      expect(
+        h.transport.sentTexts.some((t) => t.text.includes('previous turn never finished')),
+      ).toBe(true);
+      expect(h.transport.updatedCards.some((c) => c.header?.template === 'red')).toBe(true);
+      // And this message ran as a NEW turn rather than being queued.
+      const after = h.agentStore.followups.get('feishu-session-1')?.length ?? 0;
+      expect(after).toBe(before + 1);
+    });
+
+    it('does NOT stale-release while the agent is genuinely running', async () => {
+      // The guard for #85: only settle when dsh reports no running agent. A
+      // live turn must keep its card (this fake agent has no inbox, so the
+      // queue path itself is covered by tests/queue.spec.ts).
+      const h = makeHarness({ throttleMs: 0 });
+      await h.bridge.handleMessage(message());
+      h.agentStore.setStatus('feishu-session-1', 'running');
+      await h.bridge.handleMessage(message({ messageId: 'om_msg2', text: 'second' }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(
+        h.transport.sentTexts.some((t) => t.text.includes('previous turn never finished')),
+      ).toBe(false);
+      expect(h.transport.updatedCards.some((c) => c.header?.template === 'red')).toBe(false);
+    });
+
+    it('stop force-settles a wedged working card even though the agent is idle (#85)', async () => {
+      const h = makeHarness({ throttleMs: 0 });
+      await h.bridge.handleMessage(message());
+      h.agentStore.setStatus('feishu-session-1', 'idle');
+      await h.bridge.handleCardAction({
+        messageId: 'mem-1',
+        chatId: 'oc_chat',
+        operatorOpenId: 'ou_user',
+        value: { kind: 'stop' },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(h.transport.sentTexts.some((t) => t.text.includes('force-settled'))).toBe(true);
+      // The Web Stop's cancel is still issued, so a latent dsh turn is released.
+      expect(h.agentStore.cancels).toContain('feishu-session-1');
+      expect(h.transport.updatedCards.some((c) => c.header?.template === 'red')).toBe(true);
+      // It must NOT answer with the plain "nothing to stop" copy.
+      expect(h.transport.sentTexts.some((t) => t.text.includes('No active turn to stop'))).toBe(
+        false,
+      );
+    });
+
     it('stop mid-turn then aborted turn/end → card shows Stopped, not Done', async () => {
       // User report: after Stop, the card finalized green ('Done') — an
       // aborted turn must read 'Stopped' (DSH web: message.stopped).

@@ -412,6 +412,8 @@ export const zhMessages: Record<MessageKey, string> = {
   'queue.alreadyConsumed': '⚠️ 那条排队的消息已被处理。',
 
   // ── Turn errors (streaming) ─────────────────────────────────────────────
+  'error.staleTurnSettled': '⚠️ 上一轮没有正常结束，已自动结算，可以继续对话。',
+  'controller.info.forceSettled': '已强制结算上一轮，可以继续发消息。',
   'error.turnFailed': '⚠️ 回复失败：{error}',
   'error.unknown': '未知错误',
   'error.unspecified': '该次回复因未指明的错误而失败。',

@@ -1473,6 +1473,23 @@ export class Bridge {
     // turn (opening its streaming card). Degrade to a normal turn when no live
     // agent (or no inbox) exists (today's behavior).
     const live = this.liveAgent(message.chatId);
+    // A card that still says "working" while dsh has no running turn is the
+    // #85 wedge (a failed stream that never delivered `turn/end`). Settle it
+    // and carry on with THIS message — queueing behind a turn that no longer
+    // exists would reject every later message until a restart.
+    if (
+      live !== undefined &&
+      live.status !== 'running' &&
+      this.streaming.isWorking(message.chatId)
+    ) {
+      const settled = await this.streaming.settleStaleTurn(message.chatId);
+      if (settled) {
+        this.options.logger.warn(
+          `message ${message.messageId}: settled a stale working turn for chat ${message.chatId}`,
+        );
+        await this.options.transport.sendText(message.chatId, t('error.staleTurnSettled'));
+      }
+    }
     if (
       live !== undefined &&
       live.inbox !== undefined &&

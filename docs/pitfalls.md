@@ -478,3 +478,23 @@ type-safe.
   independent-looking features to break at once. Grep the entry point for
   `ctx.get(` and check each one against the installed mount order before
   chasing the features separately.
+
+## A turn that never ends must not wedge the chat
+
+A model stream can die mid-turn in a way that ends the turn in dsh WITHOUT a
+terminal `turn/end` (0.2.1 user report #85: `MALFORMED_RESPONSE` from an
+intranet gateway). The surface's busy gate reads its own in-memory card state,
+so the chat kept rejecting every later message ("previous request is still
+running") for 25+ minutes, and a plugin restart did not help because the
+persisted session still looked like an open turn.
+
+- Rule: treat dsh's `agent.status` as the authority for "is a turn running" and
+  treat our card as a view that can be stale. Before queueing a message, if the
+  card says `working` but the live agent is not `running`, settle the stale card
+  (terminal render + one notice) and deliver the message as a new turn.
+- Rule: make Stop an escape hatch that works even when the surface believes
+  nothing runs (force-settle the stale card and issue the host cancel).
+- Do NOT re-implement crash repair: dsh repairs an interrupted tail turn when it
+  resumes the session (`interruptedTurnClosers` appends synthetic results,
+  `step/end` and `turn/end{reason:'interrupted'}`). Appending closers ourselves
+  races that repair.

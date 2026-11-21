@@ -247,27 +247,12 @@ function sendMessage(chatId: string, text: string): void {
 }
 
 /** The shared test home's `settings.yaml` (the dsh-base settings document). */
-const SETTINGS_PATH = join(DSH_HOME, 'settings.yaml');
 
 /** Write the `agent-default-model` section into the shared settings file
  *  BEFORE a dsh process boots, preserving any other sections. Returns the
  *  exact prior file content (or `undefined` when the file did not exist) so
  *  the caller can restore it in `finally` — the integration suites share the
  *  real profile (AGENTS.md: "Test-side state is part of the test"). */
-function writeSavedDefaultModel(provider: string, model: string): string | undefined {
-  const previous = existsSync(SETTINGS_PATH) ? readFileSync(SETTINGS_PATH, 'utf8') : undefined;
-  const doc = previous === undefined ? {} : (load(previous) as Record<string, unknown>);
-  doc['agent-default-model'] = { provider, model };
-  writeFileSync(SETTINGS_PATH, dump(doc), 'utf8');
-  return previous;
-}
-
-/** Restore the shared settings file to its exact prior content (or remove it
- *  when it did not exist before the test). */
-function restoreSettings(previous: string | undefined): void {
-  if (previous === undefined) rmSync(SETTINGS_PATH, { force: true });
-  else writeFileSync(SETTINGS_PATH, previous, 'utf8');
-}
 
 describe.skipIf(!integrationReady)('real-composition integration', () => {
   let mock: MockLlmServer | undefined;
@@ -1926,10 +1911,17 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
     const server = mock;
     if (bin === undefined) throw new Error('dsh CLI unavailable');
     if (server === undefined) throw new Error('mock LLM server unavailable');
-    // A saved default that differs from the composition entry
-    // (`deepseek-v4-flash`); deepseek-official keeps the adapter routing to
-    // the mock, only the model id differs.
-    const previous = writeSavedDefaultModel('deepseek-official', 'deepseek-v4-pro');
+    // dsh 0.2.2 stores the deployment default in the PROFILE COMPOSITION
+    // (`agentDefaultModel.saveSelection` writes through the profile's config
+    // editor; the config fields are `volatile()` and `settings.configure({
+    // auto: false })` owns them), so seeding `settings.yaml` no longer changes
+    // it — that fixture only ever passed on a profile that still carried a
+    // leftover save. Drive the real path instead: save a default that differs
+    // from the entry one through `/model`, then assert a FRESH session uses it.
+    const ENTRY_MODEL = 'deepseek-flash';
+    const SAVED_MODEL = 'deepseek-v4-pro';
+    let savedDefaultApplied = false;
+    let chatId = '';
     try {
       child = spawn(bin, ['--profile', 'feishu-dev'], {
         env: {
@@ -1953,7 +1945,9 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
       });
       await waitFor('the bridge to report ready', () => bridgeReady, 30_000);
 
-      const chatId = `oc_default_${Date.now()}`;
+      // 1) A first chat saves the default through the surface (the service
+      //    validates it and writes the profile composition).
+      chatId = `oc_default_${Date.now()}`;
       await pinWorkingDir(chatId);
       sendMessage(chatId, 'run with the saved default model');
       await waitFor(
@@ -1961,15 +1955,44 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         () => readOutbox().some((r) => r.kind === 'patch' && r.card?.header?.template === 'green'),
         90_000,
       );
-      // Every completion this agent issues — the turn's request(s) and the
-      // new-session title generation — must carry the SAVED model, never the
-      // dsh-base entry default. Assert on the SETTLED request set: request
-      // ordering vs the title-generation completion is not stable, and
-      // reading it mid-flight is what made this case flaky.
-      const models = await settledRequestModels(server);
+      sendMessage(chatId, `/model deepseek-official/${SAVED_MODEL}`);
+      await waitFor(
+        'the saved-default confirmation',
+        () =>
+          readOutbox().some(
+            (r) =>
+              r.kind === 'text' &&
+              r.text?.includes(`Model set to deepseek-official · ${SAVED_MODEL}`),
+          ),
+        60_000,
+      );
+      savedDefaultApplied = true;
+
+      // 2) A FRESH chat (new session) must assemble with the saved default,
+      //    not the dsh-base entry model.
+      const baseline = server.completionRequests();
+      const freshChat = `oc_default_fresh_${Date.now()}`;
+      await pinWorkingDir(freshChat);
+      // Patch records do not carry chatId, so isolate THIS turn with an outbox
+      // baseline instead of matching the first chat's green card.
+      const outboxBaseline = readOutbox().length;
+      sendMessage(freshChat, 'run with the saved default model');
+      await waitFor(
+        'the fresh session green card',
+        () =>
+          readOutbox()
+            .slice(outboxBaseline)
+            .some((r) => r.kind === 'patch' && r.card?.header?.template === 'green'),
+        90_000,
+      );
+      // Assert on the SETTLED request set (the turn's request and the
+      // new-session title generation are separate): every completion the fresh
+      // session issued must carry the SAVED model.
+      const settled = await settledRequestModels(server);
+      const models = settled.slice(baseline);
       expect(models.length).toBeGreaterThanOrEqual(1);
       expect(
-        models.every((model) => model === 'deepseek-v4-pro'),
+        models.every((model) => model === SAVED_MODEL),
         `requested models: ${JSON.stringify(models)}`,
       ).toBe(true);
     } catch (error) {
@@ -1977,9 +2000,28 @@ describe.skipIf(!integrationReady)('real-composition integration', () => {
         `${String(error)}\n--- dsh stderr ---\n${stderr}\n--- dsh stdout ---\n${stdout}`,
       );
     } finally {
-      // Restore the shared test home's settings (AGENTS.md: test-side state
-      // is part of the test).
-      restoreSettings(previous);
+      // Restore the ENTRY default through the same service the save used, so
+      // the shared test profile is exactly as this test found it (AGENTS.md:
+      // test-side state is part of the test). Best-effort: the child may
+      // already be gone when the case failed early.
+      if (savedDefaultApplied && child !== undefined && child.exitCode === null) {
+        try {
+          sendMessage(chatId, `/model deepseek-official/${ENTRY_MODEL}`);
+          await waitFor(
+            'the entry-default restore confirmation',
+            () =>
+              readOutbox().some(
+                (r) =>
+                  r.kind === 'text' &&
+                  r.text?.includes(`Model set to deepseek-official · ${ENTRY_MODEL}`),
+              ),
+            30_000,
+          );
+        } catch {
+          // Best-effort; afterEach kills the child and each later case saves
+          // whatever default it needs.
+        }
+      }
     }
   }, 150_000);
 
