@@ -687,14 +687,15 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
   // the same event and claims the request by returning a structured answer.
   // Answerer instances dispose with the event subscription; the service's
   // absence degrades to an unanswered question (loud, non-fatal).
-  const userQuestionsService = ctx.get('userQuestions');
-  if (userQuestionsService !== undefined) {
-    ctx.on('user-questions/request', (request: AskQuestionsRequestLike) =>
+  // `userQuestions` is an async seam: in some profiles it registers after
+  // this bundle's apply, so a one-shot `ctx.get` probe would disable the
+  // question cards for the whole process lifetime. `inject` waits for the
+  // service and disposes the subscription with it.
+  ctx.inject(['userQuestions'], (scoped) => {
+    scoped.on('user-questions/request', (request: AskQuestionsRequestLike) =>
       bridge.askQuestions(request),
     );
-  } else {
-    ctx.logger.warn('[feishu] userQuestions service unavailable; questions cannot be rendered');
-  }
+  });
   ctx.effect(() => () => {
     bridge.dispose();
     sessionMap.persist();
