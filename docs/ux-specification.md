@@ -1635,3 +1635,40 @@ It falls back to `agent.options`, then the deployment default.
 - A refusing service (`session/model-unavailable`): logged, and the reply stays
   honest about the session keeping its model.
 4d2ba302 (feat: /model switches the current session's model immediately (and sets the default))
+
+## Part: turn-recovery
+
+> A turn that dies WITHOUT a terminal `turn/end` must not wedge the chat: the
+> next message settles the stale card and then runs, and Stop can force-release
+> a card the surface still believes is running.
+
+### Intended behavior
+
+- **"Running" is dsh's answer, not ours alone.** The surface's card state is an
+  in-memory view; a model stream can fail mid-flight and end the turn in dsh
+  without ever delivering `turn/end` (user report #85: every later message was
+  rejected with the busy notice and the state survived restarts).
+- **The next message repairs the view.** When a message arrives while the
+  card says `working` but the chat's live agent is NOT `running`, the surface
+  finalizes that card in its error state with a short reason
+  (`error.staleTurnSettled`), posts the reason once, and delivers the message as
+  a NEW turn. It never queues behind a turn that no longer exists.
+- **Stop is always an escape hatch.** Tapping Stop on such a card force-settles
+  it and issues the same `agent.cancel({ kind: 'user' }, { keepInbox: true })`
+  the DSH web Stop issues, replying `controller.info.forceSettled`. On a
+  genuinely idle chat it keeps the existing "nothing to stop" copy and issues
+  no cancel.
+- **Restart needs nothing from us.** dsh repairs a persisted log whose tail
+  turn was interrupted when the session is resumed (`dsh-agent-loop` →
+  `interruptedTurnClosers`: synthetic tool results, `step/end`, and a
+  `turn/end{ reason: 'interrupted' }`). Our own state is in-memory and therefore
+  empty at startup; the surface deliberately does NOT append closers itself —
+  duplicating upstream would race the real repair.
+
+### Failure modes
+
+- No live agent at all (a stale card after a restart): unchanged — Stop explains
+  that there is no session to stop.
+- Our card idle while dsh reports `running` (a turn started by another
+  surface): unchanged — the working gate only queues when OUR card says
+  working.

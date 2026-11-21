@@ -883,3 +883,31 @@ message, feishu }>>`，使每项的专属卡在状态变化时**原地**更新�
   （`runtime-types.ts`）：运行中的 driver 在下一个 STEP 边界消费 steering，绝不
   中途插入。dsh-feishu 只用 `agent.steer`；绝不把非插话排队消息追加进 inbox。
 
+## Part: turn-recovery
+
+> 没有收到终态 `turn/end` 就中断的一轮，不能把会话卡死：下一条消息会先把
+> 陈旧卡片结算掉再正常开新轮，Stop 也能强制释放「表面仍以为是运行中」的卡片。
+
+### 预期行为
+
+- **「是否在运行」以 dsh 的 `agent.status` 为准，而不是只看我们自己的卡片。**
+  卡片状态只是内存里的视图；模型流可能中途失败，在 dsh 侧结束了一轮却从未发出
+  `turn/end`（用户报告 #85：之后每条消息都被繁忙提示拒绝，且重启后依旧）。
+- **下一条消息负责修复视图。** 来消息时若卡片仍是 `working`、但该聊天的 live
+  agent 已不在 `running`，就地把那张卡结算为错误态并附简短原因
+  （`error.staleTurnSettled`），只发一次提示，然后把这条消息当作**新的一轮**投递；
+  绝不排在一个已经不存在的回合后面。
+- **Stop 永远是逃生口。** 在这种卡片上点 Stop 会强制结算，并发出与 DSH web Stop
+  相同的 `agent.cancel({ kind: 'user' }, { keepInbox: true })`，回复
+  `controller.info.forceSettled`；对真正空闲的聊天仍保留原来的「没有可停止的回复」
+  文案，且不发 cancel。
+- **重启不需要我们做事。** dsh 在恢复会话时会修复尾部未结束的日志
+  （`dsh-agent-loop` → `interruptedTurnClosers`：补合成 tool result、`step/end`
+  与 `turn/end{ reason: 'interrupted' }`）。我们自己的状态在内存里、启动时为空；
+  表面**刻意不**自行追加合成事件——与上游重复会与真正的修复竞争。
+
+### 失败模式
+
+- 完全没有 live agent（重启后残留卡片）：行为不变——Stop 会说明没有可停止的会话。
+- 我们卡片空闲而 dsh 报 `running`（另一表面启动了回合）：行为不变——繁忙门只在
+  我们自己的卡片为 working 时排队。
