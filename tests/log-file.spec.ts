@@ -15,7 +15,9 @@ import { logFilePath, readLogFile } from '../src/log-file.js';
 
 describe('log-file', () => {
   it('derives the dsh-feishu log path under the data dir', () => {
-    expect(logFilePath('/home/x/feishu')).toBe('/home/x/feishu/logs/dsh-feishu.log');
+    // join() is platform-native: assert through path.join so the spec is
+    // identical on POSIX and Windows.
+    expect(logFilePath('/home/x/feishu')).toBe(join('/home/x/feishu', 'logs', 'dsh-feishu.log'));
   });
 
   it('returns an error when the log file does not exist', () => {

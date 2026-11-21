@@ -17,6 +17,11 @@ import {
 } from 'node:fs';
 import { basename, join, relative } from 'node:path';
 
+/** Path relative to a base, normalized to '/' separators for cross-platform manifests. */
+function relPosix(base: string, target: string): string {
+  return relative(base, target).split('\\').join('/');
+}
+
 /** One artifact the run produced. */
 export interface E2eArtifact {
   readonly kind: 'screenshot' | 'video';
@@ -66,7 +71,7 @@ export function collectArtifacts(reportDir: string): E2eArtifact[] {
             ? 'video'
             : undefined;
         if (kind !== undefined) {
-          out.push({ kind, path: relative(reportDir, full), size: stat.size });
+          out.push({ kind, path: relPosix(reportDir, full), size: stat.size });
         }
       }
     }
@@ -292,7 +297,7 @@ function populateCaseArtifacts(runDir: string, cases: E2eCase[]): void {
         copyFileSync(join(shotsDir, entry), target);
         artifacts.push({
           kind: 'screenshot',
-          path: relative(caseDir, target),
+          path: relPosix(caseDir, target),
           size: statSync(target).size,
         });
       }
@@ -318,7 +323,7 @@ function copyArtifact(
     copyFileSync(src, target);
     artifacts.push({
       kind: screenshotKind(src) === 'screenshot' ? 'screenshot' : 'video',
-      path: relative(caseDir, target),
+      path: relPosix(caseDir, target),
       size: statSync(target).size,
     });
   } catch {

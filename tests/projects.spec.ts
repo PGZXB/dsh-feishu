@@ -100,10 +100,13 @@ describe('scanProjects', () => {
     expect(projects.length).toBeLessThan(5);
   });
 
-  it('caps the walk with the default dir budget', async () => {
+  it('caps the walk with the default dir budget', { timeout: 60_000 }, async () => {
     expect(DEFAULT_MAX_SCAN_DIRS).toBeGreaterThan(0);
     for (let i = 0; i < 20; i += 1) makeRepo(`bulk${i}`);
-    const projects = await scanProjects(SCRATCH);
+    // The 4s default clock trips on slower filesystems (Windows + AV + git)
+    // and silently truncates the walk — this test asserts the count itself,
+    // so it opts into a generous wall-clock while keeping the dir budget.
+    const projects = await scanProjects(SCRATCH, 3, { maxScanMs: 60_000 });
     expect(projects.length).toBe(20);
   });
 });
