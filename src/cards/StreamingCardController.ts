@@ -357,6 +357,38 @@ export class StreamingCardController {
     return this.cardStates.get(chatId)?.status === 'working';
   }
 
+  /**
+   * Force-settle a turn the surface still believes is running although dsh has
+   * no running agent for it — the state a failed model stream leaves behind
+   * when it dies before delivering `turn/end` (#85). Without this the chat's
+   * working gate would reject (queue) every later message until the plugin is
+   * restarted.
+   *
+   * The card is finalized in its error state with a short reason, exactly like
+   * a `turn/end` error, so the surface's single render path stays authoritative.
+   *
+   * @param chatId - the chat whose stale working state should be settled.
+   * @returns whether a stale working state was found and settled.
+   */
+  async settleStaleTurn(chatId: string): Promise<boolean> {
+    const state = this.cardStates.get(chatId);
+    if (state === undefined || state.status !== 'working') return false;
+    this.host.logger.warn(
+      `settling a stale working turn for chat ${chatId}: the agent is not running (no terminal turn/end was recorded)`,
+    );
+    settleOpenThink(state);
+    state.status = 'error';
+    state.stopRequested = false;
+    state.errorText = t('error.staleTurnSettled');
+    this.host.cards.patch(chatId, this.snapshot(chatId, state));
+    await this.host.cards.finalize(chatId, 'error');
+    this.captureFinishedRender(chatId, state);
+    await this.ackTurnEnd(chatId, 'error');
+    const finalText = state.content.trim();
+    if (finalText !== '') this.lastOutputs.set(chatId, finalText);
+    return true;
+  }
+
   /** The chat's last completed output, or `undefined`. */
   lastOutput(chatId: string): string | undefined {
     return this.lastOutputs.get(chatId);
@@ -1090,6 +1122,23 @@ export class StreamingCardController {
           return;
         }
         if (agent.status !== 'running') {
+          // dsh reports no running turn. That is the normal idle case — but it
+          // is ALSO the wedged state from #85 (our card still says working
+          // because the failed stream never delivered `turn/end`). Release that
+          // card instead of answering "nothing to stop", and issue the same
+          // cancel the Web Stop does (a no-op on an idle agent) so any latent
+          // dsh-side turn is released too.
+          const settled = await this.settleStaleTurn(action.chatId);
+          if (settled) {
+            // Same cancel the Web Stop issues, so a latent dsh-side turn is
+            // released too; only reached when there WAS a wedged card.
+            agent.cancel({ kind: 'user' }, { keepInbox: true });
+            this.host.logger.info(
+              `stop for chat ${action.chatId}: stale working card force-settled`,
+            );
+            await this.host.transport.sendText(action.chatId, t('controller.info.forceSettled'));
+            return;
+          }
           // The DSH web Stop cancels a running turn; an idle agent has
           // nothing to cancel (agent.cancel is a no-op then — sending
           // "Stopping…" with no follow-up read as a hang, user report).

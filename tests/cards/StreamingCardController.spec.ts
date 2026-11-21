@@ -372,10 +372,24 @@ describe('StreamingCardController', () => {
     expect(h.controller.state('oc_chat')?.stopRequested).toBe(true);
   });
 
-  it('stop on an idle agent explains instead of hanging', async () => {
+  it('stop on a stale working card force-settles it (agent idle, #85)', async () => {
+    // #85: a failed stream can leave the card `working` while dsh has no
+    // running turn. Stop must release that card (and issue the host cancel)
+    // instead of answering "nothing to stop" forever.
     const h = makeController();
     h.setStatus('idle');
     await h.controller.beginTurn('oc_chat', 'om-1', 'T');
+    await h.controller.handleStreamingAction(action('stop'));
+    expect(h.cancels).toHaveLength(1);
+    expect(h.transport.sentTexts.some((t) => t.text.includes('force-settled'))).toBe(true);
+    expect(h.controller.state('oc_chat')?.status).toBe('error');
+  });
+
+  it('stop on a finished turn explains instead of hanging', async () => {
+    const h = makeController();
+    h.setStatus('idle');
+    await h.controller.beginTurn('oc_chat', 'om-1', 'T');
+    await h.controller.handleEvent('feishu-session-1', turnEndEvent({ kind: 'completed' }));
     await h.controller.handleStreamingAction(action('stop'));
     expect(h.cancels).toHaveLength(0);
     expect(h.transport.sentTexts.some((t) => t.text.includes('No active turn to stop'))).toBe(true);

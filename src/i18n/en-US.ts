@@ -429,6 +429,9 @@ export const enMessages = {
   'status.effortSuffix': ' · effort {effort}',
 
   // ── Turn errors (streaming) ─────────────────────────────────────────────
+  'error.staleTurnSettled':
+    '⚠️ The previous turn never finished — it has been settled so you can keep chatting.',
+  'controller.info.forceSettled': 'Previous turn force-settled — you can send a new message.',
   'error.turnFailed': '⚠️ Turn failed: {error}',
   'error.unknown': 'unknown error',
   'error.unspecified': 'The turn failed with an unspecified error.',
