@@ -57,7 +57,7 @@ import type {
 import { readLogFile } from './log-file.js';
 import { MessageDeduplicator } from './message-dedup.js';
 import { parseModelArg } from './model-args.js';
-import { sessionSelection } from './model-switch.js';
+import { type SessionModelSelector, sessionSelection } from './model-switch.js';
 import type { PanelActionContext } from './panel/actions/PanelAction.js';
 import { buildPanelActionRegistry } from './panel/actions/registry.js';
 import { PanelController, type PanelHost } from './panel/PanelController.js';
@@ -381,6 +381,17 @@ export interface BridgeOptions {
     rename(session: unknown, title: string): unknown;
   };
   /**
+   * Lazy view of the same seam. dsh 0.2.2 mounts `sessionTitle` after this
+   * plugin's `apply`, so an eager snapshot is permanently `undefined` and the
+   * panel reports "renaming is unavailable on this deployment". Prefer this
+   * getter; `sessionTitle` stays for callers that already hold the service.
+   */
+  readonly getSessionTitle?: () =>
+    | {
+        rename(session: unknown, title: string): unknown;
+      }
+    | undefined;
+  /**
    * Workspace-registry seam (`ctx.workspaceRegistry`, mounted by the
    * storage×3 + workspace bundle rows): archives/restores sessions through
    * the durable storage domain (web-visible). Resolved lazily because the
@@ -423,26 +434,33 @@ export interface BridgeOptions {
    * picks through it. Absent, `/permission` degrades to the harness
    * report text.
    */
-  readonly permissionPresets?: PermissionPresetService;
+  readonly permissionPresets: PermissionPresetService | undefined;
   /**
    * Plan-mode controller (`ctx.planMode`, mounted by dsh-base): a bare
    * `/plan` (or its button) toggles plan mode through it instead of only
    * entering. Absent, the bare form falls back to the harness behavior.
    */
-  readonly planMode?: PlanModeService;
+  readonly planMode: PlanModeService | undefined;
   /**
    * Default-model service (`ctx.agentDefaultModel`, mounted by dsh-base):
    * `/model` reads the current selection and sets the default for future
    * sessions. Absent, `/model` reports the live agent's own options when
    * available, else fails loud.
    */
-  readonly agentDefaultModel?: AgentDefaultModelService;
+  readonly agentDefaultModel: AgentDefaultModelService | undefined;
+  /**
+   * Session-model seam (`ctx.sessionController.selectModel`, mounted by
+   * `@deepseek-ai/dsh-api-session-controller`): validates one model against the
+   * live catalog, records it for that session's next step and saves the
+   * deployment default. Absent, `/model` saves only the default.
+   */
+  readonly selectSessionModel?: SessionModelSelector;
   /**
    * LLM runtime (`ctx.llm`, mounted by dsh-base): the /model picker card
    * lists models through `listProviders` × `listModels`. Absent, a bare
    * `/model` falls back to the text display.
    */
-  readonly llm?: LlmService;
+  readonly llm: LlmService | undefined;
   /**
    * Refuse to start turns until the chat has an EXPLICITLY pinned working
    * directory (/repo pick or /cd). Default true — a fresh chat (or a new
@@ -719,7 +737,9 @@ export class Bridge {
       ensureAgent: (chatId) => this.ensureAgent(chatId),
       permissionPresets: () => this.options.permissionPresets,
       canMutateSessions:
-        this.options.sessionTitle !== undefined || this.options.getWorkspaceRegistry !== undefined,
+        this.options.sessionTitle !== undefined ||
+        this.options.getSessionTitle !== undefined ||
+        this.options.getWorkspaceRegistry !== undefined,
     };
   }
 
@@ -740,10 +760,12 @@ export class Bridge {
         requireWorkingDir: this.options.requireWorkingDir,
         repoRoots: this.options.repoRoots,
         sessionTitle: this.options.sessionTitle,
+        getSessionTitle: this.options.getSessionTitle,
         getWorkspaceRegistry: this.options.getWorkspaceRegistry,
         permissionPresets: this.options.permissionPresets,
         planMode: this.options.planMode,
         agentDefaultModel: this.options.agentDefaultModel,
+        selectSessionModel: this.options.selectSessionModel,
         llm: this.options.llm,
         listSessions: this.options.listSessions,
       },
@@ -1313,11 +1335,11 @@ export class Bridge {
   private currentModelSelection(chatId: string): string | undefined {
     const live = this.liveAgent(chatId);
     // A session-switched model (via `/model`, dsh web parity) takes precedence:
-    // applySessionModelSwitch writes `selection.current` into the agent's coupled
-    // ref, but the agent's static `options` is NOT mutated, so reading it first
-    // would show the pre-switch model (the #40 display bug). Fall back to the
-    // agent's static options, then the deployment default.
-    const switched = sessionSelection(live?.ctx)?.current;
+    // dsh 0.2.2 records the selection on the agent, whose `current()` resolves
+    // it ahead of the static `options` (which a switch does NOT mutate), so
+    // reading the options first would show the pre-switch model (the #40
+    // display bug). Fall back to those options, then the deployment default.
+    const switched = sessionSelection(live);
     if (switched !== undefined) {
       return `${switched.provider}/${switched.model}`;
     }
@@ -2335,6 +2357,9 @@ export class Bridge {
       },
       get agentDefaultModel() {
         return bridge.options.agentDefaultModel;
+      },
+      get selectSessionModel() {
+        return bridge.options.selectSessionModel;
       },
       get llm() {
         return bridge.options.llm;

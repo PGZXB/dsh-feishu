@@ -1,80 +1,110 @@
 /**
  * Per-session model switching for `/model`.
  *
- * dsh-web's `/model` switches the CURRENT session's model immediately (and
- * saves the default). The host implements the per-session switch by coupling a
- * mutable {@link ModelSelectionRef} to the live agent's scoped context via
- * `installModelSelection` (see `dsh-host-apiproxy`'s `selectionFor`). This
- * module replicates that: an agent gets ONE coupled selection ref (installed
- * once, cached in a `WeakMap`), and `/model` mutates its `current` so the next
- * prompt assembly uses the new provider/model.
+ * dsh 0.2.2 moved model state onto the agent and made it durable: the agent
+ * owns an `AgentModel` whose `select()` appends a `modelSelection` projection
+ * row, and the session business API exposes the whole switch as
+ * `ctx.sessionController.selectModel({ sessionId, provider, model })` — it
+ * validates the model against the live catalog, records the selection for the
+ * next step, and saves the deployment default.
  *
- * NOTE: this is a runtime import from `@deepseek-ai/dsh-agent` — a deliberate
- * exception to the repo's "type-only `@deepseek-ai/*` imports" convention, made
- * because genuine per-session model switching requires it (maintainer decision,
- * see docs/ux-specification.md → `/model` immediate switch).
+ * 0.2.2 also took the old coupling away: `installModelSelection(agentCtx, ref)`
+ * became `installModelSelection(agentCtx)`, which only installs the scoped
+ * switch-notice listener (the host's own agent setup calls it). The surface
+ * therefore no longer keeps a mutable ref — it asks the service to write and
+ * reads the agent's own selection to display, which also ends this module's
+ * runtime import from `@deepseek-ai/dsh-agent`.
  *
  * @module src/model-switch
  */
 
-import type { Context } from '@deepseek-ai/cordis';
-import { installModelSelection } from '@deepseek-ai/dsh-agent';
-
 /** A selected provider/model (structural subset of dsh's `ModelSelection`). */
 export interface ModelSelectionRef {
-  current: { provider: string; model: string } | undefined;
-  assembled: { provider: string; model: string } | undefined;
-}
-
-const refs = new WeakMap<object, ModelSelectionRef>();
-
-/**
- * Couple a mutable model-selection to `agentCtx` ONCE and return it. Repeated
- * calls for the same context return the cached ref without re-installing so
- * the waterfall listeners are not stacked.
- * @param agentCtx - the live agent's scoped context.
- * @returns the agent's mutable selection ref.
- */
-export function sessionSelectionFor(agentCtx: Context): ModelSelectionRef {
-  let ref = refs.get(agentCtx);
-  if (ref === undefined) {
-    ref = { current: undefined, assembled: undefined };
-    refs.set(agentCtx, ref);
-    installModelSelection(agentCtx, ref);
-  }
-  return ref;
+  readonly provider: string;
+  readonly model: string;
+  readonly reasoningEffort?: string;
 }
 
 /**
- * Read the live agent's coupled selection ref WITHOUT installing it (the
- * `#40 display bug`). `sessionSelectionFor` couples the waterfall listeners on
- * first use (a write path); a read path — e.g. the panel's "current model" —
- * must never install listeners just to inspect a value, so it reads the cached
- * ref directly and returns `undefined` when no `/model` switch ran yet.
- * @param agentCtx - the live agent's scoped context (or `undefined` for none).
- * @returns the coupled selection ref (its `current` is the switched model), or
- *   `undefined` when no session switch was applied to this context.
+ * The agent's model surface (`Agent.model`), structurally.
+ *
+ * `current()` resolves the choice for the next step: a recorded selection
+ * wins, then the last request, then the agent's live options — so it reports
+ * the model a `/model` switch actually applied rather than the pre-switch
+ * static options (the `#40 display bug`).
  */
-export function sessionSelection(agentCtx: Context | undefined): ModelSelectionRef | undefined {
-  if (agentCtx === undefined) return undefined;
-  return refs.get(agentCtx);
+export interface AgentModelLike {
+  current(): Readonly<ModelSelectionRef> | undefined;
 }
 
-/**
- * Switch the model for one live agent's session (`next` becomes the model the
- * next turn assembles). No-op when `agentCtx` is undefined (already handled by
- * the caller). Does not touch the deployment default — the caller saves that
- * separately.
- * @param agentCtx - the live agent's scoped context (or undefined for no-op).
- * @param selection - the `{ provider, model }` to apply to this session.
- * @param logger - optional bridge logger for debug tracing (`FEISHU_DEBUG=1`).
- */
-export function applySessionModelSwitch(
-  agentCtx: Context | undefined,
+/** An agent reduced to what this module reads (no harness type dependency). */
+export interface AgentWithModel {
+  readonly model?: AgentModelLike;
+}
+
+/** Host seam that applies a model selection to one session. */
+export type SessionModelSelector = (
+  sessionId: string,
   selection: { provider: string; model: string },
-  logger?: { debug: (msg: string) => void },
-): void {
-  if (agentCtx === undefined) return;
-  sessionSelectionFor(agentCtx).current = selection;
-  logger?.debug(`[feishu] model switch session to ${selection.provider}/${selection.model}`);
+) => Promise<void>;
+
+/**
+ * Read the live agent's current model selection without touching any state.
+ *
+ * A read path (the panel's "current model", `/model` with no argument, the
+ * picker's preselection) must never install listeners or mutate the agent, so
+ * this only asks the agent's own model — and answers `undefined` when nothing
+ * names both provider and model.
+ *
+ * @param agent - the live agent (or `undefined` when the chat has none).
+ * @returns the current selection, if any.
+ */
+export function sessionSelection(agent: AgentWithModel | undefined): ModelSelectionRef | undefined {
+  if (agent === undefined) return undefined;
+  const model = agent.model;
+  if (model === undefined || typeof model.current !== 'function') return undefined;
+  try {
+    return model.current();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Switch one live session's model through the session business API, which
+ * validates the model, records the selection for the next step and saves the
+ * deployment default.
+ *
+ * The seam is optional: a profile without the controller keeps the saved
+ * default for future sessions and leaves this session's model alone, which is
+ * reported loudly rather than silently pretended.
+ *
+ * @param select - the host seam, `undefined` when no controller is mounted.
+ * @param sessionId - the session to switch (`undefined` for none yet).
+ * @param selection - the `provider/model` to apply.
+ * @param logger - logger for the degrade path and the switch trace.
+ * @returns whether the session selection was applied.
+ */
+export async function applySessionModelSwitch(
+  select: SessionModelSelector | undefined,
+  sessionId: string | undefined,
+  selection: { provider: string; model: string },
+  logger?: { warn: (message: string) => void; debug: (message: string) => void },
+): Promise<boolean> {
+  if (sessionId === undefined || select === undefined) {
+    logger?.warn(
+      `model switch skipped for ${sessionId ?? '(no session)'}: the sessionController service is unavailable, so only the default was saved`,
+    );
+    return false;
+  }
+  try {
+    await select(sessionId, selection);
+    logger?.debug(
+      `[feishu] model switch session ${sessionId} to ${selection.provider}/${selection.model}`,
+    );
+    return true;
+  } catch (error: unknown) {
+    logger?.warn(`model switch failed for ${sessionId}: ${String(error)}`);
+    return false;
+  }
 }

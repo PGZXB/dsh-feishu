@@ -29,7 +29,11 @@ import { resolveDirectory } from '../directory.js';
 import type { FeishuTransport } from '../feishu/types.js';
 import { type MessageKey, t } from '../i18n/index.js';
 import { parseModelArg } from '../model-args.js';
-import { applySessionModelSwitch, sessionSelection } from '../model-switch.js';
+import {
+  applySessionModelSwitch,
+  type SessionModelSelector,
+  sessionSelection,
+} from '../model-switch.js';
 import type { PanelView } from '../panel/types.js';
 import { buildSessionExport, type SessionExportEvent } from '../session-export.js';
 import type { SessionMap } from '../session-map.js';
@@ -160,6 +164,10 @@ export interface SurfaceCommandHost {
   readonly permissionPresets: PermissionPresetService | undefined;
   readonly planMode: PlanModeService | undefined;
   readonly agentDefaultModel: AgentDefaultModelService | undefined;
+  /** Apply a `provider/model` to one session through the session business API
+   *  (`ctx.sessionController.selectModel`). Absent, `/model` saves only the
+   *  deployment default and says so. */
+  readonly selectSessionModel: SessionModelSelector | undefined;
   readonly llm: LlmService | undefined;
   readonly listSessions: (() => Promise<readonly SessionListRow[] | undefined>) | undefined;
   readonly groupMentionMode: 'always' | 'never' | 'ambient' | 'topic' | undefined;
@@ -436,7 +444,6 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
         };
       }
       try {
-        const { scheduleView } = await import('@deepseek-ai/dsh-schedule');
         const records = await options.schedule.list(sessionId);
         if (records.length === 0) {
           return {
@@ -446,9 +453,15 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
         }
         const now = Date.now();
         const lines = records.map((record) => {
-          // The service returns full records; the seam declares only what the
-          // listing reads, so re-assert the view's own parameter type.
-          const view = scheduleView(record as Parameters<typeof scheduleView>[0], now);
+          // dsh 0.2.2 dropped the `scheduleView` helper (it only derived
+          // `state`), so the listing derives it here: a task whose next
+          // occurrence is still ahead is `scheduled`, otherwise `overdue`.
+          const at = record.scheduledAt === undefined ? Number.NaN : Date.parse(record.scheduledAt);
+          const state = t(
+            !Number.isNaN(at) && now >= at
+              ? 'command.schedule.state.overdue'
+              : 'command.schedule.state.scheduled',
+          );
           const prompt = record.prompt === '' ? t('status.noPrompt') : record.prompt;
           // Each rule kind carries exactly one of these fields; the service is
           // the source of truth, so render the one it filled in.
@@ -460,7 +473,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
                 : record.kind === 'every' && record.everySeconds !== undefined
                   ? t('command.schedule.rule.every', { seconds: record.everySeconds })
                   : t('command.schedule.rule.recurring');
-          return `${rule} · ${prompt} (${view.state})`;
+          return `${rule} · ${prompt} (${state})`;
         });
         return { kind: 'success', text: `${t('command.schedule.title')}\n${lines.join('\n')}` };
       } catch (error: unknown) {
@@ -490,16 +503,16 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
         }
         // No catalog: fall back to the text display. The session-switched model
         // (via /model, dsh web parity) wins over the live agent's static
-        // options (which a switch does NOT mutate); otherwise the deployment
+        // options (which a switch does NOT mutate) — dsh 0.2.2 keeps the
+        // selection on the agent, whose `current()` already resolves a
+        // recorded choice ahead of those options. Otherwise the deployment
         // default.
         const live = options.liveAgent(invocation.chatId);
-        const switched = sessionSelection(live?.ctx)?.current;
+        const current = sessionSelection(live);
         const liveSelection =
-          switched !== undefined
-            ? { provider: switched.provider, model: switched.model }
-            : live !== undefined &&
-                live.options?.provider !== undefined &&
-                live.options?.model !== undefined
+          current !== undefined
+            ? { provider: current.provider, model: current.model }
+            : live?.options?.provider !== undefined && live.options.model !== undefined
               ? { provider: live.options.provider, model: live.options.model }
               : undefined;
         const selection: ModelSelectionView | undefined =
@@ -532,17 +545,19 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
         };
       }
       await service.saveSelection(parsed.selection);
-      // (B) switch the CURRENT session immediately, not just the default for
-      // future sessions: couple the agent's model selection so the next turn
-      // assembles with the new provider/model (dsh web parity).
-      applySessionModelSwitch(
-        options.liveAgent(invocation.chatId)?.ctx,
+      // (B) switch the CURRENT session immediately too (dsh web parity), not
+      // just the default for future sessions: dsh 0.2.2 records the selection
+      // on the agent through the session business API (which also validates it
+      // against the live catalog).
+      const applied = await applySessionModelSwitch(
+        options.selectSessionModel,
+        options.sessionMap.get(invocation.chatId),
         parsed.selection,
         options.logger,
       );
       return {
         kind: 'success',
-        text: t('command.info.modelSet', {
+        text: t(applied ? 'command.info.modelSet' : 'command.info.modelSetDefaultOnly', {
           selection: `${parsed.selection.provider} · ${parsed.selection.model}`,
         }),
       };

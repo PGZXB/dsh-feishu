@@ -298,6 +298,8 @@ export const zhMessages: Record<MessageKey, string> = {
   'command.status.mention.topic': '话题',
 
   // ── /schedule 报告 ─────────────────────────────────────────────────────
+  'command.schedule.state.overdue': '已过期',
+  'command.schedule.state.scheduled': '已排期',
   'command.schedule.title': '活跃提醒：',
   'command.schedule.rule.after': '{seconds} 秒后',
   'command.schedule.rule.at': '于 {at}',
@@ -366,6 +368,7 @@ export const zhMessages: Record<MessageKey, string> = {
   'command.info.exportedEvents': '已导出 {count} 条事件到 {file}。',
   'command.info.logSent': '已发送 dsh-feishu 日志（{count} 字节）。',
   'command.info.groupCreated': '群组已创建：{name}（{chatId}）',
+  'command.info.modelSetDefaultOnly': '模型已设为 {selection}（仅默认值——当前会话未切换）。',
   'command.info.modelSet': '模型已设为 {selection}（当前会话 + 默认值）。',
   'command.info.permissionSwitched': '权限预设已切换为 {preset}。',
   'command.info.cwdSetRestart': '工作目录已设为 {path}（下一条消息将重启会话）。',

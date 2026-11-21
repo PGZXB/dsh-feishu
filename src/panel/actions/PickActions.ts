@@ -119,8 +119,12 @@ export class ModelPickAction extends PanelAction {
     if (!parsed.ok) return { kind: 'error', text: parsed.error };
     void service.saveSelection(parsed.selection);
     // (B) switch the current session immediately too (not only the default).
-    applySessionModelSwitch(
-      ctx.liveAgent(action.chatId)?.ctx,
+    // `work` runs inside the card callback, so the service call stays
+    // fire-and-forget: `runPanelOperation` already posted its placeholder and a
+    // failure is reported through the logger instead of blocking the ACK.
+    void applySessionModelSwitch(
+      ctx.services.selectSessionModel,
+      ctx.services.sessionMap.get(action.chatId),
       parsed.selection,
       ctx.services.logger,
     );
