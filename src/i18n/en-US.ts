@@ -311,6 +311,8 @@ export const enMessages = {
   'command.status.mention.topic': 'topic',
 
   // ── /schedule report ────────────────────────────────────────────────────
+  'command.schedule.state.overdue': 'overdue',
+  'command.schedule.state.scheduled': 'scheduled',
   'command.schedule.title': 'Active reminders:',
   'command.schedule.rule.after': 'after {seconds}s',
   'command.schedule.rule.at': 'at {at}',
@@ -326,6 +328,8 @@ export const enMessages = {
   'command.info.exportedEvents': 'Exported {count} events to {file}.',
   'command.info.logSent': 'Sent the dsh-feishu log ({count} bytes).',
   'command.info.groupCreated': 'Group created: {name} ({chatId})',
+  'command.info.modelSetDefaultOnly':
+    'Model set to {selection} (default only — this session kept its model).',
   'command.info.modelSet': 'Model set to {selection} (this session + default).',
   'command.info.permissionSwitched': 'Permission preset switched to {preset}.',
   'command.info.cwdSetRestart':

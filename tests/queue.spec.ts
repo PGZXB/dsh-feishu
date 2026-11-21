@@ -178,6 +178,12 @@ function makeHarness(options: { noInbox?: boolean } = {}): Harness {
     dataDir: '/work',
     logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
     requireWorkingDir: false,
+    // Services this fake composition does not mount (dsh 0.2.2 mounts them
+    // late, so the bridge resolves them lazily; `undefined` = absent).
+    permissionPresets: undefined,
+    planMode: undefined,
+    agentDefaultModel: undefined,
+    llm: undefined,
   });
   const inbox = new FakeInbox();
   const agent = new FakeAgent('s1', options.noInbox === true ? undefined : inbox);

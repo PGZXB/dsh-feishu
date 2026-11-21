@@ -229,7 +229,12 @@ type WorkspaceRegistryLike = {
  */
 /** Structural subset of dsh's `ScheduleService` (`ctx.schedule`). */
 type ScheduleServiceLike = {
-  list(request: { sessionId: unknown }): Promise<unknown>;
+  list(request: { active?: boolean; limit?: number; offset?: number }): Promise<unknown>;
+};
+
+/** Structural subset of `ctx.sessionController` (`dsh-api-session-controller`). */
+type SessionControllerLike = {
+  selectModel(request: { sessionId: string; provider: string; model: string }): Promise<unknown>;
 };
 
 type SessionQueryLike = {
@@ -581,23 +586,53 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
         readonly events: readonly SessionExportEvent[];
       }>;
     },
-    // Durable reminder seam: dsh 0.1.7 owns reminder storage in the
-    // `schedule` service, so `/schedule` lists through it (folding session
-    // events by hand is obsolete and comes back empty on a V4 log). Resolved
-    // lazily — the bundle may mount after this bridge is constructed.
+    // Durable reminder seam: dsh owns reminder storage in the `schedule`
+    // service, so `/schedule` lists through it (folding session events by hand
+    // is obsolete and comes back empty on a V4 log). Resolved lazily — the
+    // bundle may mount after this bridge is constructed.
+    //
+    // dsh 0.2.2 made the task list Host-WIDE and paged: `list()` no longer
+    // takes a session binding and its result is `{ items, total, … }`. Scope it
+    // here through `involvedSessionIds` (the creating/editing Session plus the
+    // current target Session) and page to the end — a silent first-page
+    // truncation would hide this chat's reminders on a busy Host.
     schedule: {
       list: async (sessionId) => {
         const service = ctx.get('schedule') as ScheduleServiceLike | undefined;
         if (service === undefined || typeof service.list !== 'function') {
           throw new Error('schedule service unavailable');
         }
-        return (await service.list({ sessionId })) as readonly ScheduleRecordLike[];
+        const pageSize = 500;
+        const kept: ScheduleRecordLike[] = [];
+        let offset = 0;
+        for (;;) {
+          const page = (await service.list({
+            active: true,
+            limit: pageSize,
+            offset,
+          })) as { readonly items?: readonly unknown[]; readonly total?: unknown } | undefined;
+          const items = Array.isArray(page?.items) ? (page?.items ?? []) : [];
+          for (const item of items) {
+            const involved = (item as { involvedSessionIds?: unknown }).involvedSessionIds;
+            if (Array.isArray(involved) && involved.includes(sessionId)) {
+              kept.push(item as ScheduleRecordLike);
+            }
+          }
+          const total = typeof page?.total === 'number' ? page.total : items.length;
+          offset += items.length;
+          if (items.length === 0 || offset >= total) break;
+        }
+        return kept as readonly ScheduleRecordLike[];
       },
     },
     // Host session-management seam (dsh web parity for rename/archive). The
     // Session rename/archive seams: `sessionTitle` is mounted by dsh-base;
     // `workspaceRegistry` comes from this bundle's storage×3 + workspace
     // rows. Absent, the session detail view hides those actions.
+    // `sessionTitle` mounts AFTER this apply on dsh 0.2.2, so expose a lazy
+    // getter as well: an eager snapshot stays undefined forever and the panel
+    // then refuses renames ("unavailable on this deployment").
+    getSessionTitle: () => ctx.get('sessionTitle') as SessionTitleLike | undefined,
     ...(ctx.get('sessionTitle') !== undefined
       ? { sessionTitle: ctx.get('sessionTitle') as SessionTitleLike }
       : {}),
@@ -638,16 +673,38 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
     },
     // Feature-detect the two stateful web-command services (both mounted by
     // dsh-base); absent, the /permission and /plan wrappers degrade.
-    ...(ctx.get('permissionPresets') !== undefined
-      ? { permissionPresets: ctx.get('permissionPresets') as PermissionPresetService }
-      : {}),
-    ...(ctx.get('planMode') !== undefined
-      ? { planMode: ctx.get('planMode') as PlanModeService }
-      : {}),
-    ...(ctx.get('agentDefaultModel') !== undefined
-      ? { agentDefaultModel: ctx.get('agentDefaultModel') as AgentDefaultModelService }
-      : {}),
-    ...(ctx.get('llm') !== undefined ? { llm: ctx.get('llm') as LlmService } : {}),
+    // Read through GETTERS: dsh 0.2.2 mounts these services AFTER this plugin's
+    // apply, so an eager snapshot is permanently undefined and every /permission
+    // or /plan interaction then reports itself unavailable.
+    get permissionPresets() {
+      return ctx.get('permissionPresets') as PermissionPresetService | undefined;
+    },
+    get planMode() {
+      return ctx.get('planMode') as PlanModeService | undefined;
+    },
+    // Session-model seam: dsh 0.2.2 records model selections on the agent, so
+    // `/model` applies the switch through the session business API (which
+    // validates the model and saves the deployment default). Resolved lazily —
+    // the controller may mount after this bundle.
+    selectSessionModel: async (sessionId, selection) => {
+      const controller = ctx.get('sessionController') as SessionControllerLike | undefined;
+      if (controller === undefined || typeof controller.selectModel !== 'function') {
+        throw new Error('sessionController service unavailable');
+      }
+      await controller.selectModel({
+        sessionId,
+        provider: selection.provider,
+        model: selection.model,
+      });
+    },
+    // Same late-mount rule as above: `/model` reads the deployment default and
+    // the catalog through these, so resolve them at use time.
+    get agentDefaultModel() {
+      return ctx.get('agentDefaultModel') as AgentDefaultModelService | undefined;
+    },
+    get llm() {
+      return ctx.get('llm') as LlmService | undefined;
+    },
   });
   logger.debug(
     `[feishu] host services: sessionTitle=${ctx.get('sessionTitle') !== undefined} ` +
@@ -673,16 +730,16 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
   // Feishu question card. The dsh runtime asks the scoped answerer waterfall
   // (`ctx.waterfall('user-questions/request', …)`); the surface listens on
   // the same event and claims the request by returning a structured answer.
-  // Answerer instances dispose with the event subscription; the service's
-  // absence degrades to an unanswered question (loud, non-fatal).
-  const userQuestionsService = ctx.get('userQuestions');
-  if (userQuestionsService !== undefined) {
-    ctx.on('user-questions/request', (request: AskQuestionsRequestLike) =>
-      bridge.askQuestions(request),
-    );
-  } else {
-    ctx.logger.warn('[feishu] userQuestions service unavailable; questions cannot be rendered');
-  }
+  //
+  // The listener is registered UNCONDITIONALLY: the surface only consumes the
+  // event and never calls the service, so its presence is not a precondition.
+  // dsh 0.2.2 mounts `userQuestions` after this plugin's apply, and the eager
+  // `ctx.get('userQuestions')` guard that used to sit here therefore saw
+  // `undefined` and skipped the registration — every question card silently
+  // disappeared while the turn still reported success.
+  ctx.on('user-questions/request', (request: AskQuestionsRequestLike) =>
+    bridge.askQuestions(request),
+  );
   ctx.effect(() => () => {
     bridge.dispose();
     sessionMap.persist();

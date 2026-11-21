@@ -1,13 +1,13 @@
 {
   "schema": "dsh-feishu-version-track/v2",
   "dsh": {
-    "latest": "0.2.1-rc.2"
+    "latest": "0.2.2-rc.5"
   },
   "dshFeishu": {
-    "npmLatest": "0.3.7"
+    "npmLatest": "0.3.8"
   },
   "lastAdapted": {
-    "by": "dsh-version-track (dsh @latest 0.2.1-rc.2: label + peer ranges refreshed; family published 0.2.1-rc.2 for 19 of 20 packages, @deepseek-ai/dsh-invariants stays ^0.2.0-rc.2 \u2014 a caret on 0.x still accepts the newer runtime)",
-    "at": "2026-10-24T00:00:00Z"
+    "by": "dsh-version-track (dsh @latest 0.2.2-rc.5: schedule tools take {title,prompt,rrule,target}; model switch via sessionController.selectModel (AgentModel replaced the installModelSelection ref); late-mounting services read through lazy getters)",
+    "at": "2026-11-21T00:00:00Z"
   }
 }

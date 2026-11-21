@@ -260,6 +260,12 @@ When adapting:
   typecheck is green.
 - Re-verify all gates (`FEISHU_INT_REQUIRED=1`) with a profile installed from
   the NEW CLI; never touch `~/.dsh` — only `_dev/` test homes.
+- Service MOUNTING ORDER is part of the adaptation surface: dsh 0.2.2 mounts
+  optional services after the plugin's `apply`, so an eager
+  `ctx.get(name)` captured at apply stays `undefined` forever and silently
+  disables the features that use it (questions, rename, /permission, /plan).
+  Resolve optional services at USE time (a getter, or a lazily-invoked seam).
+  See `docs/pitfalls.md` → "An eager ctx.get at apply is a snapshot".
 - Update the compat badge + Note in `README.md` / `README.zh.md`.
 - Check the **release-compat** workflow too (published artifact vs `@latest`).
   dsh 0.2.0 gates installation on our peer ranges, so a green canary plus stale

@@ -1,94 +1,119 @@
 /**
  * Unit tests for the per-session model switch helper.
  *
- * The helper couples a single mutable `ModelSelection` to a live agent's
- * scoped context (`installModelSelection`) so `/model` can switch the CURRENT
- * session's model immediately, and caches the ref per context so the waterfall
- * listeners are installed once. These tests cover the caching, the apply, and
- * the no-op edge.
+ * dsh 0.2.2 keeps the model selection on the agent and applies a switch
+ * through the session business API, so the surface no longer couples a mutable
+ * ref: `sessionSelection` only reads the agent's own `model.current()`, and
+ * `applySessionModelSwitch` delegates to the injected
+ * `ctx.sessionController.selectModel` seam. These tests cover the read path,
+ * the delegate, and both degrade edges (no seam, failing seam).
  *
  * @module tests/model-switch
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  applySessionModelSwitch,
-  sessionSelection,
-  sessionSelectionFor,
-} from '../src/model-switch.js';
+import { describe, expect, it, vi } from 'vitest';
+import { applySessionModelSwitch, sessionSelection } from '../src/model-switch.js';
 
-const mocks = vi.hoisted(() => ({ installModelSelection: vi.fn(() => () => {}) }));
-
-vi.mock('@deepseek-ai/dsh-agent', () => ({
-  installModelSelection: mocks.installModelSelection,
-}));
-
-/** A minimal, unrelated object to stand in for an agent's scoped Context. */
-function fakeCtx(): object {
-  return {};
+/** An agent whose model answers with a fixed selection. */
+function agentWith(selection: { provider: string; model: string } | undefined): {
+  model: { current: () => typeof selection };
+} {
+  return { model: { current: () => selection } };
 }
 
-beforeEach(() => {
-  mocks.installModelSelection.mockClear();
-});
-
-describe('sessionSelectionFor', () => {
-  it('installs the selection ref ONCE and returns the cached ref for a context', () => {
-    const ctx = fakeCtx();
-    const first = sessionSelectionFor(ctx as never);
-    const second = sessionSelectionFor(ctx as never);
-    expect(mocks.installModelSelection).toHaveBeenCalledTimes(1);
-    expect(first).toBe(second);
+describe('sessionSelection', () => {
+  it('reads the selection the agent reports (a switched model wins there)', () => {
+    expect(sessionSelection(agentWith({ provider: 'pi-ai', model: 'deepseek-r1' }))).toEqual({
+      provider: 'pi-ai',
+      model: 'deepseek-r1',
+    });
   });
 
-  it('installs a SEPARATE ref per distinct context', () => {
-    const a = fakeCtx();
-    const b = fakeCtx();
-    const ra = sessionSelectionFor(a as never);
-    const rb = sessionSelectionFor(b as never);
-    expect(mocks.installModelSelection).toHaveBeenCalledTimes(2);
-    expect(ra).not.toBe(rb);
+  it('returns undefined when the agent has no selection yet', () => {
+    expect(sessionSelection(agentWith(undefined))).toBeUndefined();
+  });
+
+  it('returns undefined for no agent, or an agent without a model surface', () => {
+    expect(sessionSelection(undefined)).toBeUndefined();
+    expect(sessionSelection({})).toBeUndefined();
+    // A pre-0.2.2 agent object has a `model` that is not the AgentModel shape.
+    expect(sessionSelection({ model: {} as never })).toBeUndefined();
+  });
+
+  it('answers undefined instead of throwing when the model read throws', () => {
+    const agent = {
+      model: {
+        current: () => {
+          throw new Error('model projection unavailable');
+        },
+      },
+    };
+    expect(sessionSelection(agent)).toBeUndefined();
   });
 });
 
 describe('applySessionModelSwitch', () => {
-  it("sets the context's current selection to the new model", () => {
-    const ctx = fakeCtx();
-    const ref = sessionSelectionFor(ctx as never);
-    applySessionModelSwitch(ctx as never, {
+  it('applies the selection through the seam with the real session id', async () => {
+    const select = vi.fn(async () => {});
+    const applied = await applySessionModelSwitch(select, 'feishu-session-1', {
       provider: 'deepseek-official',
       model: 'deepseek-v4-pro',
     });
-    expect(ref.current).toEqual({ provider: 'deepseek-official', model: 'deepseek-v4-pro' });
-  });
-
-  it('no-ops when the agent context is undefined (does not install)', () => {
-    applySessionModelSwitch(undefined, { provider: 'deepseek-official', model: 'deepseek-v4-pro' });
-    expect(mocks.installModelSelection).toHaveBeenCalledTimes(0);
-  });
-});
-
-describe('sessionSelection', () => {
-  it('returns undefined for a context with no session switch (never installs)', () => {
-    const ctx = fakeCtx();
-    expect(sessionSelection(ctx as never)).toBeUndefined();
-    expect(mocks.installModelSelection).not.toHaveBeenCalled();
-  });
-
-  it('returns undefined when the agent context is undefined', () => {
-    expect(sessionSelection(undefined)).toBeUndefined();
-    expect(mocks.installModelSelection).not.toHaveBeenCalled();
-  });
-
-  it('returns the coupled ref (its current is the switched model) without re-installing', () => {
-    const ctx = fakeCtx();
-    applySessionModelSwitch(ctx as never, {
+    expect(applied).toBe(true);
+    expect(select).toHaveBeenCalledWith('feishu-session-1', {
       provider: 'deepseek-official',
       model: 'deepseek-v4-pro',
     });
-    const ref = sessionSelection(ctx as never);
-    expect(mocks.installModelSelection).toHaveBeenCalledTimes(1);
-    expect(ref?.current).toEqual({ provider: 'deepseek-official', model: 'deepseek-v4-pro' });
-    expect(ref).toBe(sessionSelectionFor(ctx as never));
+  });
+
+  it('degrades loudly when no sessionController seam is mounted', async () => {
+    const warn = vi.fn();
+    const applied = await applySessionModelSwitch(
+      undefined,
+      'feishu-session-1',
+      { provider: 'deepseek-official', model: 'deepseek-v4-pro' },
+      { warn, debug: () => {} },
+    );
+    expect(applied).toBe(false);
+    expect(warn.mock.calls[0]?.[0]).toContain('sessionController service is unavailable');
+  });
+
+  it('degrades loudly when the chat has no session yet', async () => {
+    const warn = vi.fn();
+    const applied = await applySessionModelSwitch(
+      vi.fn(async () => {}),
+      undefined,
+      { provider: 'deepseek-official', model: 'deepseek-v4-pro' },
+      { warn, debug: () => {} },
+    );
+    expect(applied).toBe(false);
+    expect(warn.mock.calls[0]?.[0]).toContain('(no session)');
+  });
+
+  it('reports a refusing seam instead of pretending the switch happened', async () => {
+    const warn = vi.fn();
+    const applied = await applySessionModelSwitch(
+      async () => {
+        throw new Error('session/model-unavailable');
+      },
+      'feishu-session-1',
+      { provider: 'pi-ai', model: 'deepseek-r1' },
+      { warn, debug: () => {} },
+    );
+    expect(applied).toBe(false);
+    expect(warn.mock.calls[0]?.[0]).toContain('session/model-unavailable');
+  });
+
+  it('traces the applied switch for the debug pipeline', async () => {
+    const debug = vi.fn();
+    await applySessionModelSwitch(
+      vi.fn(async () => {}),
+      'feishu-session-1',
+      { provider: 'pi-ai', model: 'deepseek-r1' },
+      { warn: () => {}, debug },
+    );
+    expect(debug).toHaveBeenCalledWith(
+      '[feishu] model switch session feishu-session-1 to pi-ai/deepseek-r1',
+    );
   });
 });

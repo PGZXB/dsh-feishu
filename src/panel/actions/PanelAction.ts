@@ -21,6 +21,7 @@ import type {
 import type { ModelOptionView } from '../../cards/render.js';
 import type { CommandResult, SurfaceCommand } from '../../commands.js';
 import type { FeishuTransport } from '../../feishu/types.js';
+import type { SessionModelSelector } from '../../model-switch.js';
 import type { SessionMap } from '../../session-map.js';
 import type { PanelView } from '../types.js';
 
@@ -48,6 +49,14 @@ export interface PanelServices {
         rename(session: unknown, title: string): unknown;
       }
     | undefined;
+  /** Lazy `sessionTitle` (dsh 0.2.2 mounts it after apply — use this one). */
+  readonly getSessionTitle:
+    | (() =>
+        | {
+            rename(session: unknown, title: string): unknown;
+          }
+        | undefined)
+    | undefined;
   readonly getWorkspaceRegistry:
     | (() =>
         | {
@@ -59,6 +68,8 @@ export interface PanelServices {
   readonly permissionPresets: PermissionPresetService | undefined;
   readonly planMode: PlanModeService | undefined;
   readonly agentDefaultModel: AgentDefaultModelService | undefined;
+  /** Apply a `provider/model` to one session (`ctx.sessionController.selectModel`). */
+  readonly selectSessionModel: SessionModelSelector | undefined;
   readonly llm: LlmService | undefined;
   readonly listSessions: (() => Promise<readonly SessionListRow[] | undefined>) | undefined;
 }

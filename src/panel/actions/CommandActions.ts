@@ -146,7 +146,10 @@ export class PanelInputSubmitAction extends PanelAction {
       // Rename through the dsh session-title service (web-visible).
       const sessionId = action.value.sessionId;
       if (sessionId === undefined || sessionId === '') return;
-      const sessionTitle = ctx.services.sessionTitle;
+      // Resolve lazily: dsh 0.2.2 mounts `sessionTitle` after the plugin's
+      // apply, so the eager snapshot is undefined and every rename would
+      // report "unavailable".
+      const sessionTitle = ctx.services.getSessionTitle?.() ?? ctx.services.sessionTitle;
       if (sessionTitle === undefined) {
         return {
           kind: 'error',
