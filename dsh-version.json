@@ -4,7 +4,7 @@
     "latest": "0.2.2-rc.5"
   },
   "dshFeishu": {
-    "npmLatest": "0.3.7"
+    "npmLatest": "0.3.8"
   },
   "lastAdapted": {
     "by": "dsh-version-track (dsh @latest 0.2.2-rc.5: schedule tools take {title,prompt,rrule,target}; model switch via sessionController.selectModel (AgentModel replaced the installModelSelection ref); late-mounting services read through lazy getters)",
