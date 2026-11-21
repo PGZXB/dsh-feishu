@@ -227,9 +227,20 @@ type WorkspaceRegistryLike = {
  * compiles without a dependency on the query package; `ctx.get('sessionQuery')`
  * returns the full engine at runtime.
  */
-/** Structural subset of dsh's `ScheduleService` (`ctx.schedule`). */
+/** Structural subset of dsh's `ScheduleService` (`ctx.schedule`).
+ *  dsh 0.2.2's `list` takes a `{ active?, limit?, offset? }` request and
+ *  returns a catalog of entries carrying `involvedSessionIds` and `status`;
+ *  the host-side `list` below filters that catalog down to one session. */
 type ScheduleServiceLike = {
-  list(request: { sessionId: unknown }): Promise<unknown>;
+  list(request?: {
+    active?: boolean;
+    limit?: number;
+    offset?: number;
+  }): Promise<{
+    items: readonly (ScheduleRecordLike & {
+      readonly involvedSessionIds: readonly string[];
+    })[];
+  }>;
 };
 
 type SessionQueryLike = {
@@ -591,7 +602,8 @@ export function apply(ctx: Context, config: Config, deps: ApplyDeps = {}): void 
         if (service === undefined || typeof service.list !== 'function') {
           throw new Error('schedule service unavailable');
         }
-        return (await service.list({ sessionId })) as readonly ScheduleRecordLike[];
+        const result = await service.list();
+        return result.items.filter((task) => task.involvedSessionIds.includes(sessionId));
       },
     },
     // Host session-management seam (dsh web parity for rename/archive). The

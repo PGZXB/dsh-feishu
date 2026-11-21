@@ -369,6 +369,7 @@ export interface BridgeOptions {
         readonly afterSeconds?: number;
         readonly scheduledAt?: string;
         readonly everySeconds?: number;
+        readonly status?: 'active' | 'paused' | 'ended';
       }[]
     >;
   };
@@ -1313,11 +1314,12 @@ export class Bridge {
   private currentModelSelection(chatId: string): string | undefined {
     const live = this.liveAgent(chatId);
     // A session-switched model (via `/model`, dsh web parity) takes precedence:
-    // applySessionModelSwitch writes `selection.current` into the agent's coupled
-    // ref, but the agent's static `options` is NOT mutated, so reading it first
-    // would show the pre-switch model (the #40 display bug). Fall back to the
-    // agent's static options, then the deployment default.
-    const switched = sessionSelection(live?.ctx)?.current;
+    // `sessionSelection` reads the agent's recorded `model/selection` (a durable
+    // `agent.model.current()`), which a switch persists without mutating the
+    // agent's static `options` — so reading `options` first would show the
+    // pre-switch model (the #40 display bug). Fall back to the agent's static
+    // options, then the deployment default.
+    const switched = sessionSelection(live);
     if (switched !== undefined) {
       return `${switched.provider}/${switched.model}`;
     }

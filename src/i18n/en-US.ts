@@ -316,6 +316,9 @@ export const enMessages = {
   'command.schedule.rule.at': 'at {at}',
   'command.schedule.rule.recurring': 'recurring',
   'command.schedule.rule.every': 'every {seconds}s',
+  'command.schedule.status.active': 'active',
+  'command.schedule.status.paused': 'paused',
+  'command.schedule.status.ended': 'ended',
 
   // ── Command / panel-action feedback ─────────────────────────────────────
   'command.result.stopped': 'Stopped.',

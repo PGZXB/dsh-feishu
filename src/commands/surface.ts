@@ -129,6 +129,8 @@ export interface ScheduleRecordLike {
   readonly afterSeconds?: number;
   readonly scheduledAt?: string;
   readonly everySeconds?: number;
+  /** dsh 0.2.2+ catalog status: `active` / `paused` / `ended`. */
+  readonly status?: 'active' | 'paused' | 'ended';
 }
 
 /**
@@ -436,7 +438,6 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
         };
       }
       try {
-        const { scheduleView } = await import('@deepseek-ai/dsh-schedule');
         const records = await options.schedule.list(sessionId);
         if (records.length === 0) {
           return {
@@ -444,11 +445,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
             text: t('command.info.noReminders'),
           };
         }
-        const now = Date.now();
         const lines = records.map((record) => {
-          // The service returns full records; the seam declares only what the
-          // listing reads, so re-assert the view's own parameter type.
-          const view = scheduleView(record as Parameters<typeof scheduleView>[0], now);
           const prompt = record.prompt === '' ? t('status.noPrompt') : record.prompt;
           // Each rule kind carries exactly one of these fields; the service is
           // the source of truth, so render the one it filled in.
@@ -460,7 +457,15 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
                 : record.kind === 'every' && record.everySeconds !== undefined
                   ? t('command.schedule.rule.every', { seconds: record.everySeconds })
                   : t('command.schedule.rule.recurring');
-          return `${rule} · ${prompt} (${view.state})`;
+          // dsh 0.2.2 replaced the removed `scheduleView` helper with a
+          // per-entry `status` on the catalog entry.
+          const state =
+            record.status === 'paused'
+              ? t('command.schedule.status.paused')
+              : record.status === 'ended'
+                ? t('command.schedule.status.ended')
+                : t('command.schedule.status.active');
+          return `${rule} · ${prompt} (${state})`;
         });
         return { kind: 'success', text: `${t('command.schedule.title')}\n${lines.join('\n')}` };
       } catch (error: unknown) {
@@ -493,7 +498,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
         // options (which a switch does NOT mutate); otherwise the deployment
         // default.
         const live = options.liveAgent(invocation.chatId);
-        const switched = sessionSelection(live?.ctx)?.current;
+        const switched = sessionSelection(live);
         const liveSelection =
           switched !== undefined
             ? { provider: switched.provider, model: switched.model }
@@ -536,7 +541,7 @@ export function registerSurfaceCommands(commands: CommandRegistry, host: Surface
       // future sessions: couple the agent's model selection so the next turn
       // assembles with the new provider/model (dsh web parity).
       applySessionModelSwitch(
-        options.liveAgent(invocation.chatId)?.ctx,
+        options.liveAgent(invocation.chatId),
         parsed.selection,
         options.logger,
       );

@@ -120,7 +120,7 @@ export class ModelPickAction extends PanelAction {
     void service.saveSelection(parsed.selection);
     // (B) switch the current session immediately too (not only the default).
     applySessionModelSwitch(
-      ctx.liveAgent(action.chatId)?.ctx,
+      ctx.liveAgent(action.chatId),
       parsed.selection,
       ctx.services.logger,
     );

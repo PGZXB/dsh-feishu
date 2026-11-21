@@ -303,6 +303,9 @@ export const zhMessages: Record<MessageKey, string> = {
   'command.schedule.rule.at': '于 {at}',
   'command.schedule.rule.recurring': '循环',
   'command.schedule.rule.every': '每 {seconds} 秒',
+  'command.schedule.status.active': '活跃',
+  'command.schedule.status.paused': '已暂停',
+  'command.schedule.status.ended': '已结束',
 
   // ── Command / panel-action feedback ─────────────────────────────────────
   'command.result.stopped': '已停止。',

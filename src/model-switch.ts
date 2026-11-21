@@ -1,80 +1,57 @@
 /**
  * Per-session model switching for `/model`.
  *
- * dsh-web's `/model` switches the CURRENT session's model immediately (and
- * saves the default). The host implements the per-session switch by coupling a
- * mutable {@link ModelSelectionRef} to the live agent's scoped context via
- * `installModelSelection` (see `dsh-host-apiproxy`'s `selectionFor`). This
- * module replicates that: an agent gets ONE coupled selection ref (installed
- * once, cached in a `WeakMap`), and `/model` mutates its `current` so the next
- * prompt assembly uses the new provider/model.
+ * dsh 0.2.2-rc.5 made per-session model selection durable: an agent exposes
+ * `agent.model` (the `Model` accessor from `@deepseek-ai/dsh-agent`, backed by
+ * the `model/selection` session projection) whose `select()` records a new
+ * choice and `current()` reads it back (recorded selection, then the last
+ * request header, then the agent's live options). This module adapts `/model`
+ * to that accessor: switching writes the durable selection, and reading
+ * prefers a recorded switch over the agent's static options (dsh web parity).
  *
- * NOTE: this is a runtime import from `@deepseek-ai/dsh-agent` — a deliberate
- * exception to the repo's "type-only `@deepseek-ai/*` imports" convention, made
- * because genuine per-session model switching requires it (maintainer decision,
- * see docs/ux-specification.md → `/model` immediate switch).
+ * NOTE: `Agent` is a value type from `@deepseek-ai/dsh-agent` — a deliberate
+ * exception to the repo's type-only `@deepseek-ai/*` imports convention, made
+ * because genuine per-session model switching requires the live agent object
+ * (maintainer decision, see docs/ux-specification.md → `/model` immediate
+ * switch).
  *
  * @module src/model-switch
  */
 
-import type { Context } from '@deepseek-ai/cordis';
-import { installModelSelection } from '@deepseek-ai/dsh-agent';
-
-/** A selected provider/model (structural subset of dsh's `ModelSelection`). */
-export interface ModelSelectionRef {
-  current: { provider: string; model: string } | undefined;
-  assembled: { provider: string; model: string } | undefined;
-}
-
-const refs = new WeakMap<object, ModelSelectionRef>();
+import type { Agent } from '@deepseek-ai/dsh-agent';
 
 /**
- * Couple a mutable model-selection to `agentCtx` ONCE and return it. Repeated
- * calls for the same context return the cached ref without re-installing so
- * the waterfall listeners are not stacked.
- * @param agentCtx - the live agent's scoped context.
- * @returns the agent's mutable selection ref.
+ * Read the live agent's current model selection WITHOUT switching. Prefers a
+ * recorded `/model` switch over the last request header and the agent's live
+ * options; returns `undefined` when no source names both provider and model
+ * (or when the agent is absent).
+ * @param agent - the live agent (or `undefined` for none).
+ * @returns the current provider/model selection, or `undefined`.
  */
-export function sessionSelectionFor(agentCtx: Context): ModelSelectionRef {
-  let ref = refs.get(agentCtx);
-  if (ref === undefined) {
-    ref = { current: undefined, assembled: undefined };
-    refs.set(agentCtx, ref);
-    installModelSelection(agentCtx, ref);
-  }
-  return ref;
+export function sessionSelection(
+  agent: Agent | undefined,
+): { provider: string; model: string } | undefined {
+  const current = agent?.model.current();
+  return current === undefined
+    ? undefined
+    : { provider: current.provider, model: current.model };
 }
 
 /**
- * Read the live agent's coupled selection ref WITHOUT installing it (the
- * `#40 display bug`). `sessionSelectionFor` couples the waterfall listeners on
- * first use (a write path); a read path — e.g. the panel's "current model" —
- * must never install listeners just to inspect a value, so it reads the cached
- * ref directly and returns `undefined` when no `/model` switch ran yet.
- * @param agentCtx - the live agent's scoped context (or `undefined` for none).
- * @returns the coupled selection ref (its `current` is the switched model), or
- *   `undefined` when no session switch was applied to this context.
- */
-export function sessionSelection(agentCtx: Context | undefined): ModelSelectionRef | undefined {
-  if (agentCtx === undefined) return undefined;
-  return refs.get(agentCtx);
-}
-
-/**
- * Switch the model for one live agent's session (`next` becomes the model the
- * next turn assembles). No-op when `agentCtx` is undefined (already handled by
- * the caller). Does not touch the deployment default — the caller saves that
- * separately.
- * @param agentCtx - the live agent's scoped context (or undefined for no-op).
+ * Switch the model for one live agent's session (`selection` becomes the model
+ * the next turn assembles). Records a `model/selection` event through the
+ * agent's `model.select()`; an equal recorded choice is a no-op. Does not
+ * touch the deployment default — the caller saves that separately.
+ * @param agent - the live agent (or `undefined` for no-op).
  * @param selection - the `{ provider, model }` to apply to this session.
  * @param logger - optional bridge logger for debug tracing (`FEISHU_DEBUG=1`).
  */
 export function applySessionModelSwitch(
-  agentCtx: Context | undefined,
+  agent: Agent | undefined,
   selection: { provider: string; model: string },
   logger?: { debug: (msg: string) => void },
 ): void {
-  if (agentCtx === undefined) return;
-  sessionSelectionFor(agentCtx).current = selection;
+  if (agent === undefined) return;
+  agent.model.select(selection);
   logger?.debug(`[feishu] model switch session to ${selection.provider}/${selection.model}`);
 }
