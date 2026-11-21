@@ -390,3 +390,23 @@ workflow（已发布产物 vs dsh `@latest`）能看到它。
   范围）是一份**安装期契约**，不是徽章。刷新后要看 release-compat
   workflow；若因这个原因变红，就必须发版——已发布的 peer 范围只能通过新版本
   改变。
+
+## apply 时的"急切" `ctx.get` 是快照，不是接缝
+
+dsh 0.2.2 会在插件的 `apply` 之后才挂载若干可选服务（`userQuestions`、
+`sessionTitle`、`permissionPresets`、`planMode`）。如果构建插件选项对象时只探测
+一次，取到的 `undefined` 会被永久保留：
+
+- 所有交互式提问静默消失（应答监听器根本没注册，而回合仍报成功）；
+- 会话重命名/归档报"此部署不可用"；
+- `/permission` 打不开选择器，裸 `/plan` 也不切换。
+
+这四处看起来像四个互不相关的功能回归，而且都不会编译失败——`ctx.get(name)`
+返回 `T | undefined`，快照在类型上是安全的。
+
+- 规则：可选服务要**在使用点解析**——选项对象上的 getter
+  （`get permissionPresets() { return ctx.get('permissionPresets') }`）、惰性
+  调用的接缝函数，或显式的 `getX()` 访问器。只有插件在 `inject` 中**声明**的
+  服务（缺它就无法启动）才可以在 apply 时捕获。
+- 推论：某个版本改变挂载顺序时，要预期多个"看起来无关"的功能同时坏掉。先在
+  入口 grep `ctx.get(`，逐个对照已安装的挂载顺序，而不是分别去追每个功能。

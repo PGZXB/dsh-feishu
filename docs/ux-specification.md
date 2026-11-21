@@ -1587,8 +1587,8 @@ message text — the user always sees where their steered message was inserted.
 Switch the current session's model immediately when /model picks one (also set the default).
 
 Reference: dsh web's `/model` (client `dsh-client-ui-model-selection` →
-`session.selectModel` RPC; host `dsh-host-apiproxy` → `selectionFor(agent)` +
-`installModelSelection`, plus `saveDefaultModelSelection`).
+`session.selectModel` RPC; host `dsh-api-session-controller.selectModel` →
+`agent.model.select` + `agentDefaultModel.saveSelection`).
 
 ### Intended behavior
 
@@ -1597,32 +1597,41 @@ maintainer's "B"):
 
 1. Saves the selection as the **deployment default** (`agentDefaultModel.saveSelection`)
    so future sessions default to it.
-2. Couples a mutable `ModelSelection` to the **current session's live agent**
-   (`installModelSelection(agent.ctx, ref)` once, then `ref.current = selection`),
-   so the NEXT turn in that chat assembles with the picked provider/model.
+2. Applies the selection to the **current session's live agent** through the
+   session business API (`ctx.sessionController.selectModel({ sessionId,
+   provider, model })`), so the NEXT turn in that chat assembles with the picked
+   provider/model. The service validates the model against the live catalog,
+   records it on the agent (dsh 0.2.2's durable `modelSelection` projection) and
+   saves the deployment default itself.
 
 The reply text is `Model set to <provider> · <model> (this session + default).`
+When the switch could not be applied — no session yet, or no
+`sessionController` mounted — only the default is saved and the reply says so
+(`… (default only — this session kept its model).`).
 
 The **read** side (`currentModelSelection`, used by the model picker's current
-preselection and the no-catalog `/model` text display) prefers the
-session-switched `ref.current` over the live agent's static `options` — a
-switch writes the ref but never mutates `agent.options`, so reading `options`
-would show the pre-switch model (the `#40 display bug`). It falls back to
-`agent.options`, then the deployment default.
+preselection and the no-catalog `/model` text display) reads the agent's own
+`model.current()`, which resolves a recorded switch ahead of the agent's static
+`options` — a switch records the choice but never mutates `agent.options`, so
+reading `options` first would show the pre-switch model (the `#40 display bug`).
+It falls back to `agent.options`, then the deployment default.
 
 ### Seam
 
 - `ctx.agentDefaultModel.saveSelection` — default (existing).
-- `installModelSelection(agent.ctx, ref)` — per-session switch (runtime import
-  from `@deepseek-ai/dsh-agent`; a deliberate exception to the repo's
-  "type-only `@deepseek-ai/*` imports" convention, maintainer decision).
-  `@deepseek-ai/dsh-agent` moves to `dependencies`.
+- `ctx.sessionController.selectModel` — per-session switch (dsh 0.2.2). The
+  surface resolves it lazily (`ctx.get('sessionController')` at call time) and
+  passes it to the command/panel layers as `selectSessionModel`; nothing
+  imports a harness package at runtime, so the request/response shapes are
+  structural (`SessionModelSelector`).
 
 ### Failure modes
 
-- Live agent absent (no session yet): the switch is a no-op (`applySessionModelSwitch(undefined)`
-  returns early); the default is still saved. Reply still reports the model is set.
+- Live agent absent (no session yet): the switch is skipped loudly; the default
+  is still saved and the reply reports the honest "default only" outcome.
+- `sessionController` not mounted: same honest "default only" reply plus a
+  warning (`the sessionController service is unavailable`).
 - `agentDefaultModel` not mounted: `/model` errors (unchanged).
-- Future dsh without `installModelSelection`: the import would fail at load;
-  documented as version-coupled to the dsh family bump.
+- A refusing service (`session/model-unavailable`): logged, and the reply stays
+  honest about the session keeping its model.
 4d2ba302 (feat: /model switches the current session's model immediately (and sets the default))

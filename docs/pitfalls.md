@@ -452,3 +452,29 @@ artifact vs dsh `@latest`) is the only run that sees it.
   harness peer ranges) is an **install-time contract**, not a badge. Check the
   release-compat workflow after refreshing, and cut a release when it is red
   for this reason — the published peer ranges only change in a new version.
+
+## An eager `ctx.get` at apply is a snapshot, not a seam
+
+dsh 0.2.2 mounts several optional services AFTER a plugin's `apply` runs
+(`userQuestions`, `sessionTitle`, `permissionPresets`, `planMode`). Code that
+probed them once while building the plugin's options object therefore stored
+`undefined` forever:
+
+- every interactive question silently disappeared (the answerer listener was
+  never registered, and the turn still reported success);
+- session rename/archive reported "unavailable on this deployment";
+- `/permission` never opened its picker and bare `/plan` never toggled.
+
+All four look like four unrelated feature regressions, and none of them fails
+to compile — `ctx.get(name)` returns `T | undefined`, so a snapshot is
+type-safe.
+
+- Rule: for an OPTIONAL service, resolve it where it is USED — a getter on the
+  options object (`get permissionPresets() { return ctx.get('permissionPresets') }`),
+  a lazily-invoked seam function, or an explicit `getX()` accessor. Only a
+  service the plugin DECLARES in `inject` (and therefore cannot start without)
+  may be captured at apply.
+- Corollary: when a release moves the mounting order, expect several
+  independent-looking features to break at once. Grep the entry point for
+  `ctx.get(` and check each one against the installed mount order before
+  chasing the features separately.
